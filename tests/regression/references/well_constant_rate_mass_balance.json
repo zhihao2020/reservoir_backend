@@ -1,0 +1,17 @@
+{
+  "grid": {
+    "nx": 3,
+    "ny": 1,
+    "nz": 1,
+    "dx": 10.0,
+    "dy": 1.0,
+    "dz": 1.0
+  },
+  "injection_rate_m3_s": 0.01,
+  "production_rate_m3_s": 0.01,
+  "dt_s": 100.0,
+  "expected_injected_volume_m3": 1.0,
+  "expected_produced_volume_m3": 1.0,
+  "expected_net_volume_m3": 0.0,
+  "max_relative_error": 1e-14
+}

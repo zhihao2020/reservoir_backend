@@ -1,0 +1,4 @@
+# Placeholder solver configuration for later stages.
+solver:
+  pressure: not_implemented
+  saturation: not_implemented

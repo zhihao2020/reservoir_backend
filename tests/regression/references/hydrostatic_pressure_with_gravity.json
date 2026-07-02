@@ -1,0 +1,14 @@
+{
+  "grid": {
+    "nx": 2,
+    "ny": 2,
+    "nz": 4,
+    "dx": 3.0,
+    "dy": 4.0,
+    "dz": 10.0
+  },
+  "datum_pressure_pa": 1000000.0,
+  "density_kg_m3": 1000.0,
+  "gravity_m_s2": 9.80665,
+  "datum_depth_m": 0.0
+}

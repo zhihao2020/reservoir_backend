@@ -1,0 +1,3 @@
+# Placeholder rock/fluid configuration for later stages.
+porosity: 0.2
+permeability_md: 100.0
