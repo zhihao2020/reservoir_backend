@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from examples.run_full_pipeline_demo import run_demo
-from reservoir_backend.io.config_loader import load_case_config
+from reservoir_backend.io.config_loader import load_case_config, normalize_units, validate_case_config
 
 
 def run_case_from_config(
@@ -27,11 +27,16 @@ def run_case_from_config(
     if case_id is not None:
         config["case"]["case_id"] = case_id
     if mode is not None:
-        if mode not in {"archie_only", "multisignal"}:
-            raise ValueError("--mode must be archie_only or multisignal")
+        if mode not in {"archie_only", "multisignal", "three_phase"}:
+            raise ValueError("--mode must be archie_only, multisignal, or three_phase")
         config["case"]["mode"] = mode
+        if mode == "three_phase":
+            config.setdefault("three_phase", {})["enabled"] = True
+    validate_case_config(config)
+    config = normalize_units(config)
 
     if dry_run:
+        three_phase_enabled = bool(config.get("three_phase", {}).get("enabled", False))
         summary = {
             "case_id": config["case"]["case_id"],
             "output_dir": config["case"]["output_dir"],
@@ -44,6 +49,10 @@ def run_case_from_config(
             "capillary_model": config["capillary_pressure"]["model"],
             "gravity_enabled": bool(config["gravity"]["enabled"]),
             "combined_transport_enabled": bool(config["capillary_pressure"]["enabled"]) and bool(config["gravity"]["enabled"]),
+            "three_phase_enabled": three_phase_enabled,
+            "three_phase_model": config.get("three_phase", {}).get("model", "none"),
+            "three_phase_transport_enabled": three_phase_enabled,
+            "black_oil_enabled": False,
             "rho_w": config["gravity"]["rho_w"],
             "rho_o": config["gravity"]["rho_o"],
             "density_difference": config["gravity"]["rho_w"] - config["gravity"]["rho_o"],
@@ -77,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--output-dir")
     parser.add_argument("--case-id")
-    parser.add_argument("--mode", choices=["archie_only", "multisignal"])
+    parser.add_argument("--mode", choices=["archie_only", "multisignal", "three_phase"])
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)

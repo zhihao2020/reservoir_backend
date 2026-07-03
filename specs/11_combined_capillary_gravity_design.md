@@ -190,7 +190,79 @@ single-path behavior.
 
 Planned follow-up stages:
 
-- `032_combined_profiling_and_validation`
+### 032_combined_profiling_and_validation
+
+`032_combined_profiling_and_validation` is implemented as an external harness
+layer. It does not modify the solver kernels.
+
+Combined profiling runs:
+
+- `config/demo_case.yaml`
+- `config/capillary_case.yaml`
+- `config/gravity_case.yaml`
+- `config/combined_case.yaml`
+
+The profiling report records runtime, cell count, time-step count, capillary /
+gravity / combined flags, CFL, material balance, max capillary flux, max gravity
+flux, max total water flux, max effective flux, and success. The report files
+are:
+
+- `profiling_reports/combined_performance_summary.json`
+- `profiling_reports/combined_performance_summary.md`
+
+Combined validation runs `config/combined_case.yaml` and checks required output
+files, `Sw` bounds, nonnegative `Pc`, finite `Pc` / flux / `Sw`, nonzero
+capillary flux, nonzero internal gravity z flux, reasonable material balance,
+`combined_transport_enabled=true`, and `success=true`. The report files are:
+
+- `validation_reports/combined_validation_summary.json`
+- `validation_reports/combined_validation_summary.md`
+
+DT sensitivity uses the same combined case with:
+
+- `dt = base_dt`
+- `dt = base_dt / 2`
+- `dt = base_dt / 4`
+
+Each record includes `dt`, `max_cfl`, `material_balance_error`,
+`sw_simulated_min`, `sw_simulated_max`, runtime, and success. Reducing `dt`
+must not introduce NaN / Inf values, saturation-bound violations, or a clear
+material-balance regression.
+
+Explicit-format risk remains:
+
+- strong capillary pressure may impose a strict diffusion-like time-step limit
+- fine grids reduce pore volume and tighten CFL
+- strong density contrast can increase segregation flux
+
+C++ migration should not start from the combined path alone unless profiling
+shows a concrete bottleneck, such as pressure assembly / solve, face flux
+composition, or saturation update dominating runtime at engineering-scale case
+sizes. Python remains the source of truth for configuration, IO, tests, and
+reports.
+
+Semi-implicit capillary diffusion remains a future option. It should be
+triggered only if validation/profiling shows explicit combined transport needs
+impractically small `dt`, produces sensitivity that does not improve with
+smaller `dt`, or larger capillary-gradient cases become unstable despite CFL
+checks.
+
+## 11. Release Candidate Documentation
+
+Release Candidate v2 documentation is organized under `docs/` and README:
+
+- architecture and module boundaries
+- numerical methods and sign conventions
+- YAML case configuration
+- CLI usage
+- validation and profiling reproduction
+- limitations and roadmap
+- module capability matrix
+- release and regression checklist
+
+This stage is documentation-only. It does not modify pressure, velocity,
+relative permeability, CFL, saturation, capillary, gravity, inversion, fusion,
+UDP, or C++ implementation files.
 
 ## 10. Test Plan
 

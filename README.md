@@ -1,178 +1,212 @@
-# reservoir_backend
+# reservoir_backend Release Candidate v2
 
-Lightweight Python prototype for reservoir backend calculations.
+## Project Overview
 
-Implemented backend modules include:
+`reservoir_backend` is a lightweight Python reservoir-backend prototype for
+structured Cartesian grid workflows. It is a cell-centered finite-volume / TPFA
+prototype for oil-water two-phase studies, inversion-to-simulation demos,
+validation harnesses, and regression testing.
 
-- `Grid3D`, `Field3D`, `Well`, units, and project exceptions
+This project is not a commercial black-oil simulator, not a Petrel replacement,
+and not a CMG replacement. It is intended as a transparent numerical backend
+prototype with small, reproducible cases and pytest coverage.
+
+## Current Capabilities
+
+- Structured Cartesian `Grid3D` and `Field3D`
 - Archie resistivity saturation inversion
-- transmissibility, 1D/2D/3D pressure solve, Darcy face flux and velocity
-- Corey relative permeability, fractional flow, CFL checks
-- standalone Brooks-Corey / van Genuchten / no-capillary Pc(Sw) models and capillary face fluxes
-- standalone oil-water gravity segregation face fluxes
-- 1D/3D oil-water saturation transport, optional 1D/3D capillary water-flux coupling, and optional vertical 1D / 3D gravity water-flux coupling
-- field mapping, confidence weighting, field fusion
-- result management and a full pipeline demo
+- Empirical electromagnetic and acoustic saturation inversion
+- 1D / 2D / 3D steady pressure solve using finite-volume transmissibility
+- Darcy face flux and cell-centered velocity
+- Corey relative permeability and fractional flow
+- Explicit oil-water saturation transport with CFL checks
+- Optional capillary pressure and capillary face flux
+- Optional gravity segregation flux
+- Optional combined capillary + gravity transport
+- Independent three-phase Corey-style relperm / mobility / fractional flow
+- Independent three-phase advective phase flux
+- Independent three-phase 1D explicit transport
+- Independent three-phase 3D explicit transport
+- YAML/CLI `three_phase_case.yaml` for simplified incompressible WOG transport
+- Three-phase is still not black-oil: no PVT, Rs/Rv, bubble point, or phase
+  appearance / disappearance
+- cross-scale analysis design for one backend with two first-level modules:
+  computational module and cross-scale module
+- The cross-scale implementation is not yet complete; similarity criteria,
+  scale-effect analysis, and lab-field validation remain planned
+- Field fusion with confidence weighting
+- CLI case runner, result export, validation, and profiling scripts
 
-## Install
+## Installation / Environment
 
 ```bash
+cd reservoir_backend
 pip install -e .
 ```
 
-## Test
+Python dependencies are listed in `requirements.txt` and `pyproject.toml`.
+
+## Quick Start
+
+Run the default small case:
 
 ```bash
-pytest -q
+python scripts/run_case.py --config config/demo_case.yaml
 ```
 
-## Full Pipeline Demo
+Run the combined capillary + gravity case:
 
 ```bash
-python examples/run_full_pipeline_demo.py
-```
-
-This writes a complete small case to `results/demo_case`.
-
-## Config-Driven Case Runner
-
-Run a YAML-configured case through the backend pipeline:
-
-```bash
-python -m reservoir_backend.cli.run_case --config config/demo_case.yaml
-python scripts/run_case.py --config config/multisignal_case.yaml
-python scripts/run_case.py --config config/capillary_case.yaml
-python scripts/run_case.py --config config/capillary_gradient_case.yaml
-python scripts/run_case.py --config config/gravity_case.yaml
 python scripts/run_case.py --config config/combined_case.yaml
 ```
 
-Useful options:
-
-- `--output-dir PATH` overrides `case.output_dir`
-- `--case-id NAME` overrides `case.case_id`
-- `--mode archie_only|multisignal` overrides `case.mode`
-- `--dry-run` validates and prints the normalized core parameters without writing results
-- `--verbose` prints formatted JSON output
-
-Case YAML files may include an optional standalone capillary pressure section:
-
-```yaml
-capillary_pressure:
-  enabled: false
-  model: none  # none, brooks_corey, or van_genuchten
-  entry_pressure_pa: 1000.0
-  lambda_pc: 2.0
-  p0_pa: 1000.0
-  m: 0.5
-  n: 2.0
-```
-
-Case YAML files may also include an optional standalone gravity section:
-
-```yaml
-gravity:
-  enabled: false
-  g: 9.80665
-  rho_w: 1000.0
-  rho_o: 800.0
-  depth_axis: z
-  depth_positive: down
-```
-
-Nonuniform initial saturation can be configured for capillary validation:
-
-```yaml
-initial_saturation:
-  type: step_x
-  low_sw: 0.2
-  high_sw: 0.75
-  split_fraction: 0.5
-```
-
-Capillary pressure can be evaluated independently from Pc(Sw). Capillary face
-fluxes can be computed from Sw, Pc(Sw), relative permeability mobility, and
-absolute permeability. The saturation transport path has opt-in
-`advance_saturation_1d_with_capillary` and `advance_saturation_3d_with_capillary`
-entry points. `config/capillary_case.yaml` enables 3D capillary transport in
-the full pipeline. `config/capillary_gradient_case.yaml` also enables a step-x
-initial Sw field and verifies nonzero Pc gradients and capillary flux. These
-cases write:
-
-- `capillary_pressure.npy`
-- `capillary_flux_x.npy`
-- `capillary_flux_y.npy`
-- `capillary_flux_z.npy`
-- `capillary_report.json`
-- `initial_saturation.npy` for nonuniform initial saturation cases
-
-The default demo and multisignal cases keep capillary transport disabled.
-
-Gravity fluxes are available as an independent solver module. The current
-convention is `gravity_flux_z > 0` for bottom-to-top water flux; when water is
-denser than oil, gravity gives negative internal z flux, meaning downward water
-segregation. `advance_saturation_1d_vertical_with_gravity` and
-`advance_saturation_3d_with_gravity` can add that gravity water flux to
-saturation transport. Gravity is disabled in existing YAML cases;
-`config/gravity_case.yaml` enables 3D gravity transport in the full pipeline and
-writes:
-
-- `gravity_flux_x.npy`
-- `gravity_flux_y.npy`
-- `gravity_flux_z.npy`
-- `gravity_report.json`
-
-Capillary and gravity transport can be enabled together through
-`config/combined_case.yaml`. In that mode the pipeline calls
-`advance_saturation_3d_with_capillary_and_gravity`, uses `water_flux_composer`
-to combine `Fw_adv`, `Fw_cap`, and `Fw_grav`, and writes:
-
-- `capillary_pressure.npy`
-- `capillary_flux_x.npy`, `capillary_flux_y.npy`, `capillary_flux_z.npy`
-- `gravity_flux_x.npy`, `gravity_flux_y.npy`, `gravity_flux_z.npy`
-- `combined_report.json`
-
-The config loader requires `capillary_pressure.enabled` to match
-`saturation.use_capillary`, and `gravity.enabled` to match
-`saturation.use_gravity`; mismatched flags are rejected instead of silently
-dropping a physical term.
-
-## Multisignal Inversion Demo
+Run the simplified three-phase WOG case:
 
 ```bash
-python examples/run_multisignal_inversion_demo.py
+python scripts/run_case.py --config config/three_phase_case.yaml
 ```
 
-This writes resistivity, electromagnetic, acoustic, and confidence-weighted
-signal-fused saturation fields to `results/multisignal_demo`.
+Dry-run a case without writing simulation results:
+
+```bash
+python scripts/run_case.py --config config/combined_case.yaml --dry-run
+```
+
+## CLI Usage
+
+Supported entry points:
+
+```bash
+python scripts/run_case.py --config config/demo_case.yaml
+python -m reservoir_backend.cli.run_case --config config/demo_case.yaml
+```
+
+Supported arguments:
+
+- `--config`
+- `--output-dir`
+- `--case-id`
+- `--mode`
+- `--dry-run`
+- `--verbose`
+
+See `docs/cli_usage.md`.
+
+## Available Cases
+
+- `config/demo_case.yaml`: Archie-only base pipeline
+- `config/multisignal_case.yaml`: resistivity / EM / acoustic signal fusion
+- `config/capillary_case.yaml`: capillary transport enabled
+- `config/capillary_gradient_case.yaml`: nonuniform Sw capillary validation
+- `config/gravity_case.yaml`: gravity transport enabled
+- `config/combined_case.yaml`: combined capillary + gravity transport enabled
+- `config/three_phase_case.yaml`: simplified incompressible water-oil-gas
+  advective transport
+
+See `docs/case_configuration.md`.
+
+## Output Files
+
+Typical output directories are under `results/<case_id>/`. The full pipeline
+can write pressure, saturation, velocity, face fluxes, production curves,
+material-balance reports, fusion reports, solver reports, capillary reports,
+gravity reports, combined reports, and case summaries.
 
 ## Validation
 
 ```bash
+pytest -q
 python harness/run_validation.py
+python scripts/validate_combined_pipeline.py
+python scripts/validate_three_phase_pipeline.py
 ```
 
-This runs tests, executes the full pipeline demo, checks output files and
-physical ranges, and writes:
+Current release-candidate result:
 
-- `validation_reports/validation_summary.json`
-- `validation_reports/validation_summary.md`
+- `pytest -q`: 585 passed
+- combined validation success: true
+- material_balance_error: 0.0
+
+See `docs/validation_and_profiling.md`.
 
 ## Profiling
 
 ```bash
 python scripts/profile_full_pipeline.py
 python scripts/profile_capillary_pipeline.py
+python scripts/profile_combined_pipeline.py
+python scripts/profile_three_phase_pipeline.py
 ```
 
-This profiles small, medium, and large-lite Python cases and writes:
+Current combined profiling result:
 
-- `profiling_reports/performance_summary.json`
-- `profiling_reports/performance_summary.md`
-- `profiling_reports/capillary_performance_summary.json`
-- `profiling_reports/capillary_performance_summary.md`
+- combined_case runtime approximately 0.07 s
+- combined/demo runtime ratio approximately 1.23x
+- base max_cfl approximately 0.163
 
-## C++ Migration
+Current recommendation: no C++ yet. C++ is planned only after larger-scale
+profiling shows a concrete bottleneck.
 
-C++ is not implemented now. See `specs/09_cpp_migration_spec.md`; C++ work only
-starts after validation passes and profiling identifies a concrete bottleneck.
+Three-phase validation/profiling is also available for `three_phase_case.yaml`.
+It checks `Sw + So + Sg = 1`, saturation bounds, CFL, material balance, dt
+sensitivity, and records runtime for demo / combined / three-phase cases.
+Current small-case recommendation: no C++ and no black-oil escalation yet.
+
+Cross-scale analysis is currently design-only. The design keeps Requirements 1
+and 2 in one Reservoir Digital Twin Backend rather than splitting them into two
+software products. The future `cross_scale` module will read computational
+outputs and produce similarity, scale-effect, mapping, validation, and
+cross-scale reports. It will not perform history matching or automatic
+parameter calibration in the MVP.
+
+## Numerical Method Summary
+
+The prototype uses structured Cartesian grids, cell-centered unknowns,
+face-centered flux arrays, TPFA-style transmissibility, finite-volume pressure
+balance, upwind fractional flow, explicit saturation updates, CFL checks, and
+material-balance reporting.
+
+Optional combined transport uses:
+
+```text
+Fw_total = Fw_adv + Fw_cap + Fw_grav
+```
+
+Current recommendation: no semi-implicit capillary diffusion yet. It becomes a
+candidate only if strong capillary pressure, fine grids, or dt sensitivity show
+explicit-step instability or impractically small time steps.
+
+See `docs/numerical_methods.md`.
+
+## Limitations
+
+The current CLI pipeline supports a simplified incompressible WOG three-phase
+case, but it does not support black-oil PVT, solution gas / vaporized oil,
+bubble point, phase appearance / disappearance, commercial-grade well controls, corner-point grids, NNC, local grid
+refinement, fully implicit Newton coupling, geomechanics, thermal models,
+reactive transport, production-scale parallel simulation, completed
+cross-scale analysis implementation, history matching, automatic parameter
+calibration, or real-time frontend communication. UDP is deferred because the
+frontend protocol is unknown.
+
+See `docs/limitations_and_roadmap.md`.
+
+## Roadmap
+
+Near-term work should focus on engineering hardening, CI, packaging, API
+stabilization, larger profiling, and clearer sample datasets. Physics expansion
+such as three-phase validation/profiling, black-oil design, well controls, PVT
+tables, cross-scale similarity criteria, scale-effect analysis, lab-field
+validation, and relative-permeability tables should remain separate design stages.
+C++ kernels should be considered only when profiling justifies them.
+
+## Documentation Index
+
+- `docs/architecture.md`
+- `docs/numerical_methods.md`
+- `docs/case_configuration.md`
+- `docs/cli_usage.md`
+- `docs/validation_and_profiling.md`
+- `docs/limitations_and_roadmap.md`
+- `docs/module_matrix.md`
+- `docs/release_checklist.md`

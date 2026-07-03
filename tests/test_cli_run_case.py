@@ -82,6 +82,24 @@ def test_cli_dry_run_combined_case(tmp_path) -> None:
     assert not output_dir.exists()
 
 
+def test_cli_run_three_phase_case(tmp_path) -> None:
+    result = _run_cli("--config", "config/three_phase_case.yaml", "--output-dir", str(tmp_path), "--case-id", "three_cli")
+    assert result.returncode == 0
+    assert (tmp_path / "three_cli" / "sw_three_phase.npy").exists()
+    assert (tmp_path / "three_cli" / "three_phase_report.json").exists()
+
+
+def test_cli_dry_run_three_phase_case(tmp_path) -> None:
+    output_dir = tmp_path / "three_dry"
+    result = _run_cli("--config", "config/three_phase_case.yaml", "--output-dir", str(output_dir), "--dry-run")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["three_phase_enabled"] is True
+    assert payload["three_phase_transport_enabled"] is True
+    assert payload["black_oil_enabled"] is False
+    assert not output_dir.exists()
+
+
 def test_cli_outputs_case_summary(tmp_path) -> None:
     _run_cli("--config", "config/demo_case.yaml", "--output-dir", str(tmp_path), "--case-id", "summary_case")
     summary = json.loads((tmp_path / "summary_case" / "case_summary.json").read_text())

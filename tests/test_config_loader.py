@@ -44,6 +44,16 @@ def test_load_combined_case_config() -> None:
     assert config["outputs"]["save_combined_report"] is True
 
 
+def test_load_three_phase_case_config() -> None:
+    config = load_case_config("config/three_phase_case.yaml")
+    assert config["case"]["case_id"] == "three_phase_case"
+    assert config["case"]["mode"] == "three_phase"
+    assert config["three_phase"]["enabled"] is True
+    assert config["three_phase"]["model"] == "incompressible_wog"
+    assert config["relperm_three_phase"]["swi"] == pytest.approx(0.2)
+    assert config["fluid"]["mu_g"] == pytest.approx(1.0e-5)
+
+
 def test_inconsistent_capillary_flags_raise(tmp_path) -> None:
     config = load_case_config("config/combined_case.yaml")
     config["saturation"]["use_capillary"] = False

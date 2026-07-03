@@ -28,6 +28,8 @@ from reservoir_backend.solver.saturation_solver import (
     advance_saturation_3d_with_capillary_and_gravity,
     advance_saturation_3d_with_gravity,
 )
+from reservoir_backend.solver.three_phase_relperm import compute_oil_saturation
+from reservoir_backend.solver.three_phase_transport import advance_three_phase_saturation_3d
 from reservoir_backend.solver.velocity import compute_darcy_velocity
 from examples.run_multisignal_inversion_demo import build_multisignal_inversion
 
@@ -58,6 +60,9 @@ def run_demo(
     case_config: dict | None = None,
 ) -> dict[str, object]:
     """Run the full small backend pipeline and save outputs."""
+    if _is_three_phase_config(case_config):
+        return _run_three_phase_demo(case_id=case_id, results_root=results_root, case_config=case_config)
+
     root = PROJECT_ROOT / "results" if results_root is None else Path(results_root)
     manager = ResultManager(root)
     case_dir = manager.create_case_dir(case_id)
@@ -485,6 +490,151 @@ def run_demo(
     manager.save_case_summary(case_summary)
     manager.validate_required_outputs(case_id, REQUIRED_OUTPUTS)
     return {"case_id": case_id, "case_dir": case_dir, "summary": summary}
+
+
+def _run_three_phase_demo(
+    *,
+    case_id: str,
+    results_root: str | Path | None,
+    case_config: dict,
+) -> dict[str, object]:
+    """Run the simplified incompressible WOG three-phase pipeline."""
+    root = PROJECT_ROOT / "results" if results_root is None else Path(results_root)
+    manager = ResultManager(root)
+    case_dir = manager.create_case_dir(case_id)
+
+    grid_config = case_config["grid"]
+    grid = Grid3D(
+        nx=int(grid_config["nx"]),
+        ny=int(grid_config["ny"]),
+        nz=int(grid_config["nz"]),
+        dx=float(grid_config["dx"]),
+        dy=float(grid_config["dy"]),
+        dz=float(grid_config["dz"]),
+    )
+    rock_config = case_config["rock"]
+    fluid_config = case_config["fluid"]
+    pressure_config = case_config["pressure"]
+    saturation_config = case_config["saturation"]
+    initial_config = case_config["initial_saturation"]
+    injection_config = case_config.get("injection_composition", {})
+    relperm_config = case_config["relperm_three_phase"]
+
+    permeability = float(rock_config.get("permeability_m2", rock_config.get("permeability", permeability_to_m2(1.0, "mD"))))
+    phi_value = float(rock_config["porosity"])
+    phi = Field3D.from_constant(grid, phi_value, name="porosity", unit="fraction")
+    params = {
+        "swi": float(relperm_config["swi"]),
+        "sor": float(relperm_config["sor"]),
+        "sgc": float(relperm_config["sgc"]),
+        "krw0": float(relperm_config["krw0"]),
+        "kro0": float(relperm_config["kro0"]),
+        "krg0": float(relperm_config["krg0"]),
+        "nw": float(relperm_config["nw"]),
+        "no": float(relperm_config["no"]),
+        "ng": float(relperm_config["ng"]),
+        "mu_w": float(fluid_config["mu_w"]),
+        "mu_o": float(fluid_config["mu_o"]),
+        "mu_g": float(fluid_config["mu_g"]),
+    }
+
+    sw = np.full(grid.shape, float(initial_config["sw"]), dtype=float)
+    sg = np.full(grid.shape, float(initial_config["sg"]), dtype=float)
+    so = np.asarray(compute_oil_saturation(sw, sg), dtype=float)
+
+    pressure_result = solve_steady_state_pressure_3d(
+        grid=grid,
+        kx=permeability,
+        ky=permeability,
+        kz=permeability,
+        mu=float(fluid_config["mu_w"]),
+        dirichlet_boundaries={
+            "left": float(pressure_config.get("left_pressure_pa", 10.0e6)),
+            "right": float(pressure_config.get("right_pressure_pa", 9.0e6)),
+        },
+    )
+    velocity_result = compute_darcy_velocity(
+        grid=grid,
+        pressure=pressure_result.pressure,
+        kx=permeability,
+        ky=permeability,
+        kz=permeability,
+        mu=float(fluid_config["mu_w"]),
+    )
+
+    dt = float(saturation_config["dt"])
+    steps = int(saturation_config["steps"])
+    max_cfl = float(saturation_config["max_cfl"])
+    cell_volume = grid.dx * grid.dy * grid.dz
+    injected_sw = injection_config.get("injected_sw")
+    injected_sg = injection_config.get("injected_sg")
+    report: dict[str, object] = {}
+    for _ in range(steps):
+        sw, sg, so, report = advance_three_phase_saturation_3d(
+            flux_x=velocity_result.face_fluxes.flux_x,
+            flux_y=velocity_result.face_fluxes.flux_y,
+            flux_z=velocity_result.face_fluxes.flux_z,
+            sw=sw,
+            sg=sg,
+            phi=phi_value,
+            cell_volume=cell_volume,
+            dt=dt,
+            params=params,
+            max_cfl=max_cfl,
+            injected_sw=None if injected_sw is None else float(injected_sw),
+            injected_sg=None if injected_sg is None else float(injected_sg),
+        )
+
+    manager.save_field("pressure", pressure_result.pressure)
+    manager.save_field("velocity_x", velocity_result.velocity_x)
+    manager.save_field("velocity_y", velocity_result.velocity_y)
+    manager.save_field("velocity_z", velocity_result.velocity_z)
+    manager.save_npy("flux_x", velocity_result.face_fluxes.flux_x)
+    manager.save_npy("flux_y", velocity_result.face_fluxes.flux_y)
+    manager.save_npy("flux_z", velocity_result.face_fluxes.flux_z)
+    manager.save_npy("sw_three_phase", sw)
+    manager.save_npy("sg_three_phase", sg)
+    manager.save_npy("so_three_phase", so)
+    manager.save_json("three_phase_report", report)
+
+    output_files = [path.name for path in manager.list_case_outputs(case_id)]
+    summary = {
+        "case_id": case_id,
+        "grid_shape": list(grid.shape),
+        "total_cells": grid.total_cells,
+        "success": True,
+        "three_phase_enabled": True,
+        "three_phase_model": case_config["three_phase"]["model"],
+        "three_phase_transport_enabled": True,
+        "black_oil_enabled": False,
+        "sw_min": float(np.min(sw)),
+        "sw_max": float(np.max(sw)),
+        "sg_min": float(np.min(sg)),
+        "sg_max": float(np.max(sg)),
+        "so_min": float(np.min(so)),
+        "so_max": float(np.max(so)),
+        "closure_error_max": float(report["closure_error_max"]),
+        "max_cfl": float(report["max_cfl"]),
+        "water_balance_error": float(report["water_balance_error"]),
+        "gas_balance_error": float(report["gas_balance_error"]),
+        "oil_balance_error": float(report["oil_balance_error"]),
+        "has_nan": bool(report["has_nan"]),
+        "has_inf": bool(report["has_inf"]),
+        "output_files": sorted(set(output_files + ["case_summary.json"])),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    manager.save_case_summary(summary)
+    manager.validate_required_outputs(
+        case_id,
+        ["sw_three_phase.npy", "sg_three_phase.npy", "so_three_phase.npy", "three_phase_report.json", "case_summary.json"],
+    )
+    return {"case_id": case_id, "case_dir": case_dir, "summary": summary}
+
+
+def _is_three_phase_config(case_config: dict | None) -> bool:
+    if case_config is None:
+        return False
+    return bool(case_config.get("three_phase", {}).get("enabled", False)) or case_config.get("case", {}).get("mode") == "three_phase"
 
 
 def build_initial_saturation_field(

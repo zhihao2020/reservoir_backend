@@ -12,12 +12,14 @@ from reservoir_backend.core.exceptions import InvalidPhysicalValueError
 from reservoir_backend.core.units import permeability_to_m2, pressure_to_pa
 from reservoir_backend.solver.capillary_pressure import build_capillary_model_from_config
 from reservoir_backend.solver.gravity_flux import build_gravity_model_from_config
+from reservoir_backend.solver.three_phase_relperm import validate_three_phase_params, validate_three_phase_saturations
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "case": {"case_id": "demo_case", "output_dir": "results", "mode": "archie_only"},
     "rock": {"porosity": 0.2, "permeability_md": 100.0},
     "fluid": {"mu_w": 1.0e-3, "mu_o": 5.0e-3},
+    "three_phase": {"enabled": False, "model": "incompressible_wog", "primary_variables": ["Sw", "Sg"]},
     "archie": {"a": 1.0, "m": 2.0, "n": 2.0, "rw": 0.25, "swi": 0.2, "sor": 0.2},
     "electromagnetic": {
         "enabled": False,
@@ -81,6 +83,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "depth_axis": "z",
         "depth_positive": "down",
     },
+    "injection_composition": {"injected_sw": None, "injected_sg": None},
     "fusion": {"signal_weights": [1.0, 1.0, 1.0], "dynamic_alpha": 0.5},
     "outputs": {
         "save_flux": True,
@@ -90,6 +93,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "save_capillary_flux": False,
         "save_gravity_flux": False,
         "save_combined_report": False,
+        "save_three_phase_saturations": False,
+        "save_three_phase_report": False,
     },
 }
 
@@ -119,8 +124,8 @@ def validate_case_config(config: dict[str, Any]) -> None:
     for key in ["case_id", "output_dir", "mode"]:
         if key not in config["case"]:
             raise KeyError(f"missing required case.{key}")
-    if config["case"]["mode"] not in {"archie_only", "multisignal"}:
-        raise ValueError("case.mode must be 'archie_only' or 'multisignal'")
+    if config["case"]["mode"] not in {"archie_only", "multisignal", "three_phase"}:
+        raise ValueError("case.mode must be 'archie_only', 'multisignal', or 'three_phase'")
 
     grid = config["grid"]
     for key in ["nx", "ny", "nz"]:
@@ -132,7 +137,10 @@ def validate_case_config(config: dict[str, Any]) -> None:
 
     if not 0.0 < float(config["rock"]["porosity"]) < 1.0:
         raise InvalidPhysicalValueError("rock.porosity must be in (0, 1)")
-    if float(config["rock"]["permeability_md"]) < 0.0:
+    if "permeability" in config["rock"]:
+        if float(config["rock"]["permeability"]) < 0.0:
+            raise InvalidPhysicalValueError("rock.permeability must be non-negative")
+    elif float(config["rock"]["permeability_md"]) < 0.0:
         raise InvalidPhysicalValueError("rock.permeability_md must be non-negative")
     if float(config["fluid"]["mu_w"]) <= 0.0 or float(config["fluid"]["mu_o"]) <= 0.0:
         raise InvalidPhysicalValueError("fluid viscosities must be positive")
@@ -155,6 +163,7 @@ def validate_case_config(config: dict[str, Any]) -> None:
         raise InvalidPhysicalValueError("initial_saturation.radius_fraction must be in (0, 1]")
     build_capillary_model_from_config(config)
     build_gravity_model_from_config(config)
+    _validate_three_phase_config(config)
     capillary_enabled = bool(config.get("capillary_pressure", {}).get("enabled", False))
     gravity_enabled = bool(config.get("gravity", {}).get("enabled", False))
     use_capillary = bool(saturation.get("use_capillary", False))
@@ -172,7 +181,10 @@ def validate_case_config(config: dict[str, Any]) -> None:
 def normalize_units(config: dict[str, Any]) -> dict[str, Any]:
     """Add normalized SI-unit values to the config."""
     normalized = deepcopy(config)
-    normalized["rock"]["permeability_m2"] = permeability_to_m2(float(normalized["rock"]["permeability_md"]), "mD")
+    if "permeability" in normalized["rock"]:
+        normalized["rock"]["permeability_m2"] = float(normalized["rock"]["permeability"])
+    else:
+        normalized["rock"]["permeability_m2"] = permeability_to_m2(float(normalized["rock"]["permeability_md"]), "mD")
     pressure_unit = normalized["pressure"].get("pressure_unit", "MPa")
     normalized["pressure"]["left_pressure_pa"] = pressure_to_pa(float(normalized["pressure"]["left_pressure"]), pressure_unit)
     normalized["pressure"]["right_pressure_pa"] = pressure_to_pa(float(normalized["pressure"]["right_pressure"]), pressure_unit)
@@ -182,6 +194,9 @@ def normalize_units(config: dict[str, Any]) -> dict[str, Any]:
     )
     normalized["capillary_pressure"] = build_capillary_model_from_config(normalized)
     normalized["gravity"] = build_gravity_model_from_config(normalized)
+    if _three_phase_requested(normalized):
+        normalized["three_phase"]["enabled"] = True
+        normalized["case"]["mode"] = "three_phase"
     return normalized
 
 
@@ -206,3 +221,56 @@ def np_is_finite_float(value: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return numeric == numeric and numeric not in (float("inf"), float("-inf"))
+
+
+def _three_phase_requested(config: dict[str, Any]) -> bool:
+    return bool(config.get("three_phase", {}).get("enabled", False)) or config.get("case", {}).get("mode") == "three_phase"
+
+
+def _validate_three_phase_config(config: dict[str, Any]) -> None:
+    three_phase = config.get("three_phase", {})
+    if "enabled" in three_phase and not isinstance(three_phase["enabled"], bool):
+        raise ValueError("three_phase.enabled must be bool")
+    if not _three_phase_requested(config):
+        return
+
+    if config["case"]["mode"] == "multisignal":
+        raise ValueError("three-phase pipeline does not support multisignal mode")
+    if str(three_phase.get("model", "")) != "incompressible_wog":
+        raise ValueError("three-phase model must be incompressible_wog")
+
+    capillary_enabled = bool(config.get("capillary_pressure", {}).get("enabled", False))
+    gravity_enabled = bool(config.get("gravity", {}).get("enabled", False))
+    saturation = config["saturation"]
+    if capillary_enabled or gravity_enabled or bool(saturation.get("use_capillary", False)) or bool(saturation.get("use_gravity", False)):
+        raise ValueError("three-phase pipeline does not support capillary/gravity/combined transport yet")
+
+    if "relperm_three_phase" not in config:
+        raise KeyError("missing required config section: relperm_three_phase")
+    relperm = config["relperm_three_phase"]
+    if "no" not in relperm and False in relperm:
+        relperm["no"] = relperm[False]
+    required_relperm = ["swi", "sor", "sgc", "krw0", "kro0", "krg0", "nw", "no", "ng"]
+    for key in required_relperm:
+        if key not in relperm:
+            raise KeyError(f"missing required relperm_three_phase.{key}")
+    for key in ["mu_w", "mu_o", "mu_g"]:
+        if key not in config["fluid"]:
+            raise KeyError(f"missing required fluid.{key}")
+        if float(config["fluid"][key]) <= 0.0:
+            raise InvalidPhysicalValueError(f"fluid.{key} must be positive")
+
+    params = {
+        **{key: float(relperm[key]) for key in required_relperm},
+        "mu_w": float(config["fluid"]["mu_w"]),
+        "mu_o": float(config["fluid"]["mu_o"]),
+        "mu_g": float(config["fluid"]["mu_g"]),
+    }
+    validate_three_phase_params(params)
+
+    initial = config.get("initial_saturation", {})
+    if "sw" not in initial or "sg" not in initial:
+        raise KeyError("three-phase initial_saturation requires sw and sg")
+    sw = float(initial["sw"])
+    sg = float(initial["sg"])
+    validate_three_phase_saturations(sw, sg, params)
