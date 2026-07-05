@@ -112,6 +112,15 @@ and implicit-deferred fallback warnings. It preserves the first-order upwind
 baseline and does not implement a fully implicit saturation solver, black-oil
 transport, PVT, or commercial simulator equivalence.
 
+The performance baseline stage is completed for TASK-019. It measures the
+current Python / NumPy / SciPy implementation on small, medium, and large
+synthetic pressure, saturation transport, fusion, cross-scale, and benchmark
+registry cases. It records runtime, peak Python allocation, array size,
+slowest stage, report generation time, and deterministic numerical
+equivalence. Current baseline conclusion: C++ and numba migration are not
+recommended until larger profiling shows a concrete hotspot. It does not
+implement C++, pybind11, numba kernels, or numerical algorithm changes.
+
 `docs/interface_contract.md` records a future command-style JSON interface
 contract. A minimal UDP JSON Archie prototype exists in
 `reservoir_backend/api/udp_server.py`, but full UDP product development remains
@@ -141,6 +150,7 @@ interface.
 - 011_pressure_solver_wells_boundaries_backends completed
 - 014_saturation_transport_tvd_cfl_fallback completed
 - 016_parameter_fusion_uncertainty_completed
+- 019_performance_baseline_completed
 
 ## Physics Enhancement
 
@@ -176,6 +186,8 @@ interface.
 - sparse solver improvements
 - vectorization review
 - C++ kernel only if needed
+- TASK-019 performance baseline completed; current synthetic cases do not
+  justify C++ or numba migration
 
 ## Function Hardening Roadmap
 

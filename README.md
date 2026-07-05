@@ -297,6 +297,19 @@ runtime dependencies, or claim full SPE1/SPE10 reproduction, OPM Flow
 equivalence, MRST integration, commercial simulator equivalence, or black-oil
 validation.
 
+The performance baseline is available through:
+
+```bash
+python -m reservoir_backend.performance.performance_report
+```
+
+It writes `accuracy_reports/performance_baseline_summary.json` and
+`accuracy_reports/performance_baseline_summary.md` with small / medium / large
+synthetic runtime, memory, slowest-stage, report-generation, and numerical
+equivalence metrics for pressure, saturation transport, parameter fusion,
+cross-scale reports, and benchmark registry aggregation. Current TASK-019
+baseline recommendation: no C++ and no numba migration yet.
+
 Experimental data fixtures are available under:
 
 ```text
@@ -420,6 +433,7 @@ considered only when profiling justifies them.
 - `docs/parameter_fusion_validation.md`
 - `docs/benchmark_registry.md`
 - `docs/open_source_benchmark_references.md`
+- `docs/performance_baseline.md`
 - `docs/function_benchmark_matrix.md`
 - `docs/benchmark_selection_policy.md`
 - `docs/interface_contract.md`

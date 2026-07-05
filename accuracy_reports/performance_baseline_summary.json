@@ -1,0 +1,328 @@
+{
+  "benchmark_name": "performance_baseline",
+  "source_task": "TASK-019",
+  "success": true,
+  "runtime_environment": {
+    "implementation": "Python / NumPy / SciPy",
+    "numba_used": false,
+    "cpp_used": false,
+    "pybind11_used": false
+  },
+  "case_profiles": [
+    {
+      "case_id": "small",
+      "grid_shape": [
+        3,
+        4,
+        8
+      ],
+      "total_cells": 96,
+      "saturation_nx": 64,
+      "stages": [
+        {
+          "stage_name": "pressure",
+          "success": true,
+          "runtime_sec": 0.015843500004848465,
+          "memory_peak_mb": 0.07505416870117188,
+          "error": null,
+          "array_size_bytes": 768,
+          "solver_iterations": null,
+          "solver_backend": "scipy.sparse.linalg.spsolve",
+          "residual_norm": 1.0408340855860843e-17,
+          "mass_balance_error": 3.903127820947816e-17,
+          "pressure_min": 2500000.000000001,
+          "pressure_max": 9500000.000000004,
+          "pressure_checksum": 576000000.0000004,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "saturation_transport",
+          "success": true,
+          "runtime_sec": 0.017996199982007965,
+          "memory_peak_mb": 0.02237415313720703,
+          "error": null,
+          "array_size_bytes": 1032,
+          "max_cfl": 0.008,
+          "material_balance_error": 0.0,
+          "saturation_min": 0.2,
+          "saturation_max": 0.20400000000000001,
+          "saturation_checksum": 12.803999999999998,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "fusion",
+          "success": true,
+          "runtime_sec": 0.0007772999815642834,
+          "memory_peak_mb": 0.016223907470703125,
+          "error": null,
+          "array_size_bytes": 2304,
+          "fused_min": 0.23292682926829267,
+          "fused_max": 0.8329268292682926,
+          "fused_checksum": 51.1609756097561,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "cross_scale",
+          "success": true,
+          "runtime_sec": 0.003262299986090511,
+          "memory_peak_mb": 0.012409210205078125,
+          "error": null,
+          "array_size_bytes": 0,
+          "similarity_score": 0.16586000000000004,
+          "regime_shift_detected": true,
+          "rmse": 0.061237243569579436,
+          "mae": 0.04999999999999999,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "benchmark_registry",
+          "success": true,
+          "runtime_sec": 0.03498670001863502,
+          "memory_peak_mb": 0.24600982666015625,
+          "error": null,
+          "array_size_bytes": 41840,
+          "num_benchmark_summaries": 6,
+          "num_benchmark_cases": 43,
+          "num_failed_cases": 0,
+          "overclaim_warning_count": 0,
+          "has_nan": false,
+          "has_inf": false
+        }
+      ],
+      "success": true,
+      "total_runtime_sec": 0.07286599997314624,
+      "total_memory_peak_mb": 0.24600982666015625,
+      "has_nan": false,
+      "has_inf": false
+    },
+    {
+      "case_id": "medium",
+      "grid_shape": [
+        4,
+        8,
+        12
+      ],
+      "total_cells": 384,
+      "saturation_nx": 192,
+      "stages": [
+        {
+          "stage_name": "pressure",
+          "success": true,
+          "runtime_sec": 0.04207299998961389,
+          "memory_peak_mb": 0.23063373565673828,
+          "error": null,
+          "array_size_bytes": 3072,
+          "solver_iterations": null,
+          "solver_backend": "scipy.sparse.linalg.spsolve",
+          "residual_norm": 2.7755575615628914e-17,
+          "mass_balance_error": 1.8263385595518322e-16,
+          "pressure_min": 2333333.333333335,
+          "pressure_max": 9666666.666666675,
+          "pressure_checksum": 2304000000.0000043,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "saturation_transport",
+          "success": true,
+          "runtime_sec": 0.05351699999300763,
+          "memory_peak_mb": 0.02629852294921875,
+          "error": null,
+          "array_size_bytes": 3080,
+          "max_cfl": 0.008,
+          "material_balance_error": 0.0,
+          "saturation_min": 0.2,
+          "saturation_max": 0.20400000000000001,
+          "saturation_checksum": 38.403999999999996,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "fusion",
+          "success": true,
+          "runtime_sec": 0.000898300000699237,
+          "memory_peak_mb": 0.04959297180175781,
+          "error": null,
+          "array_size_bytes": 9216,
+          "fused_min": 0.23292682926829267,
+          "fused_max": 0.8329268292682926,
+          "fused_checksum": 204.6439024390244,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "cross_scale",
+          "success": true,
+          "runtime_sec": 0.0029710999806411564,
+          "memory_peak_mb": 0.009710311889648438,
+          "error": null,
+          "array_size_bytes": 0,
+          "similarity_score": 0.16586000000000004,
+          "regime_shift_detected": true,
+          "rmse": 0.061237243569579436,
+          "mae": 0.04999999999999999,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "benchmark_registry",
+          "success": true,
+          "runtime_sec": 0.034127999999327585,
+          "memory_peak_mb": 0.2435302734375,
+          "error": null,
+          "array_size_bytes": 41840,
+          "num_benchmark_summaries": 6,
+          "num_benchmark_cases": 43,
+          "num_failed_cases": 0,
+          "overclaim_warning_count": 0,
+          "has_nan": false,
+          "has_inf": false
+        }
+      ],
+      "success": true,
+      "total_runtime_sec": 0.1335873999632895,
+      "total_memory_peak_mb": 0.2435302734375,
+      "has_nan": false,
+      "has_inf": false
+    },
+    {
+      "case_id": "large",
+      "grid_shape": [
+        5,
+        10,
+        16
+      ],
+      "total_cells": 800,
+      "saturation_nx": 384,
+      "stages": [
+        {
+          "stage_name": "pressure",
+          "success": true,
+          "runtime_sec": 0.09167920000618324,
+          "memory_peak_mb": 0.5434770584106445,
+          "error": null,
+          "array_size_bytes": 6400,
+          "solver_iterations": null,
+          "solver_backend": "scipy.sparse.linalg.spsolve",
+          "residual_norm": 3.642919299551295e-17,
+          "mass_balance_error": 2.798325807185087e-16,
+          "pressure_min": 2250000.0,
+          "pressure_max": 9750000.00000001,
+          "pressure_checksum": 4800000000.000008,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "saturation_transport",
+          "success": true,
+          "runtime_sec": 0.09774739999556914,
+          "memory_peak_mb": 0.04475116729736328,
+          "error": null,
+          "array_size_bytes": 6152,
+          "max_cfl": 0.008,
+          "material_balance_error": 0.0,
+          "saturation_min": 0.2,
+          "saturation_max": 0.20400000000000001,
+          "saturation_checksum": 76.804,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "fusion",
+          "success": true,
+          "runtime_sec": 0.0006280000088736415,
+          "memory_peak_mb": 0.09860038757324219,
+          "error": null,
+          "array_size_bytes": 19200,
+          "fused_min": 0.23292682926829267,
+          "fused_max": 0.8329268292682926,
+          "fused_checksum": 426.3414634146341,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "cross_scale",
+          "success": true,
+          "runtime_sec": 0.0023595999809913337,
+          "memory_peak_mb": 0.009587287902832031,
+          "error": null,
+          "array_size_bytes": 0,
+          "similarity_score": 0.16586000000000004,
+          "regime_shift_detected": true,
+          "rmse": 0.061237243569579436,
+          "mae": 0.04999999999999999,
+          "has_nan": false,
+          "has_inf": false
+        },
+        {
+          "stage_name": "benchmark_registry",
+          "success": true,
+          "runtime_sec": 0.020735700003569946,
+          "memory_peak_mb": 0.24350738525390625,
+          "error": null,
+          "array_size_bytes": 41840,
+          "num_benchmark_summaries": 6,
+          "num_benchmark_cases": 43,
+          "num_failed_cases": 0,
+          "overclaim_warning_count": 0,
+          "has_nan": false,
+          "has_inf": false
+        }
+      ],
+      "success": true,
+      "total_runtime_sec": 0.2131498999951873,
+      "total_memory_peak_mb": 0.5434770584106445,
+      "has_nan": false,
+      "has_inf": false
+    }
+  ],
+  "runtime_summary": {
+    "benchmark_registry": 0.08985040002153255,
+    "cross_scale": 0.008592999947723001,
+    "fusion": 0.002303599991137162,
+    "pressure": 0.1495957000006456,
+    "saturation_transport": 0.16926059997058474
+  },
+  "memory_summary": {
+    "benchmark_registry": 0.24600982666015625,
+    "cross_scale": 0.012409210205078125,
+    "fusion": 0.09860038757324219,
+    "pressure": 0.5434770584106445,
+    "saturation_transport": 0.04475116729736328
+  },
+  "slowest_stage": {
+    "case_id": "large",
+    "stage_name": "saturation_transport",
+    "runtime_sec": 0.09774739999556914,
+    "memory_peak_mb": 0.04475116729736328
+  },
+  "numerical_equivalence": {
+    "success": true,
+    "pressure_checksum_error": 0.0,
+    "saturation_checksum_error": 0.0,
+    "fusion_checksum_error": 0.0,
+    "max_abs_error": 0.0
+  },
+  "numba_recommended": false,
+  "cpp_recommended": false,
+  "numba_recommendation": "not recommended for the current synthetic baseline; no clear Python kernel bottleneck was observed",
+  "cpp_recommendation": "not recommended for the current synthetic baseline; keep C++ deferred until larger profiling proves need",
+  "limitations": [
+    "Synthetic small/medium/large cases are performance baselines, not production-scale capacity tests.",
+    "The report does not implement C++, pybind11, numba kernels, or numerical algorithm changes.",
+    "OPM/MRST and commercial simulator equivalence are not claimed.",
+    "C++ or numba migration should start only after larger profiling proves a concrete hotspot."
+  ],
+  "recommendations": [
+    "not recommended for the current synthetic baseline; no clear Python kernel bottleneck was observed",
+    "not recommended for the current synthetic baseline; keep C++ deferred until larger profiling proves need",
+    "Repeat this baseline with larger field-like grids before any kernel migration decision."
+  ],
+  "has_nan": false,
+  "has_inf": false,
+  "report_generation_time_sec": 0.002064000000245869
+}
