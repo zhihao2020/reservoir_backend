@@ -1,0 +1,254 @@
+{
+  "cases": [
+    {
+      "case_name": "variance_weighted_uncertainty_fusion",
+      "diagnostics": {
+        "bounds_violations": 0,
+        "confidence_range": null,
+        "dominant_source": 1,
+        "fallback_used": false,
+        "has_inf": false,
+        "has_nan": false,
+        "num_inf": 0,
+        "num_masked_cells": 0,
+        "num_nan": 0,
+        "success": true,
+        "uncertainty_nonnegative": true,
+        "variance_max": 0.23529411764705882,
+        "variance_mean": 0.23529411764705885,
+        "variance_min": 0.23529411764705882,
+        "warnings": [
+          "confidence field not provided"
+        ],
+        "weighting_policy": "variance"
+      },
+      "grid_shape": [
+        2,
+        3
+      ],
+      "key_metrics": {
+        "dominant_source": 1,
+        "fallback_used": false,
+        "fused_mean": 0.5882352941176471,
+        "variance_mean": 0.23529411764705885,
+        "weighting_policy": "variance"
+      },
+      "limitations": [
+        "Variance weighting is a local fusion policy, not a geological uncertainty loop."
+      ],
+      "success": true,
+      "warnings": [
+        "confidence field not provided"
+      ]
+    },
+    {
+      "case_name": "confidence_weighted_uncertainty_fusion",
+      "grid_shape": [
+        2,
+        3
+      ],
+      "key_metrics": {
+        "dominant_source": 1,
+        "fallback_used": false,
+        "fused_mean": 0.9,
+        "variance_mean": 1.0,
+        "weighting_policy": "confidence"
+      },
+      "limitations": [
+        "Confidence remains a user-provided weight, not calibrated probability."
+      ],
+      "success": true,
+      "warnings": []
+    },
+    {
+      "case_name": "lightweight_kriging_gp_interface",
+      "grid_shape": [
+        6
+      ],
+      "key_metrics": {
+        "fallback_used": false,
+        "method_used": "sklearn_gaussian_process",
+        "prediction_mean": 1.9166662498133595,
+        "variance_mean": 0.3645906283209424
+      },
+      "limitations": [
+        "This is a lightweight interface/fallback, not commercial geostatistical modeling."
+      ],
+      "success": true,
+      "warnings": []
+    },
+    {
+      "case_name": "explicit_weight_fallback_uncertainty",
+      "grid_shape": [
+        2,
+        2
+      ],
+      "key_metrics": {
+        "fallback_used": true,
+        "fused_mean": 2.5,
+        "variance_mean": 0.25,
+        "weighting_policy": "explicit_weight"
+      },
+      "limitations": [
+        "Fallback uses explicit weights when no variance/std/confidence is provided."
+      ],
+      "success": true,
+      "warnings": []
+    },
+    {
+      "case_name": "enkf_esmda_deferred_scope",
+      "grid_shape": [],
+      "key_metrics": {
+        "enkf_deferred": true,
+        "esmda_deferred": true,
+        "fallback_used": true
+      },
+      "limitations": [
+        "EnKF and ES-MDA are future work; no history matching was performed."
+      ],
+      "success": true,
+      "warnings": [
+        "EnKF is deferred; no history matching or ensemble update was performed",
+        "ES-MDA is deferred; no ensemble history matching was performed"
+      ]
+    }
+  ],
+  "fallback_cases": [
+    {
+      "case_name": "explicit_weight_fallback_uncertainty",
+      "grid_shape": [
+        2,
+        2
+      ],
+      "key_metrics": {
+        "fallback_used": true,
+        "fused_mean": 2.5,
+        "variance_mean": 0.25,
+        "weighting_policy": "explicit_weight"
+      },
+      "limitations": [
+        "Fallback uses explicit weights when no variance/std/confidence is provided."
+      ],
+      "success": true,
+      "warnings": []
+    },
+    {
+      "case_name": "enkf_esmda_deferred_scope",
+      "grid_shape": [],
+      "key_metrics": {
+        "enkf_deferred": true,
+        "esmda_deferred": true,
+        "fallback_used": true
+      },
+      "limitations": [
+        "EnKF and ES-MDA are future work; no history matching was performed."
+      ],
+      "success": true,
+      "warnings": [
+        "EnKF is deferred; no history matching or ensemble update was performed",
+        "ES-MDA is deferred; no ensemble history matching was performed"
+      ]
+    }
+  ],
+  "kriging_or_gp_cases": [
+    {
+      "case_name": "lightweight_kriging_gp_interface",
+      "grid_shape": [
+        6
+      ],
+      "key_metrics": {
+        "fallback_used": false,
+        "method_used": "sklearn_gaussian_process",
+        "prediction_mean": 1.9166662498133595,
+        "variance_mean": 0.3645906283209424
+      },
+      "limitations": [
+        "This is a lightweight interface/fallback, not commercial geostatistical modeling."
+      ],
+      "success": true,
+      "warnings": []
+    }
+  ],
+  "limitations": [
+    "No complete EnKF workflow.",
+    "No ES-MDA history matching implemented.",
+    "No automatic calibration implemented.",
+    "No Bayesian inversion workflow implemented.",
+    "No commercial geostatistical modeling implemented.",
+    "No Petrel-like workflow implemented.",
+    "No front-end integration implemented.",
+    "No UDP implementation."
+  ],
+  "num_cases": 5,
+  "num_failed": 0,
+  "num_passed": 5,
+  "report_name": "parameter_fusion_uncertainty",
+  "success": true,
+  "uncertainty_cases": [
+    {
+      "case_name": "variance_weighted_uncertainty_fusion",
+      "diagnostics": {
+        "bounds_violations": 0,
+        "confidence_range": null,
+        "dominant_source": 1,
+        "fallback_used": false,
+        "has_inf": false,
+        "has_nan": false,
+        "num_inf": 0,
+        "num_masked_cells": 0,
+        "num_nan": 0,
+        "success": true,
+        "uncertainty_nonnegative": true,
+        "variance_max": 0.23529411764705882,
+        "variance_mean": 0.23529411764705885,
+        "variance_min": 0.23529411764705882,
+        "warnings": [
+          "confidence field not provided"
+        ],
+        "weighting_policy": "variance"
+      },
+      "grid_shape": [
+        2,
+        3
+      ],
+      "key_metrics": {
+        "dominant_source": 1,
+        "fallback_used": false,
+        "fused_mean": 0.5882352941176471,
+        "variance_mean": 0.23529411764705885,
+        "weighting_policy": "variance"
+      },
+      "limitations": [
+        "Variance weighting is a local fusion policy, not a geological uncertainty loop."
+      ],
+      "success": true,
+      "warnings": [
+        "confidence field not provided"
+      ]
+    },
+    {
+      "case_name": "confidence_weighted_uncertainty_fusion",
+      "grid_shape": [
+        2,
+        3
+      ],
+      "key_metrics": {
+        "dominant_source": 1,
+        "fallback_used": false,
+        "fused_mean": 0.9,
+        "variance_mean": 1.0,
+        "weighting_policy": "confidence"
+      },
+      "limitations": [
+        "Confidence remains a user-provided weight, not calibrated probability."
+      ],
+      "success": true,
+      "warnings": []
+    }
+  ],
+  "warnings": [
+    "confidence field not provided",
+    "EnKF is deferred; no history matching or ensemble update was performed",
+    "ES-MDA is deferred; no ensemble history matching was performed"
+  ]
+}
