@@ -345,6 +345,13 @@ Markdown report index. This is a file-based contract layer only; it does not
 implement a frontend, UDP changes, REST API, database service, or solver
 rewrite.
 
+The project / case management layer is documented in
+`docs/project_case_management.md` and implemented in
+`reservoir_backend.project`. It provides lightweight project metadata, case
+metadata, run history, report path validation, and generated
+`accuracy_reports/project_case_management_summary.json/md` evidence. It is not
+a database service, frontend, UDP / REST API, or Petrel-like workflow.
+
 Cross-scale benchmark hardening is available through
 `reservoir_backend.cross_scale.runner`. It reads dict / JSON / YAML
 configuration, runs similarity criteria, scale-effect analysis, and lab-field
@@ -420,6 +427,7 @@ considered only when profiling justifies them.
 - `docs/data_contract.md`
 - `docs/experimental_data_pipeline.md`
 - `docs/result_manifest.md`
+- `docs/project_case_management.md`
 - `docs/frontend_field_contract.md`
 - `docs/result_export_pipeline.md`
 - `docs/cross_scale_cli.md`

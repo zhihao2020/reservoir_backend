@@ -121,6 +121,14 @@ equivalence. Current baseline conclusion: C++ and numba migration are not
 recommended until larger profiling shows a concrete hotspot. It does not
 implement C++, pybind11, numba kernels, or numerical algorithm changes.
 
+The project / case management layer is completed for TASK-056. It adds
+file-based Project metadata, Case metadata, RunHistory, report links, result
+manifest links, path validation, and `accuracy_reports/project_case_management_summary.json/md`.
+It is not a database service, not a frontend, not UDP or REST API, and not a
+Petrel-like full workflow. It does not modify solver, inversion, fusion,
+cross-scale, data, result, benchmark, reference, config, CLI, API, C++, CMake,
+or pybind11 code.
+
 `docs/interface_contract.md` records a future command-style JSON interface
 contract. A minimal UDP JSON Archie prototype exists in
 `reservoir_backend/api/udp_server.py`, but full UDP product development remains
@@ -151,6 +159,7 @@ interface.
 - 014_saturation_transport_tvd_cfl_fallback completed
 - 016_parameter_fusion_uncertainty_completed
 - 019_performance_baseline_completed
+- 056_project_case_management_completed
 
 ## Physics Enhancement
 
@@ -237,3 +246,8 @@ TASK-017 adds the cross-scale upscaling report layer:
 conversion, lightweight upscaling diagnostics, and fine/coarse comparison
 metrics without implementing multiscale finite-volume, history matching,
 automatic calibration, frontend, UDP, or black-oil model validation.
+
+TASK-056 adds the project / case management layer under
+`reservoir_backend/project/*`. It is limited to file-based metadata and report
+indexing for projects, cases, and runs. It does not add database service,
+frontend integration, UDP, REST API, or Petrel-like workflow.

@@ -1,0 +1,229 @@
+{
+  "summary_name": "project_case_management_summary",
+  "source_task": "TASK-056",
+  "success": true,
+  "project_registry": {
+    "num_projects": 1,
+    "projects": [
+      {
+        "project_id": "project_reservoir_backend_validation",
+        "name": "Reservoir Backend Validation Project",
+        "description": "Lightweight project wrapper for validated backend reports.",
+        "created_at": "2026-07-06T00:00:00+00:00",
+        "metadata": {
+          "source_task": "TASK-056",
+          "management_layer": "file_based"
+        }
+      }
+    ]
+  },
+  "case_registry": {
+    "num_cases": 2,
+    "cases": [
+      {
+        "case_id": "case_benchmark_registry",
+        "project_id": "project_reservoir_backend_validation",
+        "case_name": "Benchmark Registry Evidence Case",
+        "input_paths": [
+          "accuracy_reports/benchmark_registry_summary.json"
+        ],
+        "output_paths": [
+          "accuracy_reports/result_manifest_summary.json"
+        ],
+        "module_tags": [
+          "M8",
+          "benchmark_registry",
+          "result_manifest"
+        ],
+        "status": "validated",
+        "metadata": {
+          "source_task": "TASK-056",
+          "case_type": "report_index"
+        }
+      },
+      {
+        "case_id": "case_performance_baseline",
+        "project_id": "project_reservoir_backend_validation",
+        "case_name": "Performance Baseline Evidence Case",
+        "input_paths": [
+          "accuracy_reports/performance_baseline_summary.json"
+        ],
+        "output_paths": [
+          "accuracy_reports/performance_baseline_summary.md"
+        ],
+        "module_tags": [
+          "M8",
+          "performance",
+          "report"
+        ],
+        "status": "validated",
+        "metadata": {
+          "source_task": "TASK-019",
+          "case_type": "performance_report"
+        }
+      }
+    ]
+  },
+  "run_history": {
+    "num_runs": 1,
+    "runs": [
+      {
+        "run_id": "run_project_case_management_summary",
+        "case_id": "case_benchmark_registry",
+        "started_at": "2026-07-06T00:00:00+00:00",
+        "finished_at": "2026-07-06T00:00:01+00:00",
+        "status": "validated",
+        "report_paths": [
+          "accuracy_reports/benchmark_registry_summary.json",
+          "accuracy_reports/result_manifest_summary.json",
+          "accuracy_reports/performance_baseline_summary.json"
+        ],
+        "result_manifest_paths": [
+          "accuracy_reports/result_manifest_summary.json"
+        ],
+        "metrics": {
+          "num_registered_reports": 9,
+          "success": true
+        },
+        "warnings": []
+      }
+    ]
+  },
+  "report_index": {
+    "success": true,
+    "num_reports": 9,
+    "num_existing_reports": 9,
+    "num_missing_reports": 0,
+    "reports": [
+      {
+        "path": "accuracy_reports/experimental_data_qc_summary.json",
+        "format": "json",
+        "result_type": "experimental_data_qc",
+        "exists": true,
+        "warnings": []
+      },
+      {
+        "path": "accuracy_reports/experimental_data_qc_summary.md",
+        "format": "md",
+        "result_type": "experimental_data_qc",
+        "exists": true,
+        "warnings": []
+      },
+      {
+        "path": "accuracy_reports/saturation_inversion_benchmark_summary.json",
+        "format": "json",
+        "result_type": "benchmark_summary",
+        "exists": true,
+        "warnings": []
+      },
+      {
+        "path": "accuracy_reports/pressure_solver_benchmark_summary.json",
+        "format": "json",
+        "result_type": "benchmark_summary",
+        "exists": true,
+        "warnings": []
+      },
+      {
+        "path": "accuracy_reports/saturation_transport_benchmark_summary.json",
+        "format": "json",
+        "result_type": "benchmark_summary",
+        "exists": true,
+        "warnings": []
+      },
+      {
+        "path": "accuracy_reports/capillary_gravity_benchmark_summary.json",
+        "format": "json",
+        "result_type": "benchmark_summary",
+        "exists": true,
+        "warnings": []
+      },
+      {
+        "path": "accuracy_reports/three_phase_benchmark_summary.json",
+        "format": "json",
+        "result_type": "benchmark_summary",
+        "exists": true,
+        "warnings": []
+      },
+      {
+        "path": "accuracy_reports/parameter_fusion_benchmark_summary.json",
+        "format": "json",
+        "result_type": "benchmark_summary",
+        "exists": true,
+        "warnings": []
+      },
+      {
+        "path": "accuracy_reports/benchmark_registry_summary.json",
+        "format": "json",
+        "result_type": "benchmark_registry",
+        "exists": true,
+        "warnings": []
+      }
+    ],
+    "warnings": []
+  },
+  "path_validation": {
+    "case_paths": {
+      "success": true,
+      "num_cases": 2,
+      "num_existing_paths": 4,
+      "num_missing_paths": 0,
+      "existing_paths": [
+        "accuracy_reports/benchmark_registry_summary.json",
+        "accuracy_reports/result_manifest_summary.json",
+        "accuracy_reports/performance_baseline_summary.json",
+        "accuracy_reports/performance_baseline_summary.md"
+      ],
+      "missing_paths": [],
+      "warnings": []
+    },
+    "run_paths": {
+      "success": true,
+      "num_runs": 1,
+      "num_existing_paths": 4,
+      "num_missing_paths": 0,
+      "existing_paths": [
+        "accuracy_reports/benchmark_registry_summary.json",
+        "accuracy_reports/result_manifest_summary.json",
+        "accuracy_reports/performance_baseline_summary.json",
+        "accuracy_reports/result_manifest_summary.json"
+      ],
+      "missing_paths": [],
+      "warnings": []
+    }
+  },
+  "capabilities": {
+    "project_registry": [
+      "add",
+      "list",
+      "find",
+      "json_serialization"
+    ],
+    "case_registry": [
+      "add",
+      "list",
+      "find",
+      "update_status",
+      "validate_paths",
+      "json_serialization"
+    ],
+    "run_history": [
+      "append",
+      "list",
+      "find",
+      "validate_report_paths",
+      "json_serialization"
+    ],
+    "report_index": [
+      "existing report path alignment",
+      "missing path warnings"
+    ]
+  },
+  "warnings": [],
+  "limitations": [
+    "No database service.",
+    "No frontend implementation.",
+    "No UDP or REST API implementation.",
+    "No Petrel-like full workflow.",
+    "No solver, inversion, fusion, cross-scale, data, result, benchmark, reference, config, C++, CMake, or pybind11 changes."
+  ]
+}
