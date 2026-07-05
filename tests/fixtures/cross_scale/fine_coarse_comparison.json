@@ -1,0 +1,9 @@
+{
+  "fine_coarse_comparison": [
+    {
+      "metric": "pressure",
+      "fine": {"name": "pressure", "time": [0, 1, 2], "values": [100000, 90000, 80000], "unit": "Pa"},
+      "coarse": {"name": "pressure", "time": [10, 11, 12], "values": [100000, 91000, 79000], "unit": "Pa"}
+    }
+  ]
+}

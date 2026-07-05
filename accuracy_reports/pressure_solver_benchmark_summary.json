@@ -1,0 +1,248 @@
+{
+  "benchmark_name": "pressure_solver_benchmark",
+  "success": true,
+  "num_cases": 8,
+  "num_passed": 8,
+  "num_failed": 0,
+  "cases": [
+    {
+      "case_name": "linear_1d_analytical",
+      "source": "internal analytical manufactured case",
+      "is_exact_reproduction": false,
+      "success": true,
+      "grid_shape": [
+        1,
+        1,
+        20
+      ],
+      "key_metrics": {
+        "max_abs_pressure_error": 5.587935447692871e-09,
+        "relative_l2_pressure_error": 5.016031324416748e-16,
+        "max_flux_variation": 7.453889935837843e-20,
+        "mass_balance_error": 8.28209992870868e-15,
+        "pressure_min": 1225000.0000000005,
+        "pressure_max": 9774999.999999998,
+        "has_nan": false,
+        "has_inf": false
+      },
+      "warnings": [],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "not an open-source simulator reproduction"
+      ]
+    },
+    {
+      "case_name": "manufactured_2d_linear",
+      "source": "internal manufactured linear field",
+      "is_exact_reproduction": false,
+      "success": true,
+      "grid_shape": [
+        1,
+        8,
+        10
+      ],
+      "key_metrics": {
+        "max_abs_error": 2.9802322387695312e-08,
+        "l2_error": 1.799911894388302e-07,
+        "relative_l2_error": 3.805046953505174e-15,
+        "linf_error": 2.9802322387695312e-08,
+        "has_nan": false,
+        "has_inf": false,
+        "pressure_min": 2300000.000000004,
+        "pressure_max": 7700000.000000009
+      },
+      "warnings": [],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "uses constant left/right Dirichlet boundaries supported by current solver"
+      ]
+    },
+    {
+      "case_name": "manufactured_3d_linear",
+      "source": "internal manufactured linear field",
+      "is_exact_reproduction": false,
+      "success": true,
+      "grid_shape": [
+        5,
+        5,
+        6
+      ],
+      "key_metrics": {
+        "max_abs_error": 5.587935447692871e-09,
+        "l2_error": 2.929227883427693e-08,
+        "relative_l2_error": 3.8338905702410085e-16,
+        "linf_error": 5.587935447692871e-09,
+        "has_nan": false,
+        "has_inf": false,
+        "pressure_min": 3499999.999999998,
+        "pressure_max": 8500000.000000006
+      },
+      "warnings": [],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "uses constant left/right Dirichlet boundaries supported by current solver"
+      ]
+    },
+    {
+      "case_name": "opm_water_1ph_adapted",
+      "source": "OPM/opm-tests water-1ph WATER2F.DATA",
+      "is_exact_reproduction": false,
+      "success": true,
+      "grid_shape": [
+        1,
+        1,
+        1
+      ],
+      "key_metrics": {
+        "porosity": 0.1,
+        "permeability_x_md": 1000.0,
+        "permeability_y_md": 1000.0,
+        "permeability_z_md": 100.0,
+        "metadata_loaded": true,
+        "pressure_case_mode": "metadata_sanity_only",
+        "has_nan": false,
+        "has_inf": false
+      },
+      "warnings": [],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "1x1x1 reference cannot form an internal pressure gradient in current benchmark mode",
+        "metadata sanity only; not exact OPM Flow reproduction",
+        "no black-oil or deck parser behavior is claimed"
+      ]
+    },
+    {
+      "case_name": "opm_spe1case1_layered_adapted",
+      "source": "OPM/opm-tests spe1 SPE1CASE1.DATA",
+      "is_exact_reproduction": false,
+      "success": true,
+      "grid_shape": [
+        3,
+        10,
+        10
+      ],
+      "key_metrics": {
+        "porosity_min": 0.3,
+        "porosity_max": 0.3,
+        "permeability_min_md": 50.0,
+        "permeability_max_md": 500.0,
+        "permeability_contrast": 10.0,
+        "pressure_min": 2399999.9999999995,
+        "pressure_max": 9600000.000000007,
+        "max_abs_flux": 0.0019738466000000137,
+        "mass_balance_error": 2.774473359390406e-16,
+        "has_nan": false,
+        "has_inf": false
+      },
+      "warnings": [],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "adapted layered Cartesian pressure benchmark only",
+        "not exact SPE1 simulation reproduction",
+        "no OPM Flow equivalence, no PVT, no wells, no black-oil behavior"
+      ]
+    },
+    {
+      "case_name": "mrst_simple_incomp_tpfa_reference",
+      "source": "MRST simpleIncompTPFA.m",
+      "is_exact_reproduction": false,
+      "success": true,
+      "grid_shape": [],
+      "key_metrics": {
+        "is_runtime_dependency": false,
+        "mentions_tpfa": true,
+        "mentions_boundary_conditions": true,
+        "mentions_sources": true,
+        "has_nan": false,
+        "has_inf": false
+      },
+      "warnings": [],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "method reference note only",
+        "no MATLAB dependency",
+        "no MRST runtime integration",
+        "MRST code is not executed or copied into solver implementation"
+      ]
+    },
+    {
+      "case_name": "boundary_sanity",
+      "source": "internal boundary sanity case",
+      "is_exact_reproduction": false,
+      "success": true,
+      "grid_shape": [
+        3,
+        4,
+        12
+      ],
+      "key_metrics": {
+        "pressure_monotonicity_score": 1.0,
+        "pressure_within_boundary_range": true,
+        "boundary_pressure_left": 10000000.0,
+        "boundary_pressure_right": 0.0,
+        "pressure_min": 416666.666666663,
+        "pressure_max": 9583333.333333327,
+        "warnings": [],
+        "has_nan": false,
+        "has_inf": false
+      },
+      "warnings": [],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "homogeneous Cartesian left/right Dirichlet only"
+      ]
+    },
+    {
+      "case_name": "source_sink_material_balance",
+      "source": "internal balanced source/sink case using existing well support",
+      "is_exact_reproduction": false,
+      "success": true,
+      "grid_shape": [
+        4,
+        5,
+        6
+      ],
+      "key_metrics": {
+        "total_source": 2e-05,
+        "total_sink": -2e-05,
+        "net_source": 0.0,
+        "boundary_flux_balance": 0.0,
+        "mass_balance_residual": 0.0,
+        "pressure_min": -5938.206056965719,
+        "pressure_max": 2729.8009262638698,
+        "has_nan": false,
+        "has_inf": false,
+        "status": "done"
+      },
+      "warnings": [],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "simplified source/sink benchmark; not a new well model"
+      ]
+    }
+  ],
+  "overall_max_error": 2.9802322387695312e-08,
+  "overall_mass_balance_error": 8.28209992870868e-15,
+  "overall_flux_conservation_error": 7.453889935837843e-20,
+  "open_source_references_used": [
+    "OPM water-1ph",
+    "OPM SPE1CASE1",
+    "MRST simpleIncompTPFA"
+  ],
+  "has_nan": false,
+  "has_inf": false,
+  "warnings": [],
+  "recommendations": [
+    "Keep analytical/manufactured pressure benchmarks as regression gates.",
+    "Use extracted OPM/MRST fixtures as adapted references only.",
+    "Do not claim full SPE1/SPE10 reproduction, OPM Flow equivalence, or MRST integration."
+  ]
+}

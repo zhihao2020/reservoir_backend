@@ -1,0 +1,369 @@
+{
+  "cases": [
+    {
+      "case_name": "cfl_adaptive_timestep",
+      "cfl_report": {
+        "dt": 2000.0,
+        "has_inf": false,
+        "has_nan": false,
+        "max_cfl": 4.0,
+        "max_cfl_allowed": null,
+        "max_cfl_location": [
+          0,
+          0,
+          0
+        ],
+        "mean_cfl": 4.0,
+        "min_cfl": 4.0,
+        "stable": null
+      },
+      "grid_shape": [
+        1,
+        1,
+        20
+      ],
+      "key_metrics": {
+        "dt_adapted": 400.0,
+        "dt_original": 2000.0,
+        "max_cfl": 4.0,
+        "num_limited_cells": 20,
+        "target_cfl": 0.8
+      },
+      "limitations": [
+        "Adaptive timestep is reported; baseline solver behavior is unchanged."
+      ],
+      "success": true,
+      "suggestion": {
+        "dt_adapted": 400.0,
+        "dt_original": 2000.0,
+        "dt_suggested": 400.0,
+        "max_cfl": 4.0,
+        "num_limited_cells": 20,
+        "stable_without_adaptation": false,
+        "target_cfl": 0.8,
+        "warnings": [
+          "CFL exceeds target; smaller timestep suggested"
+        ]
+      },
+      "warnings": [
+        "CFL exceeds target; smaller timestep suggested"
+      ]
+    },
+    {
+      "case_name": "upwind_tvd_front_sharpness_comparison",
+      "grid_shape": [
+        1,
+        1,
+        20
+      ],
+      "key_metrics": {
+        "front_sharpness_delta": 0.0,
+        "tvd_front_sharpness": 0.4108695652173913,
+        "tvd_material_balance_error": 0.0,
+        "tvd_max_cfl": 0.08,
+        "tvd_total_variation": 0.45086956521739135,
+        "upwind_front_sharpness": 0.4108695652173913,
+        "upwind_total_variation": 0.45086956521739135
+      },
+      "limitations": [
+        "TVD/MUSCL comparison is a 1D benchmark diagnostic, not a default solver replacement."
+      ],
+      "success": true,
+      "tvd_report": {
+        "boundedness_passed": true,
+        "dt": 500.0,
+        "dt_adapted": 500.0,
+        "dt_original": 500.0,
+        "fallback_used": false,
+        "front_position": 4.5,
+        "front_sharpness": 0.4108695652173913,
+        "has_inf": false,
+        "has_nan": false,
+        "implicit_deferred": false,
+        "initial_front_position": 4.5,
+        "initial_front_sharpness": 0.45,
+        "initial_total_variation": 0.45,
+        "injected_water_volume": 0.01,
+        "limiter": "minmod",
+        "mass_balance_error": 0.0,
+        "material_balance_error": 0.0,
+        "max_cfl": 0.08,
+        "method_requested": "tvd",
+        "method_used": "tvd",
+        "num_clipped_cells": 0,
+        "num_limited_cells": 0,
+        "num_overshoot_cells": 0,
+        "num_undershoot_cells": 0,
+        "overshoot": 0.0,
+        "produced_water_volume": 0.0,
+        "saturation_max": 0.6508695652173914,
+        "saturation_min": 0.2,
+        "storage_change": 0.010000000000000009,
+        "success": true,
+        "sw_max": 0.6508695652173914,
+        "sw_min": 0.2,
+        "target_cfl": 0.8,
+        "total_variation": 0.45086956521739135,
+        "undershoot": 0.0,
+        "warnings": []
+      },
+      "upwind_report": {
+        "boundedness_passed": true,
+        "clipped_cells": 0,
+        "dt": 500.0,
+        "fallback_used": false,
+        "front_position": 4.5,
+        "front_sharpness": 0.4108695652173913,
+        "has_inf": false,
+        "has_nan": false,
+        "implicit_deferred": false,
+        "initial_front_position": 4.5,
+        "initial_front_sharpness": 0.45,
+        "initial_total_variation": 0.45,
+        "injected_water_volume": 0.01,
+        "limiter": null,
+        "mass_balance_error": 0.0,
+        "material_balance_error": 0.0,
+        "max_cfl": 0.08,
+        "method_requested": "upwind",
+        "method_used": "upwind",
+        "num_clipped_cells": 0,
+        "num_overshoot_cells": 0,
+        "num_undershoot_cells": 0,
+        "overshoot": 0.0,
+        "produced_water_volume": 0.0,
+        "relative_balance_error": 0.0,
+        "saturation_max": 0.6508695652173914,
+        "saturation_min": 0.2,
+        "stable": true,
+        "storage_change": 0.010000000000000009,
+        "success": true,
+        "sw_max": 0.6508695652173914,
+        "sw_min": 0.2,
+        "total_variation": 0.45086956521739135,
+        "undershoot": 0.0,
+        "warnings": [],
+        "water_cut": 0.0
+      },
+      "warnings": []
+    },
+    {
+      "case_name": "implicit_deferred_fallback",
+      "grid_shape": [
+        1,
+        1,
+        20
+      ],
+      "key_metrics": {
+        "fallback_used": true,
+        "front_sharpness": 0.03173452269721461,
+        "implicit_deferred": true,
+        "method_requested": "implicit",
+        "method_used": "upwind"
+      },
+      "limitations": [
+        "Implicit saturation transport is deferred; this case validates warning and fallback behavior."
+      ],
+      "success": true,
+      "warnings": [
+        "implicit saturation transport is deferred; used upwind fallback"
+      ]
+    }
+  ],
+  "cfl_cases": [
+    {
+      "case_name": "cfl_adaptive_timestep",
+      "cfl_report": {
+        "dt": 2000.0,
+        "has_inf": false,
+        "has_nan": false,
+        "max_cfl": 4.0,
+        "max_cfl_allowed": null,
+        "max_cfl_location": [
+          0,
+          0,
+          0
+        ],
+        "mean_cfl": 4.0,
+        "min_cfl": 4.0,
+        "stable": null
+      },
+      "grid_shape": [
+        1,
+        1,
+        20
+      ],
+      "key_metrics": {
+        "dt_adapted": 400.0,
+        "dt_original": 2000.0,
+        "max_cfl": 4.0,
+        "num_limited_cells": 20,
+        "target_cfl": 0.8
+      },
+      "limitations": [
+        "Adaptive timestep is reported; baseline solver behavior is unchanged."
+      ],
+      "success": true,
+      "suggestion": {
+        "dt_adapted": 400.0,
+        "dt_original": 2000.0,
+        "dt_suggested": 400.0,
+        "max_cfl": 4.0,
+        "num_limited_cells": 20,
+        "stable_without_adaptation": false,
+        "target_cfl": 0.8,
+        "warnings": [
+          "CFL exceeds target; smaller timestep suggested"
+        ]
+      },
+      "warnings": [
+        "CFL exceeds target; smaller timestep suggested"
+      ]
+    }
+  ],
+  "fallback_cases": [
+    {
+      "case_name": "implicit_deferred_fallback",
+      "grid_shape": [
+        1,
+        1,
+        20
+      ],
+      "key_metrics": {
+        "fallback_used": true,
+        "front_sharpness": 0.03173452269721461,
+        "implicit_deferred": true,
+        "method_requested": "implicit",
+        "method_used": "upwind"
+      },
+      "limitations": [
+        "Implicit saturation transport is deferred; this case validates warning and fallback behavior."
+      ],
+      "success": true,
+      "warnings": [
+        "implicit saturation transport is deferred; used upwind fallback"
+      ]
+    }
+  ],
+  "limitations": [
+    "Upwind baseline is preserved.",
+    "TVD/MUSCL is optional and currently limited to 1D benchmark scenarios.",
+    "Implicit saturation transport is deferred and not implemented as a full solver.",
+    "No fully implicit reservoir simulator implemented.",
+    "No black-oil transport implemented.",
+    "No PVT table or phase behavior implemented.",
+    "No commercial simulator equivalence.",
+    "No history matching implemented.",
+    "No front-end integration implemented.",
+    "No UDP implementation."
+  ],
+  "num_cases": 3,
+  "num_failed": 0,
+  "num_passed": 3,
+  "report_name": "saturation_transport_enhancement",
+  "success": true,
+  "upwind_tvd_comparison": [
+    {
+      "case_name": "upwind_tvd_front_sharpness_comparison",
+      "grid_shape": [
+        1,
+        1,
+        20
+      ],
+      "key_metrics": {
+        "front_sharpness_delta": 0.0,
+        "tvd_front_sharpness": 0.4108695652173913,
+        "tvd_material_balance_error": 0.0,
+        "tvd_max_cfl": 0.08,
+        "tvd_total_variation": 0.45086956521739135,
+        "upwind_front_sharpness": 0.4108695652173913,
+        "upwind_total_variation": 0.45086956521739135
+      },
+      "limitations": [
+        "TVD/MUSCL comparison is a 1D benchmark diagnostic, not a default solver replacement."
+      ],
+      "success": true,
+      "tvd_report": {
+        "boundedness_passed": true,
+        "dt": 500.0,
+        "dt_adapted": 500.0,
+        "dt_original": 500.0,
+        "fallback_used": false,
+        "front_position": 4.5,
+        "front_sharpness": 0.4108695652173913,
+        "has_inf": false,
+        "has_nan": false,
+        "implicit_deferred": false,
+        "initial_front_position": 4.5,
+        "initial_front_sharpness": 0.45,
+        "initial_total_variation": 0.45,
+        "injected_water_volume": 0.01,
+        "limiter": "minmod",
+        "mass_balance_error": 0.0,
+        "material_balance_error": 0.0,
+        "max_cfl": 0.08,
+        "method_requested": "tvd",
+        "method_used": "tvd",
+        "num_clipped_cells": 0,
+        "num_limited_cells": 0,
+        "num_overshoot_cells": 0,
+        "num_undershoot_cells": 0,
+        "overshoot": 0.0,
+        "produced_water_volume": 0.0,
+        "saturation_max": 0.6508695652173914,
+        "saturation_min": 0.2,
+        "storage_change": 0.010000000000000009,
+        "success": true,
+        "sw_max": 0.6508695652173914,
+        "sw_min": 0.2,
+        "target_cfl": 0.8,
+        "total_variation": 0.45086956521739135,
+        "undershoot": 0.0,
+        "warnings": []
+      },
+      "upwind_report": {
+        "boundedness_passed": true,
+        "clipped_cells": 0,
+        "dt": 500.0,
+        "fallback_used": false,
+        "front_position": 4.5,
+        "front_sharpness": 0.4108695652173913,
+        "has_inf": false,
+        "has_nan": false,
+        "implicit_deferred": false,
+        "initial_front_position": 4.5,
+        "initial_front_sharpness": 0.45,
+        "initial_total_variation": 0.45,
+        "injected_water_volume": 0.01,
+        "limiter": null,
+        "mass_balance_error": 0.0,
+        "material_balance_error": 0.0,
+        "max_cfl": 0.08,
+        "method_requested": "upwind",
+        "method_used": "upwind",
+        "num_clipped_cells": 0,
+        "num_overshoot_cells": 0,
+        "num_undershoot_cells": 0,
+        "overshoot": 0.0,
+        "produced_water_volume": 0.0,
+        "relative_balance_error": 0.0,
+        "saturation_max": 0.6508695652173914,
+        "saturation_min": 0.2,
+        "stable": true,
+        "storage_change": 0.010000000000000009,
+        "success": true,
+        "sw_max": 0.6508695652173914,
+        "sw_min": 0.2,
+        "total_variation": 0.45086956521739135,
+        "undershoot": 0.0,
+        "warnings": [],
+        "water_cut": 0.0
+      },
+      "warnings": []
+    }
+  ],
+  "warnings": [
+    "CFL exceeds target; smaller timestep suggested",
+    "implicit saturation transport is deferred; used upwind fallback"
+  ]
+}

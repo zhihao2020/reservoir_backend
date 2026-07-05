@@ -1,0 +1,253 @@
+{
+  "catalog": {
+    "num_results": 5,
+    "results": [
+      {
+        "case_id": "demo_case",
+        "created_at": "2026-07-05T06:55:08+00:00",
+        "dtype": "float64",
+        "field_name": "pressure",
+        "format": "npy",
+        "limitations": [
+          "example manifest only; does not generate pressure field"
+        ],
+        "metadata": {
+          "csv_exports_metadata_only": true,
+          "shape_convention": "(nz, ny, nx)"
+        },
+        "module": "M3",
+        "path": "results/demo_case/pressure.npy",
+        "result_id": "pressure_field_demo",
+        "result_type": "pressure_field",
+        "run_id": "result-contract-example",
+        "shape": [
+          3,
+          4,
+          5
+        ],
+        "source_report": "",
+        "source_task": "TASK-020",
+        "unit": "Pa",
+        "warnings": []
+      },
+      {
+        "case_id": "demo_case",
+        "created_at": "2026-07-05T06:55:08+00:00",
+        "dtype": "float64",
+        "field_name": "sw",
+        "format": "npy",
+        "limitations": [
+          "example manifest only; does not run saturation solver"
+        ],
+        "metadata": {
+          "bounds": [
+            0.0,
+            1.0
+          ],
+          "shape_convention": "(nz, ny, nx)"
+        },
+        "module": "M4",
+        "path": "results/demo_case/sw_simulated.npy",
+        "result_id": "saturation_field_demo",
+        "result_type": "saturation_field",
+        "run_id": "result-contract-example",
+        "shape": [
+          3,
+          4,
+          5
+        ],
+        "source_report": "",
+        "source_task": "TASK-020",
+        "unit": "fraction",
+        "warnings": []
+      },
+      {
+        "case_id": "benchmark",
+        "created_at": "2026-07-05T06:55:08+00:00",
+        "dtype": "json",
+        "field_name": "fusion_summary",
+        "format": "json",
+        "limitations": [
+          "summary report, not a full 3D field export"
+        ],
+        "metadata": {
+          "contains": [
+            "mae",
+            "rmse",
+            "bounds",
+            "mask"
+          ]
+        },
+        "module": "M5",
+        "path": "accuracy_reports/parameter_fusion_benchmark_summary.json",
+        "result_id": "parameter_fusion_report",
+        "result_type": "parameter_fusion_report",
+        "run_id": "result-contract-example",
+        "shape": [],
+        "source_report": "accuracy_reports/parameter_fusion_benchmark_summary.json",
+        "source_task": "TASK-051",
+        "unit": "dimensionless",
+        "warnings": []
+      },
+      {
+        "case_id": "experimental_data",
+        "created_at": "2026-07-05T06:55:08+00:00",
+        "dtype": "json",
+        "field_name": "qc_summary",
+        "format": "json",
+        "limitations": [
+          "QC summary only; no database service"
+        ],
+        "metadata": {
+          "contains": [
+            "fields_detected",
+            "bounds_violations",
+            "warnings"
+          ]
+        },
+        "module": "M1",
+        "path": "accuracy_reports/experimental_data_qc_summary.json",
+        "result_id": "experimental_data_qc_report",
+        "result_type": "experimental_data_qc",
+        "run_id": "result-contract-example",
+        "shape": [],
+        "source_report": "accuracy_reports/experimental_data_qc_summary.json",
+        "source_task": "TASK-008",
+        "unit": "dimensionless",
+        "warnings": []
+      },
+      {
+        "case_id": "benchmark_registry",
+        "created_at": "2026-07-05T06:55:08+00:00",
+        "dtype": "json",
+        "field_name": "registry_summary",
+        "format": "json",
+        "limitations": [
+          "registry indexes benchmark reports; it does not rerun solvers"
+        ],
+        "metadata": {
+          "contains": [
+            "modules_covered",
+            "validation_levels",
+            "open_source_references"
+          ]
+        },
+        "module": "M8",
+        "path": "accuracy_reports/benchmark_registry_summary.json",
+        "result_id": "benchmark_registry_report",
+        "result_type": "benchmark_registry",
+        "run_id": "result-contract-example",
+        "shape": [],
+        "source_report": "accuracy_reports/benchmark_registry_summary.json",
+        "source_task": "TASK-052",
+        "unit": "dimensionless",
+        "warnings": []
+      }
+    ]
+  },
+  "export_formats_supported": [
+    "json",
+    "csv",
+    "npz",
+    "markdown"
+  ],
+  "frontend_field_contract": "docs/frontend_field_contract.md",
+  "limitations": [
+    "No frontend implementation.",
+    "No UDP implementation.",
+    "No REST API implementation.",
+    "No database service.",
+    "No solver rewrite."
+  ],
+  "num_results": 5,
+  "path_validation": {
+    "existing_paths": [
+      "results/demo_case/pressure.npy",
+      "results/demo_case/sw_simulated.npy",
+      "accuracy_reports/parameter_fusion_benchmark_summary.json",
+      "accuracy_reports/experimental_data_qc_summary.json",
+      "accuracy_reports/benchmark_registry_summary.json"
+    ],
+    "missing_paths": [],
+    "num_existing_paths": 5,
+    "num_missing_paths": 0,
+    "num_results": 5,
+    "success": true,
+    "warnings": []
+  },
+  "report_path_index": {
+    "num_existing_reports": 9,
+    "num_missing_reports": 0,
+    "num_reports": 9,
+    "reports": [
+      {
+        "exists": true,
+        "format": "json",
+        "path": "accuracy_reports/experimental_data_qc_summary.json",
+        "result_type": "experimental_data_qc",
+        "warnings": []
+      },
+      {
+        "exists": true,
+        "format": "md",
+        "path": "accuracy_reports/experimental_data_qc_summary.md",
+        "result_type": "experimental_data_qc",
+        "warnings": []
+      },
+      {
+        "exists": true,
+        "format": "json",
+        "path": "accuracy_reports/saturation_inversion_benchmark_summary.json",
+        "result_type": "benchmark_summary",
+        "warnings": []
+      },
+      {
+        "exists": true,
+        "format": "json",
+        "path": "accuracy_reports/pressure_solver_benchmark_summary.json",
+        "result_type": "benchmark_summary",
+        "warnings": []
+      },
+      {
+        "exists": true,
+        "format": "json",
+        "path": "accuracy_reports/saturation_transport_benchmark_summary.json",
+        "result_type": "benchmark_summary",
+        "warnings": []
+      },
+      {
+        "exists": true,
+        "format": "json",
+        "path": "accuracy_reports/capillary_gravity_benchmark_summary.json",
+        "result_type": "benchmark_summary",
+        "warnings": []
+      },
+      {
+        "exists": true,
+        "format": "json",
+        "path": "accuracy_reports/three_phase_benchmark_summary.json",
+        "result_type": "benchmark_summary",
+        "warnings": []
+      },
+      {
+        "exists": true,
+        "format": "json",
+        "path": "accuracy_reports/parameter_fusion_benchmark_summary.json",
+        "result_type": "benchmark_summary",
+        "warnings": []
+      },
+      {
+        "exists": true,
+        "format": "json",
+        "path": "accuracy_reports/benchmark_registry_summary.json",
+        "result_type": "benchmark_registry",
+        "warnings": []
+      }
+    ],
+    "success": true,
+    "warnings": []
+  },
+  "result_manifest_summary_name": "result_manifest_summary",
+  "success": true,
+  "warnings": []
+}

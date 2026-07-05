@@ -14,6 +14,119 @@ from reservoir_backend.core.field import Field3D
 InvalidPolicy = Literal["raise", "low_confidence"]
 
 
+def invert_saturation_archie(
+    resistivity: float | ArrayLike,
+    water_resistivity: float | ArrayLike,
+    porosity: float | ArrayLike,
+    a: float = 1.0,
+    m: float = 2.0,
+    n: float = 2.0,
+    clip: bool = True,
+    return_report: bool = False,
+) -> float | NDArray[np.float64] | tuple[float | NDArray[np.float64], dict]:
+    """Invert water saturation from Archie's law with validation and reporting."""
+    _validate_positive("water_resistivity", water_resistivity)
+    for name, value in {"a": a, "m": m, "n": n}.items():
+        if not np.isfinite(float(value)) or float(value) <= 0.0:
+            raise InvalidPhysicalValueError(f"{name} must be positive")
+
+    rt = np.asarray(resistivity, dtype=float)
+    rw = np.asarray(water_resistivity, dtype=float)
+    phi = np.asarray(porosity, dtype=float)
+    rt, rw, phi = np.broadcast_arrays(rt, rw, phi)
+
+    if (~np.isfinite(rt)).any() or (rt <= 0.0).any():
+        raise InvalidPhysicalValueError("resistivity must be positive and finite")
+    if (~np.isfinite(rw)).any() or (rw <= 0.0).any():
+        raise InvalidPhysicalValueError("water_resistivity must be positive and finite")
+    if (~np.isfinite(phi)).any() or (phi <= 0.0).any() or (phi > 1.0).any():
+        raise InvalidPhysicalValueError("porosity must be finite and within (0, 1]")
+
+    raw = ((float(a) * rw) / ((phi ** float(m)) * rt)) ** (1.0 / float(n))
+    if (~np.isfinite(raw)).any():
+        raise InvalidPhysicalValueError("Archie inversion produced non-finite saturation")
+
+    if clip:
+        saturation = np.clip(raw, 0.0, 1.0)
+    else:
+        saturation = raw.copy()
+
+    report = _build_inversion_report(
+        method="archie",
+        saturation=saturation,
+        raw_saturation=raw,
+        warnings=[],
+    )
+    result = _to_scalar_if_needed(saturation)
+    if return_report:
+        report["saturation"] = result
+        return result, report
+    return result
+
+
+def archie_sensitivity_report(
+    resistivity: float | ArrayLike,
+    water_resistivity: float | ArrayLike,
+    porosity: float | ArrayLike,
+    a: float = 1.0,
+    m: float = 2.0,
+    n: float = 2.0,
+    perturbation: float = 0.01,
+) -> dict:
+    """Return finite-difference sensitivity of Archie saturation to key inputs."""
+    if not np.isfinite(float(perturbation)) or float(perturbation) <= 0.0:
+        raise InvalidPhysicalValueError("perturbation must be positive")
+
+    base = np.asarray(
+        invert_saturation_archie(resistivity, water_resistivity, porosity, a=a, m=m, n=n),
+        dtype=float,
+    )
+    parameters = {
+        "Rt": (resistivity, water_resistivity, porosity, a, m, n),
+        "Rw": (resistivity, water_resistivity, porosity, a, m, n),
+        "phi": (resistivity, water_resistivity, porosity, a, m, n),
+        "m": (resistivity, water_resistivity, porosity, a, m, n),
+        "n": (resistivity, water_resistivity, porosity, a, m, n),
+    }
+    sensitivity: dict[str, float] = {}
+    relative: dict[str, float] = {}
+    for name, values in parameters.items():
+        rt, rw, phi, aa, mm, nn = values
+        if name == "Rt":
+            step = np.asarray(rt, dtype=float) * perturbation
+            shifted = invert_saturation_archie(np.asarray(rt, dtype=float) + step, rw, phi, a=aa, m=mm, n=nn)
+        elif name == "Rw":
+            step = np.asarray(rw, dtype=float) * perturbation
+            shifted = invert_saturation_archie(rt, np.asarray(rw, dtype=float) + step, phi, a=aa, m=mm, n=nn)
+        elif name == "phi":
+            step = np.asarray(phi, dtype=float) * perturbation
+            shifted = invert_saturation_archie(rt, rw, np.asarray(phi, dtype=float) + step, a=aa, m=mm, n=nn)
+        elif name == "m":
+            step = float(mm) * perturbation
+            shifted = invert_saturation_archie(rt, rw, phi, a=aa, m=float(mm) + step, n=nn)
+        else:
+            step = float(nn) * perturbation
+            shifted = invert_saturation_archie(rt, rw, phi, a=aa, m=mm, n=float(nn) + step)
+
+        shifted_arr = np.asarray(shifted, dtype=float)
+        step_scale = np.asarray(step, dtype=float)
+        deriv = np.mean((shifted_arr - base) / step_scale)
+        sensitivity[name] = float(deriv)
+        denom = max(float(np.mean(np.abs(base))), 1.0e-12)
+        relative[name] = float(deriv * float(np.mean(np.asarray(values[0 if name == "Rt" else 1 if name == "Rw" else 2], dtype=float))) / denom) if name in {"Rt", "Rw", "phi"} else float(deriv * (float(m if name == "m" else n)) / denom)
+
+    values = np.asarray(list(sensitivity.values()) + list(relative.values()), dtype=float)
+    return {
+        "method": "archie_finite_difference_sensitivity",
+        "base_saturation": _to_scalar_if_needed(base),
+        "sensitivity": sensitivity,
+        "relative_sensitivity": relative,
+        "warnings": [],
+        "has_nan": bool(np.isnan(values).any()),
+        "has_inf": bool(np.isinf(values).any()),
+    }
+
+
 @dataclass(frozen=True)
 class ArchieInverter:
     """Invert water saturation from resistivity using Archie's law.
@@ -203,3 +316,40 @@ class ArchieInverter:
         for value in values:
             if isinstance(value, Field3D):
                 template.assert_same_grid(value)
+
+
+def _validate_positive(name: str, value: float | ArrayLike) -> None:
+    arr = np.asarray(value, dtype=float)
+    if (~np.isfinite(arr)).any() or (arr <= 0.0).any():
+        raise InvalidPhysicalValueError(f"{name} must be positive and finite")
+
+
+def _build_inversion_report(
+    method: str,
+    saturation: NDArray[np.float64],
+    raw_saturation: NDArray[np.float64],
+    warnings: list[str],
+) -> dict:
+    raw = np.asarray(raw_saturation, dtype=float)
+    sw = np.asarray(saturation, dtype=float)
+    return {
+        "method": method,
+        "success": True,
+        "saturation": _to_scalar_if_needed(sw),
+        "raw_saturation_min": float(np.min(raw)),
+        "raw_saturation_max": float(np.max(raw)),
+        "saturation_min": float(np.min(sw)),
+        "saturation_max": float(np.max(sw)),
+        "num_clipped_low": int(np.sum(raw < 0.0)),
+        "num_clipped_high": int(np.sum(raw > 1.0)),
+        "warnings": warnings,
+        "has_nan": bool(np.isnan(sw).any() or np.isnan(raw).any()),
+        "has_inf": bool(np.isinf(sw).any() or np.isinf(raw).any()),
+    }
+
+
+def _to_scalar_if_needed(value: NDArray[np.float64]) -> float | NDArray[np.float64]:
+    arr = np.asarray(value, dtype=float)
+    if arr.shape == ():
+        return float(arr)
+    return arr

@@ -1,0 +1,1 @@
+{"fixture_id":"invalid_missing_required_fields","source_name":"invalid_missing_required_fields","required_fields":["time","porosity","permeability","pressure"],"description":"Invalid fixture missing required porosity and permeability."}

@@ -1,0 +1,1 @@
+{"fixture_id":"valid_json_multimodal_fields","source_name":"valid_json_multimodal_fields","required_fields":["time","resistivity","electromagnetic_response","acoustic_response","pressure","saturation","porosity","permeability"],"description":"Valid JSON multi-modal fixture covering inversion inputs and dynamic fields."}

@@ -1,0 +1,225 @@
+{
+  "benchmark_name": "cross_scale_benchmark",
+  "case_id": "cross_scale_default",
+  "has_inf": false,
+  "has_nan": false,
+  "lab_field_validation_report": {
+    "aggregate_metrics": {
+      "max_absolute_error": 0.09999999999999998,
+      "mean_mae": 0.04999999999999999,
+      "mean_mape": 11.874999999999996,
+      "mean_normalized_rmse": 0.0765465544619743,
+      "mean_rmse": 0.061237243569579436,
+      "num_failed_curves": 0,
+      "num_successful_curves": 1
+    },
+    "curve_names": [
+      "water_cut"
+    ],
+    "curve_reports": [
+      {
+        "alignment_report": {
+          "method": "linear",
+          "num_points": 4,
+          "overlap_end": 3.0,
+          "overlap_only": true,
+          "overlap_start": 0.0,
+          "warnings": []
+        },
+        "curve_name": "water_cut",
+        "curve_type": null,
+        "has_inf": false,
+        "has_nan": false,
+        "mae": 0.04999999999999999,
+        "mape": 11.874999999999996,
+        "max_absolute_error": 0.09999999999999998,
+        "normalized_rmse": 0.0765465544619743,
+        "num_points": 4,
+        "r2": 0.9591836734693878,
+        "reference_source": "lab",
+        "rmse": 0.061237243569579436,
+        "success": true,
+        "target_source": "field",
+        "time_end": 3.0,
+        "time_start": 0.0,
+        "unit": "fraction",
+        "warnings": [
+          "mape used epsilon for 1 near-zero reference values"
+        ],
+        "zero_reference_count": 1
+      }
+    ],
+    "has_inf": false,
+    "has_nan": false,
+    "mae": 0.04999999999999999,
+    "mape": 11.874999999999996,
+    "max_absolute_error": 0.09999999999999998,
+    "nrmse": 0.0765465544619743,
+    "num_curves": 1,
+    "num_matched_samples": 4,
+    "overlap_interval": {
+      "end": 3.0,
+      "start": 0.0
+    },
+    "r2": 0.9591836734693878,
+    "rmse": 0.061237243569579436,
+    "success": true,
+    "warnings": [
+      "curve 0: mape used epsilon for 1 near-zero reference values"
+    ]
+  },
+  "limitations": [
+    "No history matching.",
+    "No automatic calibration.",
+    "No complex upscaling solver.",
+    "No frontend.",
+    "No UDP.",
+    "No commercial simulator equivalence.",
+    "No black-oil validation."
+  ],
+  "output_paths": {
+    "json": "accuracy_reports\\cross_scale_benchmark_summary.json",
+    "markdown": "accuracy_reports\\cross_scale_benchmark_summary.md"
+  },
+  "result_manifest_entry": {
+    "case_id": "cross_scale_default",
+    "created_at": "2026-07-05T07:53:12+00:00",
+    "dtype": "json",
+    "field_name": "cross_scale_benchmark_summary",
+    "format": "json",
+    "limitations": [
+      "No history matching.",
+      "No automatic calibration.",
+      "No complex upscaling solver.",
+      "No frontend.",
+      "No UDP.",
+      "No commercial simulator equivalence.",
+      "No black-oil validation."
+    ],
+    "metadata": {
+      "contains": [
+        "similarity_report",
+        "scale_effect_report",
+        "lab_field_validation_report"
+      ]
+    },
+    "module": "M6",
+    "path": "accuracy_reports\\cross_scale_benchmark_summary.json",
+    "result_id": "cross_scale_benchmark_summary",
+    "result_type": "cross_scale_report",
+    "run_id": "cross-scale-runner",
+    "shape": [],
+    "source_report": "accuracy_reports\\cross_scale_benchmark_summary.json",
+    "source_task": "TASK-003",
+    "unit": "dimensionless",
+    "warnings": []
+  },
+  "scale_effect_report": {
+    "dimensionless_numbers_field": {
+      "capillary": 3.3333333333333335e-05,
+      "dimensionless_pressure": 0.005,
+      "dimensionless_time": 0.001,
+      "gravity_number": 0.009806650000000002,
+      "mobility_ratio": 2.0,
+      "peclet": 100000000.0,
+      "reynolds": 100000.0
+    },
+    "dimensionless_numbers_lab": {
+      "capillary": 3.3333333333333334e-08,
+      "dimensionless_pressure": 0.1,
+      "dimensionless_time": 9.999999999999999e-05,
+      "gravity_number": 0.9806649999999999,
+      "mobility_ratio": 2.0,
+      "peclet": 999.9999999999999,
+      "reynolds": 1.0
+    },
+    "dominant_force_field": "mixed_or_uncertain",
+    "dominant_force_lab": "capillary",
+    "has_inf": false,
+    "has_nan": false,
+    "regime_field": {
+      "capillary_role": "capillary_viscous_transition",
+      "dominant_force": "mixed_or_uncertain",
+      "flow_regime": "mixed_or_uncertain_convection_dominated_inertial_effect_possible",
+      "gravity_role": "gravity_minor",
+      "inertia_role": "inertial_effect_possible",
+      "transport_role": "convection_dominated",
+      "warnings": []
+    },
+    "regime_lab": {
+      "capillary_role": "capillary_dominated",
+      "dominant_force": "capillary",
+      "flow_regime": "capillary_convection_dominated_laminar_viscous_flow",
+      "gravity_role": "gravity_minor",
+      "inertia_role": "laminar_viscous_flow",
+      "transport_role": "convection_dominated",
+      "warnings": []
+    },
+    "regime_shift": {
+      "capillary_role_changed": true,
+      "dominant_force_changed": true,
+      "gravity_role_changed": false,
+      "inertia_role_changed": true,
+      "regime_shift_detected": true,
+      "shift_summary": [
+        "dominant force changed from capillary to mixed_or_uncertain",
+        "capillary role changed from capillary_dominated to capillary_viscous_transition",
+        "inertia role changed from laminar_viscous_flow to inertial_effect_possible"
+      ],
+      "transport_role_changed": false,
+      "warnings": []
+    },
+    "regime_shift_detected": true,
+    "scale_ratios": {
+      "scale_ratio_flow_rate": 20000.0,
+      "scale_ratio_length": 100.0,
+      "scale_ratio_permeability": 0.2,
+      "scale_ratio_porosity": 1.25,
+      "scale_ratio_pressure": 20.0,
+      "scale_ratio_temperature": 1.0,
+      "scale_ratio_time": 100.0,
+      "scale_ratio_velocity": 1000.0000000000001
+    },
+    "success": true,
+    "warnings": []
+  },
+  "similarity_report": {
+    "criterion_scores": {
+      "capillary": 0.0010000000000000002,
+      "dimensionless_pressure": 0.04999999999999998,
+      "dimensionless_time": 0.09999999999999998,
+      "gravity_number": 0.010000000000000004,
+      "mobility_ratio": 1.0,
+      "peclet": 9.999999999999997e-06,
+      "reynolds": 9.999999999999997e-06
+    },
+    "dimensionless_numbers_field": {
+      "capillary": 3.3333333333333335e-05,
+      "dimensionless_pressure": 0.005,
+      "dimensionless_time": 0.001,
+      "gravity_number": 0.009806650000000002,
+      "mobility_ratio": 2.0,
+      "peclet": 100000000.0,
+      "reynolds": 100000.0
+    },
+    "dimensionless_numbers_lab": {
+      "capillary": 3.3333333333333334e-08,
+      "dimensionless_pressure": 0.1,
+      "dimensionless_time": 9.999999999999999e-05,
+      "gravity_number": 0.9806649999999999,
+      "mobility_ratio": 2.0,
+      "peclet": 999.9999999999999,
+      "reynolds": 1.0
+    },
+    "has_inf": false,
+    "has_nan": false,
+    "missing_criteria": [],
+    "overall_similarity_score": 0.16586000000000004,
+    "success": true,
+    "warnings": []
+  },
+  "success": true,
+  "warnings": [
+    "curve 0: mape used epsilon for 1 near-zero reference values"
+  ]
+}

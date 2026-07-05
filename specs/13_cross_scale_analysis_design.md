@@ -104,7 +104,13 @@ reservoir_backend/cross_scale/
   report.py
 ```
 
-This stage does not create those implementation files.
+Stage `042_similarity_criteria_module` implements `descriptors.py` and
+`similarity.py`. Stage `043_scale_effect_analysis_module` implements
+`scale_effect.py`; the scale-effect analysis module is implemented as a pure
+function layer for scale ratios, regime classification, and regime-shift
+detection. Stage `044_lab_field_validation_module` implements `validation.py`;
+the lab-field validation module is implemented for curve-to-curve comparison
+and mismatch metrics. Cross-scale CLI/YAML integration remains future work.
 
 Expected inputs:
 
@@ -239,6 +245,11 @@ Rules:
 
 ## 6. Scale-Effect Analysis Design
 
+The scale-effect analysis module is implemented in
+`reservoir_backend/cross_scale/scale_effect.py`. It remains independent from
+solver internals and uses engineering heuristic thresholds rather than strict
+physical laws.
+
 The scale-effect module should analyze:
 
 - geometry scaling
@@ -300,6 +311,12 @@ relative permeability. It only generates mapping and comparison reports. A
 future case generator may consume those reports.
 
 ## 8. Experiment-Field Validation Design
+
+The lab-field validation module is implemented in
+`reservoir_backend/cross_scale/validation.py`. It performs curve-to-curve
+comparison with time alignment, linear interpolation, RMSE, MAE, MAPE, R2,
+normalized RMSE, and max absolute error. It does not perform history matching
+or automatic parameter calibration.
 
 Supported curve types:
 
@@ -476,9 +493,12 @@ Recommended follow-up stages:
 
 Stage intent:
 
-- `042` implements dimensionless numbers and similarity score.
-- `043` implements scale ratios and regime detection.
-- `044` implements experiment-field curve comparison.
+- `042` implements dimensionless numbers and similarity score. This stage is
+  complete as an independent pure-function module.
+- `043` implements scale ratios and regime detection. This stage is complete
+  as an independent pure-function module.
+- `044` implements experiment-field curve comparison. This stage is complete
+  as an independent pure-function module.
 - `045` implements a minimal UDP interface.
 - `046` produces the final software requirement acceptance report.
 

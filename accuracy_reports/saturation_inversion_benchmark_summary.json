@@ -1,0 +1,34 @@
+{
+  "benchmark_name": "saturation_inversion_benchmark",
+  "success": true,
+  "num_cases": 6,
+  "num_passed": 6,
+  "num_failed": 0,
+  "archie_formula_error": 0.0,
+  "noise_sensitivity": {
+    "levels": [
+      0.01,
+      0.05,
+      0.1
+    ],
+    "mean_abs_errors": [
+      0.001566100579705119,
+      0.011352873098887,
+      0.019666094935486014
+    ],
+    "monotonic_error_growth": true,
+    "bounded": true,
+    "has_nan": false,
+    "has_inf": false
+  },
+  "fusion_error": 0.005428571428571412,
+  "clipping_checked": true,
+  "warnings": [],
+  "has_nan": false,
+  "has_inf": false,
+  "recommendations": [
+    "Keep Archie analytical formula as a regression gate.",
+    "Use uncertainty-weighted fusion when source uncertainty is known.",
+    "Do not claim Bayesian inversion or commercial petrophysical interpretation."
+  ]
+}

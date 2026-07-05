@@ -1,0 +1,103 @@
+{
+  "fixture_name": "open_source_adapted_reference_cases",
+  "success": true,
+  "sources": [
+    {
+      "project": "OPM/opm-tests",
+      "path": "water-1ph/WATER2F.DATA",
+      "url": "https://github.com/OPM/opm-tests/blob/master/water-1ph/WATER2F.DATA"
+    },
+    {
+      "project": "OPM/opm-tests",
+      "path": "spe1/SPE1CASE1.DATA",
+      "url": "https://github.com/OPM/opm-tests/blob/master/spe1/SPE1CASE1.DATA"
+    },
+    {
+      "project": "SINTEF-AppliedCompSci/MRST",
+      "path": "modules/book/examples/1phase/src/simpleIncompTPFA.m",
+      "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/1phase/src/simpleIncompTPFA.m"
+    },
+    {
+      "project": "SINTEF-AppliedCompSci/MRST",
+      "path": "modules/book/examples/in2ph/buckleyLeverett1D.m",
+      "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/in2ph/buckleyLeverett1D.m"
+    }
+  ],
+  "cases": [
+    {
+      "case_name": "opm_water_1ph_single_cell",
+      "source": {
+        "project": "OPM/opm-tests",
+        "path": "water-1ph/WATER2F.DATA",
+        "url": "https://github.com/OPM/opm-tests/blob/master/water-1ph/WATER2F.DATA"
+      },
+      "grid": [
+        1,
+        1,
+        1
+      ],
+      "porosity": 0.1,
+      "permeability_md": {
+        "kx": 1000.0,
+        "ky": 1000.0,
+        "kz": 100.0
+      },
+      "adapted_benchmark_use": "single-cell property parsing and pressure sanity reference"
+    },
+    {
+      "case_name": "opm_spe1_case1_layered_subset",
+      "source": {
+        "project": "OPM/opm-tests",
+        "path": "spe1/SPE1CASE1.DATA",
+        "url": "https://github.com/OPM/opm-tests/blob/master/spe1/SPE1CASE1.DATA"
+      },
+      "grid": [
+        10,
+        10,
+        3
+      ],
+      "porosity_min": 0.3,
+      "porosity_max": 0.3,
+      "permeability_min_md": 50.0,
+      "permeability_max_md": 500.0,
+      "permeability_contrast": 10.0,
+      "adapted_benchmark_use": "layered heterogeneous Cartesian pressure benchmark precursor"
+    },
+    {
+      "case_name": "mrst_simple_incomp_tpfa_reference",
+      "source": {
+        "project": "SINTEF-AppliedCompSci/MRST",
+        "path": "modules/book/examples/1phase/src/simpleIncompTPFA.m",
+        "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/1phase/src/simpleIncompTPFA.m"
+      },
+      "mentions_tpfa": true,
+      "mentions_boundary_conditions": true,
+      "mentions_sources": true,
+      "adapted_benchmark_use": "TPFA diagnostic and report schema inspiration; not executed"
+    },
+    {
+      "case_name": "mrst_buckley_leverett_1d_reference",
+      "source": {
+        "project": "SINTEF-AppliedCompSci/MRST",
+        "path": "modules/book/examples/in2ph/buckleyLeverett1D.m",
+        "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/in2ph/buckleyLeverett1D.m"
+      },
+      "grid": [
+        100,
+        1
+      ],
+      "permeability_md": 100.0,
+      "porosity": 0.2,
+      "mentions_explicit_transport": true,
+      "mentions_implicit_transport": true,
+      "adapted_benchmark_use": "1D waterflood front movement and timestep sensitivity reference"
+    }
+  ],
+  "policy": {
+    "runtime_dependency": false,
+    "full_spe10_reproduction": false,
+    "opm_flow_equivalence": false,
+    "mrst_runtime_integration": false,
+    "commercial_simulator_equivalence": false
+  }
+}

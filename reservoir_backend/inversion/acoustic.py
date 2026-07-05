@@ -15,6 +15,28 @@ from reservoir_backend.core.grid import Grid3D
 InvalidPolicy = Literal["raise", "low_confidence"]
 
 
+def invert_saturation_acoustic(
+    signal: float | ArrayLike,
+    coefficients: dict | ArrayLike,
+    clip: bool = True,
+    return_report: bool = False,
+) -> float | NDArray[np.float64] | tuple[float | NDArray[np.float64], dict]:
+    """Invert saturation from an empirical acoustic signal mapping."""
+    values = np.asarray(signal, dtype=float)
+    if (~np.isfinite(values)).any():
+        raise InvalidPhysicalValueError("signal must be finite")
+    raw = _evaluate_empirical_mapping(values, coefficients)
+    if (~np.isfinite(raw)).any():
+        raise InvalidPhysicalValueError("acoustic inversion produced non-finite saturation")
+    saturation = np.clip(raw, 0.0, 1.0) if clip else raw.copy()
+    report = _build_signal_report("acoustic_empirical", values, raw, saturation)
+    result = _to_scalar_if_needed(saturation)
+    if return_report:
+        report["saturation"] = result
+        return result, report
+    return result
+
+
 @dataclass(frozen=True)
 class AcousticInverter:
     """Empirical acoustic velocity to water saturation inverter."""
@@ -151,3 +173,65 @@ def _calibration_arrays(x: ArrayLike, y: ArrayLike) -> tuple[NDArray[np.float64]
     if (x_arr <= 0.0).any():
         raise InvalidPhysicalValueError("velocity calibration values must be positive")
     return x_arr.ravel(), y_arr.ravel()
+
+
+def _evaluate_empirical_mapping(values: NDArray[np.float64], coefficients: dict | ArrayLike) -> NDArray[np.float64]:
+    if isinstance(coefficients, dict):
+        model = coefficients.get("model", "polynomial")
+        if model == "linear":
+            if "coefficients" in coefficients:
+                coeffs = coefficients["coefficients"]
+                if len(coeffs) != 2:
+                    raise InvalidPhysicalValueError("linear coefficients must contain c0 and c1")
+                c0, c1 = [float(v) for v in coeffs]
+            else:
+                c0 = float(coefficients.get("c0", coefficients.get("b", 0.0)))
+                c1 = float(coefficients.get("c1", coefficients.get("a", 0.0)))
+            return c0 + c1 * values
+        if model == "polynomial":
+            coeffs = coefficients.get("coefficients")
+        elif model in {"gassmann", "rock_physics", "full_physics"}:
+            raise NotImplementedError("Full Gassmann acoustic inversion is not implemented")
+        else:
+            raise ValueError(f"unsupported acoustic model: {model}")
+    else:
+        coeffs = coefficients
+
+    coeff_arr = np.asarray(coeffs, dtype=float)
+    if coeff_arr.size == 0:
+        raise InvalidPhysicalValueError("coefficients must be non-empty")
+    if (~np.isfinite(coeff_arr)).any():
+        raise InvalidPhysicalValueError("coefficients must be finite")
+    result = np.zeros_like(values, dtype=float)
+    for power, coefficient in enumerate(coeff_arr.ravel()):
+        result += float(coefficient) * values**power
+    return result
+
+
+def _build_signal_report(
+    method: str,
+    signal: NDArray[np.float64],
+    raw: NDArray[np.float64],
+    saturation: NDArray[np.float64],
+) -> dict:
+    return {
+        "method": method,
+        "success": True,
+        "saturation": _to_scalar_if_needed(saturation),
+        "signal_min": float(np.min(signal)),
+        "signal_max": float(np.max(signal)),
+        "saturation_min": float(np.min(saturation)),
+        "saturation_max": float(np.max(saturation)),
+        "num_clipped_low": int(np.sum(raw < 0.0)),
+        "num_clipped_high": int(np.sum(raw > 1.0)),
+        "warnings": [],
+        "has_nan": bool(np.isnan(saturation).any()),
+        "has_inf": bool(np.isinf(saturation).any()),
+    }
+
+
+def _to_scalar_if_needed(value: NDArray[np.float64]) -> float | NDArray[np.float64]:
+    arr = np.asarray(value, dtype=float)
+    if arr.shape == ():
+        return float(arr)
+    return arr

@@ -1,0 +1,4 @@
+time_s,x_m,y_m,z_m,porosity_fraction,saturation_percent,permeability_md,pressure_mpa,resistivity_ohm_m,confidence_fraction,variance
+0,0,0,0,0.20,20,100,10,20,0.9,0.10
+10,1,0,0,0.22,30,120,9.8,22,0.8,0.20
+20,2,0,0,0.24,40,140,9.6,24,0.7,0.30

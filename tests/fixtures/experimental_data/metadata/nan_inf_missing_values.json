@@ -1,0 +1,1 @@
+{"fixture_id":"nan_inf_missing_values","source_name":"nan_inf_missing_values","required_fields":["time","porosity","pressure","resistivity"],"description":"Fixture with NaN, Inf, and missing values."}

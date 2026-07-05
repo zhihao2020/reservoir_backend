@@ -1,0 +1,36 @@
+{
+  "case_id": "cross_scale_no_overlap",
+  "lab_case": {
+    "descriptor": {
+      "length_scale_m": 1.0,
+      "time_scale_s": 10.0,
+      "pressure_scale_pa": 100000.0,
+      "permeability_scale_m2": 1e-12,
+      "porosity": 0.2,
+      "viscosity_pa_s": 0.001,
+      "density_kg_m3": 1000.0,
+      "velocity_scale_m_s": 1e-6,
+      "flow_rate_m3_s": 1e-9
+    }
+  },
+  "field_case": {
+    "descriptor": {
+      "length_scale_m": 10.0,
+      "time_scale_s": 100.0,
+      "pressure_scale_pa": 200000.0,
+      "permeability_scale_m2": 1e-12,
+      "porosity": 0.22,
+      "viscosity_pa_s": 0.001,
+      "density_kg_m3": 1000.0,
+      "velocity_scale_m_s": 2e-6,
+      "flow_rate_m3_s": 2e-9
+    }
+  },
+  "curves": [
+    {
+      "name": "water_cut",
+      "lab": {"name": "water_cut", "time": [0, 1, 2], "values": [0.0, 0.2, 0.4]},
+      "field": {"name": "water_cut", "time": [10, 11, 12], "values": [0.1, 0.3, 0.5]}
+    }
+  ]
+}

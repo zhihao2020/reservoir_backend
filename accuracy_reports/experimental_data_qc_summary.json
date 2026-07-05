@@ -1,0 +1,53 @@
+{
+  "success": true,
+  "input_file": "synthetic",
+  "format": "synthetic",
+  "num_rows": 3,
+  "shape": [
+    3
+  ],
+  "fields_detected": [
+    "permeability",
+    "porosity",
+    "pressure",
+    "resistivity",
+    "time"
+  ],
+  "fields_missing": [],
+  "unit_warnings": [],
+  "num_nan": 0,
+  "num_inf": 0,
+  "num_missing": 0,
+  "num_outliers": 0,
+  "bounds_violations": {},
+  "shape_consistency": {
+    "shape_consistent": true,
+    "field_shapes": {
+      "time": [
+        3
+      ],
+      "porosity": [
+        3
+      ],
+      "permeability": [
+        3
+      ],
+      "pressure": [
+        3
+      ],
+      "resistivity": [
+        3
+      ]
+    },
+    "warnings": []
+  },
+  "duplicate_time_count": 0,
+  "duplicate_coordinate_count": 0,
+  "resample_summary": {},
+  "warnings": [],
+  "recommendations": [
+    "Dataset passed core QC checks for the current lightweight schema."
+  ],
+  "metadata": {},
+  "source_name": "demo_qc_dataset"
+}

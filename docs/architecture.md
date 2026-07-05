@@ -1,5 +1,9 @@
 # Architecture
 
+The current product direction is requirement-level function hardening and
+benchmark validation. Workflow design is deferred until contract details are
+confirmed.
+
 ## Project Structure
 
 - `reservoir_backend/core`: grid, field, state, well, unit, and exception types.
@@ -30,6 +34,13 @@ Rt / EM / acoustic signals
 -> result export
 -> reports
 ```
+
+## Current Hardening Boundary
+
+The backend currently has computational, fusion, cross-scale, reporting,
+validation, and benchmark modules. It does not implement a Petrel workflow,
+business process layer, or complex frontend interface. CLI / YAML / reports
+remain the primary interface until the contract workflow is confirmed.
 
 ## Combined Transport Chain
 

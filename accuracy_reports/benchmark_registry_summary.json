@@ -1,0 +1,1538 @@
+{
+  "benchmark_registry_name": "unified_benchmark_registry",
+  "success": true,
+  "num_benchmark_summaries": 6,
+  "num_benchmark_cases": 43,
+  "num_passed_cases": 43,
+  "num_failed_cases": 0,
+  "num_missing_summaries": 0,
+  "modules_covered": [
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M8"
+  ],
+  "requirements_covered": [
+    "benchmark registry",
+    "capillary and gravity transport",
+    "parameter field fusion",
+    "pressure field reconstruction",
+    "saturation inversion",
+    "saturation transport",
+    "simplified three-phase WOG"
+  ],
+  "benchmarks": [
+    {
+      "benchmark_id": "saturation_inversion_benchmark",
+      "benchmark_name": "saturation_inversion_benchmark",
+      "module_id": "M2",
+      "task_id": "TASK-046",
+      "summary_json_path": "accuracy_reports\\saturation_inversion_benchmark_summary.json",
+      "summary_markdown_path": "accuracy_reports\\saturation_inversion_benchmark_summary.md",
+      "success": true,
+      "num_cases": 6,
+      "num_passed": 6,
+      "num_failed": 0,
+      "main_metrics": {
+        "archie_formula_error": 0.0,
+        "noise_sensitivity": {
+          "levels": [
+            0.01,
+            0.05,
+            0.1
+          ],
+          "mean_abs_errors": [
+            0.001566100579705119,
+            0.011352873098887,
+            0.019666094935486014
+          ],
+          "monotonic_error_growth": true,
+          "bounded": true,
+          "has_nan": false,
+          "has_inf": false
+        },
+        "fusion_error": 0.005428571428571412,
+        "clipping_checked": true
+      },
+      "validation_levels": [
+        "analytical",
+        "diagnostic_sanity"
+      ],
+      "reference_types": [
+        "internal benchmark"
+      ],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "analytical Archie law only; not commercial petrophysical interpretation",
+        "clipping report only; no automatic calibration",
+        "deterministic confidence/uncertainty fusion; no Bayesian inversion",
+        "synthetic noise sensitivity only"
+      ],
+      "cases": [
+        {
+          "case_name": "archie_formula_analytical",
+          "module_id": "M2",
+          "validation_level": "analytical",
+          "reference_type": "internal benchmark",
+          "source": "internal Archie analytical formula",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "archie_formula_error": 0.0
+          },
+          "limitations": [
+            "analytical Archie law only; not commercial petrophysical interpretation"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "noise_sensitivity",
+          "module_id": "M2",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal saturation inversion noise sensitivity",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "levels": [
+              0.01,
+              0.05,
+              0.1
+            ],
+            "mean_abs_errors": [
+              0.001566100579705119,
+              0.011352873098887,
+              0.019666094935486014
+            ],
+            "monotonic_error_growth": true,
+            "bounded": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "synthetic noise sensitivity only"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "uncertainty_weighted_fusion",
+          "module_id": "M2",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal inversion fusion diagnostic",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "fusion_error": 0.005428571428571412
+          },
+          "limitations": [
+            "deterministic confidence/uncertainty fusion; no Bayesian inversion"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "clipping_report",
+          "module_id": "M2",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal inversion clipping diagnostic",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "clipping_checked": true
+          },
+          "limitations": [
+            "clipping report only; no automatic calibration"
+          ],
+          "warnings": []
+        }
+      ]
+    },
+    {
+      "benchmark_id": "pressure_solver_benchmark",
+      "benchmark_name": "pressure_solver_benchmark",
+      "module_id": "M3",
+      "task_id": "TASK-047",
+      "summary_json_path": "accuracy_reports\\pressure_solver_benchmark_summary.json",
+      "summary_markdown_path": "accuracy_reports\\pressure_solver_benchmark_summary.md",
+      "success": true,
+      "num_cases": 8,
+      "num_passed": 8,
+      "num_failed": 0,
+      "main_metrics": {
+        "overall_max_error": 2.9802322387695312e-08,
+        "overall_mass_balance_error": 8.28209992870868e-15,
+        "overall_flux_conservation_error": 7.453889935837843e-20
+      },
+      "validation_levels": [
+        "adapted_open_source_reference",
+        "diagnostic_sanity",
+        "manufactured_solution",
+        "property_metadata_sanity"
+      ],
+      "reference_types": [
+        "adapted reference",
+        "internal benchmark",
+        "property metadata sanity only",
+        "reference context only"
+      ],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "1x1x1 reference cannot form an internal pressure gradient in current benchmark mode",
+        "MRST code is not executed or copied into solver implementation",
+        "adapted layered Cartesian pressure benchmark only",
+        "homogeneous Cartesian left/right Dirichlet only",
+        "metadata sanity only; not exact OPM Flow reproduction",
+        "method reference note only",
+        "no MATLAB dependency",
+        "no MRST runtime integration",
+        "no OPM Flow equivalence, no PVT, no wells, no black-oil behavior",
+        "no black-oil or deck parser behavior is claimed",
+        "not an open-source simulator reproduction",
+        "not exact SPE1 simulation reproduction",
+        "simplified source/sink benchmark; not a new well model",
+        "uses constant left/right Dirichlet boundaries supported by current solver"
+      ],
+      "cases": [
+        {
+          "case_name": "linear_1d_analytical",
+          "module_id": "M3",
+          "validation_level": "manufactured_solution",
+          "reference_type": "internal benchmark",
+          "source": "internal analytical manufactured case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "max_abs_pressure_error": 5.587935447692871e-09,
+            "relative_l2_pressure_error": 5.016031324416748e-16,
+            "max_flux_variation": 7.453889935837843e-20,
+            "mass_balance_error": 8.28209992870868e-15,
+            "pressure_min": 1225000.0000000005,
+            "pressure_max": 9774999.999999998,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "not an open-source simulator reproduction"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "manufactured_2d_linear",
+          "module_id": "M3",
+          "validation_level": "manufactured_solution",
+          "reference_type": "internal benchmark",
+          "source": "internal manufactured linear field",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "max_abs_error": 2.9802322387695312e-08,
+            "l2_error": 1.799911894388302e-07,
+            "relative_l2_error": 3.805046953505174e-15,
+            "linf_error": 2.9802322387695312e-08,
+            "has_nan": false,
+            "has_inf": false,
+            "pressure_min": 2300000.000000004,
+            "pressure_max": 7700000.000000009
+          },
+          "limitations": [
+            "uses constant left/right Dirichlet boundaries supported by current solver"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "manufactured_3d_linear",
+          "module_id": "M3",
+          "validation_level": "manufactured_solution",
+          "reference_type": "internal benchmark",
+          "source": "internal manufactured linear field",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "max_abs_error": 5.587935447692871e-09,
+            "l2_error": 2.929227883427693e-08,
+            "relative_l2_error": 3.8338905702410085e-16,
+            "linf_error": 5.587935447692871e-09,
+            "has_nan": false,
+            "has_inf": false,
+            "pressure_min": 3499999.999999998,
+            "pressure_max": 8500000.000000006
+          },
+          "limitations": [
+            "uses constant left/right Dirichlet boundaries supported by current solver"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "opm_water_1ph_adapted",
+          "module_id": "M3",
+          "validation_level": "adapted_open_source_reference",
+          "reference_type": "property metadata sanity only",
+          "source": "OPM/opm-tests water-1ph WATER2F.DATA",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "porosity": 0.1,
+            "permeability_x_md": 1000.0,
+            "permeability_y_md": 1000.0,
+            "permeability_z_md": 100.0,
+            "metadata_loaded": true,
+            "pressure_case_mode": "metadata_sanity_only",
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "1x1x1 reference cannot form an internal pressure gradient in current benchmark mode",
+            "metadata sanity only; not exact OPM Flow reproduction",
+            "no black-oil or deck parser behavior is claimed"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "opm_spe1case1_layered_adapted",
+          "module_id": "M3",
+          "validation_level": "adapted_open_source_reference",
+          "reference_type": "adapted reference",
+          "source": "OPM/opm-tests spe1 SPE1CASE1.DATA",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "porosity_min": 0.3,
+            "porosity_max": 0.3,
+            "permeability_min_md": 50.0,
+            "permeability_max_md": 500.0,
+            "permeability_contrast": 10.0,
+            "pressure_min": 2399999.9999999995,
+            "pressure_max": 9600000.000000007,
+            "max_abs_flux": 0.0019738466000000137,
+            "mass_balance_error": 2.774473359390406e-16,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "adapted layered Cartesian pressure benchmark only",
+            "not exact SPE1 simulation reproduction",
+            "no OPM Flow equivalence, no PVT, no wells, no black-oil behavior"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "mrst_simple_incomp_tpfa_reference",
+          "module_id": "M3",
+          "validation_level": "adapted_open_source_reference",
+          "reference_type": "reference context only",
+          "source": "MRST simpleIncompTPFA.m",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "is_runtime_dependency": false,
+            "mentions_tpfa": true,
+            "mentions_boundary_conditions": true,
+            "mentions_sources": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "method reference note only",
+            "no MATLAB dependency",
+            "no MRST runtime integration",
+            "MRST code is not executed or copied into solver implementation"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "boundary_sanity",
+          "module_id": "M3",
+          "validation_level": "property_metadata_sanity",
+          "reference_type": "property metadata sanity only",
+          "source": "internal boundary sanity case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "pressure_monotonicity_score": 1.0,
+            "pressure_within_boundary_range": true,
+            "boundary_pressure_left": 10000000.0,
+            "boundary_pressure_right": 0.0,
+            "pressure_min": 416666.666666663,
+            "pressure_max": 9583333.333333327,
+            "warnings": [],
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "homogeneous Cartesian left/right Dirichlet only"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "source_sink_material_balance",
+          "module_id": "M3",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal balanced source/sink case using existing well support",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "total_source": 2e-05,
+            "total_sink": -2e-05,
+            "net_source": 0.0,
+            "boundary_flux_balance": 0.0,
+            "mass_balance_residual": 0.0,
+            "pressure_min": -5938.206056965719,
+            "pressure_max": 2729.8009262638698,
+            "has_nan": false,
+            "has_inf": false,
+            "status": "done"
+          },
+          "limitations": [
+            "simplified source/sink benchmark; not a new well model"
+          ],
+          "warnings": []
+        }
+      ]
+    },
+    {
+      "benchmark_id": "saturation_transport_benchmark",
+      "benchmark_name": "saturation_transport_benchmark",
+      "module_id": "M4",
+      "task_id": "TASK-048",
+      "summary_json_path": "accuracy_reports\\saturation_transport_benchmark_summary.json",
+      "summary_markdown_path": "accuracy_reports\\saturation_transport_benchmark_summary.md",
+      "success": true,
+      "num_cases": 7,
+      "num_passed": 7,
+      "num_failed": 0,
+      "main_metrics": {
+        "overall_material_balance_error": 1.7347234759768068e-16,
+        "overall_max_cfl": 2.0
+      },
+      "validation_levels": [
+        "diagnostic_sanity",
+        "property_metadata_sanity",
+        "stability_validation",
+        "trend_validation"
+      ],
+      "reference_types": [
+        "adapted reference",
+        "internal benchmark",
+        "property metadata sanity only",
+        "reference context only"
+      ],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "benchmark does not parse or execute buckleyLeverett1D.m",
+        "diagnoses existing CFL behavior without changing CFL algorithm",
+        "implemented as a thin 3D Cartesian case because current 3D saturation API requires nz > 1",
+        "metadata/reference note only",
+        "no MATLAB runtime dependency",
+        "no MRST runtime dependency",
+        "no OPM Flow equivalence, no black-oil, no PVT, no wells",
+        "not exact SPE1 reproduction",
+        "property and boundedness sanity only",
+        "qualitative benchmark idea only; not exact MRST reproduction",
+        "qualitative direction and boundedness check only",
+        "small deterministic oil-water cases only",
+        "uses current oil-water Corey upwind transport solver",
+        "uses existing solver material-balance report and diagnostic recomputation"
+      ],
+      "cases": [
+        {
+          "case_name": "buckley_leverett_1d_qualitative",
+          "module_id": "M4",
+          "validation_level": "trend_validation",
+          "reference_type": "adapted reference",
+          "source": "MRST buckleyLeverett1D.m",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "initial_front_position": null,
+            "final_front_position": 3.5,
+            "front_moved_downstream": true,
+            "inlet_sw_increase": 0.34837148888808217,
+            "sw_min": 0.2,
+            "sw_max": 0.5483714888880822,
+            "material_balance_error": 1.387778780781445e-16,
+            "max_cfl": 0.049999999999999996,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "qualitative benchmark idea only; not exact MRST reproduction",
+            "no MATLAB runtime dependency",
+            "uses current oil-water Corey upwind transport solver"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "mrst_buckley_leverett_1d_reference",
+          "module_id": "M4",
+          "validation_level": "trend_validation",
+          "reference_type": "reference context only",
+          "source": "MRST buckleyLeverett1D.m",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "metadata_loaded": true,
+            "grid_shape": [
+              100,
+              1
+            ],
+            "porosity": 0.2,
+            "permeability_md": 100.0,
+            "mentions_explicit_transport": true,
+            "mentions_implicit_transport": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "metadata/reference note only",
+            "benchmark does not parse or execute buckleyLeverett1D.m",
+            "no MRST runtime dependency"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "saturation_boundedness",
+          "module_id": "M4",
+          "validation_level": "stability_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal boundedness regression set",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "num_cases": 5,
+            "num_bounded": 5,
+            "sw_min_global": 0.2,
+            "sw_max_global": 0.7999990000000015,
+            "num_bound_violations": 0,
+            "clipped_cells": 0,
+            "bound_handling": "solver clips to [Swi, 1-Sor] when needed",
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "small deterministic oil-water cases only"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "cfl_stability",
+          "module_id": "M4",
+          "validation_level": "stability_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal CFL stability regression",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "stable_max_cfl": 0.09999999999999999,
+            "near_limit_max_cfl": 0.9,
+            "too_large_max_cfl": 2.0,
+            "num_cfl_warnings": 1,
+            "stability_flags": {
+              "stable": "success",
+              "near_limit": "success",
+              "too_large": "cfl_violation"
+            },
+            "max_cfl": 2.0,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "diagnoses existing CFL behavior without changing CFL algorithm"
+          ],
+          "warnings": [
+            "CFL condition violated: max_cfl=2.0 max_cfl_allowed=1.0"
+          ]
+        },
+        {
+          "case_name": "material_balance_1d",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal one-step material-balance case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "initial_water_volume": 1.5000000000000004,
+            "final_water_volume": 1.5100000000000005,
+            "injected_water_volume": 0.01,
+            "produced_water_volume": 0.0,
+            "material_balance_residual": -1.734723475976807e-18,
+            "relative_material_balance_error": 1.7347234759768068e-16,
+            "material_balance_error": 1.7347234759768068e-16,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "uses existing solver material-balance report and diagnostic recomputation"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "areal_waterflood_2d_qualitative",
+          "module_id": "M4",
+          "validation_level": "trend_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal areal-like x-direction waterflood",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "injection_region_sw_initial": 0.20000000000000004,
+            "injection_region_sw_final": 0.2239408333628254,
+            "producer_region_sw_initial": 0.20000000000000004,
+            "producer_region_sw_final": 0.20000000000000004,
+            "front_direction_score": 1.0,
+            "sw_min": 0.2,
+            "sw_max": 0.2239408333628254,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "implemented as a thin 3D Cartesian case because current 3D saturation API requires nz > 1",
+            "qualitative direction and boundedness check only"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "opm_spe1case1_saturation_sanity_adapted",
+          "module_id": "M4",
+          "validation_level": "property_metadata_sanity",
+          "reference_type": "property metadata sanity only",
+          "source": "OPM/opm-tests spe1 SPE1CASE1.DATA",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "porosity_min": 0.3,
+            "porosity_max": 0.3,
+            "permeability_min_md": 50.0,
+            "permeability_max_md": 500.0,
+            "permeability_contrast": 10.0,
+            "sw_min": 0.2,
+            "sw_max": 0.2,
+            "bounded": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "property and boundedness sanity only",
+            "not exact SPE1 reproduction",
+            "no OPM Flow equivalence, no black-oil, no PVT, no wells"
+          ],
+          "warnings": []
+        }
+      ]
+    },
+    {
+      "benchmark_id": "capillary_gravity_benchmark",
+      "benchmark_name": "capillary_gravity_benchmark",
+      "module_id": "M4",
+      "task_id": "TASK-049",
+      "summary_json_path": "accuracy_reports\\capillary_gravity_benchmark_summary.json",
+      "summary_markdown_path": "accuracy_reports\\capillary_gravity_benchmark_summary.md",
+      "success": true,
+      "num_cases": 8,
+      "num_passed": 8,
+      "num_failed": 0,
+      "main_metrics": {
+        "overall_gradient_reduction": 0.05761298436791229,
+        "overall_max_capillary_flux": 1.2055240631880779e-05,
+        "overall_max_gravity_flux": 8.172208333333336e-08,
+        "overall_material_balance_error": 0.0
+      },
+      "validation_levels": [
+        "diagnostic_sanity",
+        "property_metadata_sanity",
+        "stability_validation",
+        "trend_validation"
+      ],
+      "reference_types": [
+        "internal benchmark",
+        "property metadata sanity only"
+      ],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "composer consistency only; no saturation update",
+        "direction check follows current project z-face convention",
+        "explicit capillary update uses small stable dt; strong capillary/fine grids may be dt-sensitive",
+        "no OPM Flow equivalence, no black-oil, no PVT",
+        "no-flow boundary; homogeneous permeability",
+        "not exact SPE1 reproduction",
+        "property metadata and boundedness sanity only",
+        "small explicit time step; not a semi-implicit capillary solver",
+        "uses current Brooks-Corey implementation without changing model convention",
+        "uses current z-only gravity implementation"
+      ],
+      "cases": [
+        {
+          "case_name": "capillary_pressure_monotonicity",
+          "module_id": "M4",
+          "validation_level": "trend_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal capillary pressure trend case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "pc_min": 1008.4389681792214,
+            "pc_max": 7745.966692414842,
+            "pc_mean": 1819.8276411653333,
+            "pc_monotonicity_score": 1.0,
+            "num_nonfinite": 0,
+            "model_convention": "Brooks-Corey Pc=Po-Pw decreases as Sw increases",
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "uses current Brooks-Corey implementation without changing model convention"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "capillary_no_gradient_zero_flux",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal uniform-Sw capillary flux case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "max_abs_capillary_flux": 0.0,
+            "mean_abs_capillary_flux": 0.0,
+            "flux_zero_tolerance": 1e-30,
+            "success": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "no-flow boundary; homogeneous permeability"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "capillary_smoothing",
+          "module_id": "M4",
+          "validation_level": "trend_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal 1D capillary smoothing case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "initial_gradient_norm": 0.39999999999999997,
+            "final_gradient_norm": 0.3423870156320877,
+            "gradient_reduction": 0.05761298436791229,
+            "has_nan": false,
+            "has_inf": false,
+            "max_abs_capillary_flux": 1.2055240631880779e-05,
+            "sw_min": 0.3,
+            "sw_max": 0.7,
+            "num_bound_violations": 0
+          },
+          "limitations": [
+            "explicit capillary update uses small stable dt; strong capillary/fine grids may be dt-sensitive"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "gravity_zero_density_difference",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal zero-density-difference gravity case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "max_abs_gravity_flux": 0.0,
+            "mean_abs_gravity_flux": 0.0,
+            "flux_zero_tolerance": 1e-30,
+            "success": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "uses current z-only gravity implementation"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "gravity_segregation_direction",
+          "module_id": "M4",
+          "validation_level": "trend_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal gravity segregation direction case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "expected_gravity_flux_sign": -1,
+            "observed_gravity_flux_sign": -1,
+            "sign_matches_expectation": true,
+            "top_sw_change": 0.00040861041666662157,
+            "bottom_sw_change": -0.0004086104166666771,
+            "vertical_axis_convention": "Grid3D arrays use (nz, ny, nx); positive flux_z is bottom-to-top; rho_w>rho_o gives negative internal gravity_flux_z",
+            "positive_gravity_direction_convention": "depth_positive=down",
+            "sw_min": 0.4995913895833333,
+            "sw_max": 0.5004086104166666,
+            "num_bound_violations": 0,
+            "max_abs_gravity_flux": 8.172208333333336e-08,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "direction check follows current project z-face convention"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "combined_capillary_gravity_stability",
+          "module_id": "M4",
+          "validation_level": "stability_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal combined capillary + gravity stability case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "max_abs_capillary_flux": 1.584936490538905e-08,
+            "max_abs_gravity_flux": 7.880343749999997e-08,
+            "sw_min": 0.34998029914062495,
+            "sw_max": 0.6500059959137229,
+            "num_bound_violations": 0,
+            "material_balance_error": 0.0,
+            "max_cfl": 4.3364059976347246e-05,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "small explicit time step; not a semi-implicit capillary solver"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "water_flux_composer_consistency",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal water_flux_composer consistency case",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "pressure_only_flux_norm": 12.68857754044952,
+            "capillary_contribution_norm": 1.4949916387726052,
+            "gravity_contribution_norm": 1.2000000000000002,
+            "combined_flux_norm": 13.613045214058461,
+            "shape_consistent": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "composer consistency only; no saturation update"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "opm_spe1case1_capillary_gravity_sanity_adapted",
+          "module_id": "M4",
+          "validation_level": "property_metadata_sanity",
+          "reference_type": "property metadata sanity only",
+          "source": "OPM/opm-tests spe1 SPE1CASE1.DATA",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "porosity_min": 0.3,
+            "porosity_max": 0.3,
+            "permeability_min_md": 50.0,
+            "permeability_max_md": 500.0,
+            "permeability_contrast": 10.0,
+            "sw_min": 0.5,
+            "sw_max": 0.5,
+            "num_bound_violations": 0,
+            "metadata_loaded": true,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "property metadata and boundedness sanity only",
+            "not exact SPE1 reproduction",
+            "no OPM Flow equivalence, no black-oil, no PVT"
+          ],
+          "warnings": []
+        }
+      ]
+    },
+    {
+      "benchmark_id": "three_phase_benchmark",
+      "benchmark_name": "three_phase_benchmark",
+      "module_id": "M4",
+      "task_id": "TASK-050",
+      "summary_json_path": "accuracy_reports\\three_phase_benchmark_summary.json",
+      "summary_markdown_path": "accuracy_reports\\three_phase_benchmark_summary.md",
+      "success": true,
+      "num_cases": 8,
+      "num_passed": 8,
+      "num_failed": 0,
+      "main_metrics": {
+        "overall_max_closure_error": 2.220446049250313e-16,
+        "overall_num_bound_violations": 0,
+        "overall_fractional_flow_sum_error": 0.0,
+        "overall_max_phase_flux": 9.765248811605817e-06
+      },
+      "validation_levels": [
+        "diagnostic_sanity",
+        "property_metadata_sanity",
+        "stability_validation"
+      ],
+      "reference_types": [
+        "internal benchmark",
+        "property metadata sanity only"
+      ],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "Corey-style WOG relperm only; Stone I/II and Baker models are not implemented",
+        "advective phase flux only; no WOG capillary/gravity phase flux composition",
+        "checks current residual-bounded saturation triangle; no black-oil phase appearance logic",
+        "closure uses So = 1 - Sw - Sg in simplified incompressible WOG",
+        "fixed viscosity incompressible WOG; no PVT table or surface-volume conversion",
+        "no surface-volume production rate, Bo/Bw/Bg, Rs/Rv, or black-oil material balance",
+        "one explicit 1D step with stable dt; no black-oil production controls",
+        "production summary is a simplified phase outflow diagnostic",
+        "small structured-grid 3D explicit WOG transport case"
+      ],
+      "cases": [
+        {
+          "case_name": "three_phase_saturation_closure",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal simplified incompressible WOG benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "sw_min": 0.28,
+            "sw_max": 0.46,
+            "so_min": 0.36000000000000004,
+            "so_max": 0.64,
+            "sg_min": 0.08,
+            "sg_max": 0.18,
+            "sw_mean": 0.36999999999999994,
+            "so_mean": 0.5,
+            "sg_mean": 0.13,
+            "closure_max_abs_error": 2.220446049250313e-16,
+            "closure_l2_error": 2.7194799110210365e-16,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "num_bound_violations": 0
+          },
+          "limitations": [
+            "closure uses So = 1 - Sw - Sg in simplified incompressible WOG"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "residual_saturation_bounds",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal simplified incompressible WOG benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "sw_min": 0.2,
+            "sw_max": 0.6,
+            "so_min": 0.25,
+            "so_max": 0.75,
+            "sg_min": 0.05,
+            "sg_max": 0.18,
+            "sw_mean": 0.38749999999999996,
+            "so_mean": 0.48750000000000004,
+            "sg_mean": 0.125,
+            "closure_max_abs_error": 1.1102230246251565e-16,
+            "closure_l2_error": 1.1102230246251565e-16,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "num_bound_violations": 0,
+            "residual_violations": 0,
+            "swi": 0.2,
+            "sor": 0.2,
+            "sgc": 0.05
+          },
+          "limitations": [
+            "checks current residual-bounded saturation triangle; no black-oil phase appearance logic"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "three_phase_relperm_endpoint_sanity",
+          "module_id": "M4",
+          "validation_level": "property_metadata_sanity",
+          "reference_type": "property metadata sanity only",
+          "source": "internal simplified incompressible WOG benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "krw_endpoint": 0.0,
+            "krg_endpoint": 0.0,
+            "kro_low_oil_endpoint": 0.10578512396694209,
+            "krw_monotonicity_score": 1.0,
+            "krg_monotonicity_score": 1.0,
+            "kro_decreases_as_oil_saturation_decreases": true,
+            "krw_min": 0.0,
+            "krw_max": 0.2008264462809917,
+            "kro_min": 0.10578512396694209,
+            "kro_max": 0.8,
+            "krg_min": 0.0,
+            "krg_max": 0.31735537190082647,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "Corey-style WOG relperm only; Stone I/II and Baker models are not implemented"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "phase_mobility_fractional_flow_consistency",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal simplified incompressible WOG benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "krw_min": 0.0063471074380165304,
+            "krw_max": 0.06704132231404958,
+            "kro_min": 0.06770247933884299,
+            "kro_max": 0.5119999999999999,
+            "krg_min": 0.001785123966942148,
+            "krg_max": 0.03352066115702479,
+            "krw_nonnegative": true,
+            "kro_nonnegative": true,
+            "krg_nonnegative": true,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "lambda_w_min": 6.34710743801653,
+            "lambda_w_max": 67.04132231404958,
+            "lambda_o_min": 13.540495867768598,
+            "lambda_o_max": 102.39999999999998,
+            "lambda_g_min": 178.5123966942148,
+            "lambda_g_max": 3352.066115702479,
+            "lambda_total_min": 287.2595041322313,
+            "lambda_total_max": 3432.647933884297,
+            "lambda_total_positive": true,
+            "fw_min": 0.019530497623211632,
+            "fw_max": 0.022877279609688297,
+            "fo_min": 0.003944621216206848,
+            "fo_max": 0.35647210458479106,
+            "fg_min": 0.6214325170318541,
+            "fg_max": 0.9765248811605816,
+            "fractional_flow_sum_error": 0.0
+          },
+          "limitations": [
+            "fixed viscosity incompressible WOG; no PVT table or surface-volume conversion"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "phase_flux_finite_shape_consistency",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal simplified incompressible WOG benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "max_abs_water_flux": 2.287590814657599e-07,
+            "max_abs_oil_flux": 3.564721045847911e-06,
+            "max_abs_gas_flux": 9.765248811605817e-06,
+            "water_flux_shape": [
+              98
+            ],
+            "oil_flux_shape": [
+              98
+            ],
+            "gas_flux_shape": [
+              98
+            ],
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "phase_flux_closure_error_max": 1.6940658945086007e-21,
+            "flux_shape_x": [
+              2,
+              3,
+              5
+            ],
+            "flux_shape_y": [
+              2,
+              4,
+              4
+            ],
+            "flux_shape_z": [
+              3,
+              3,
+              4
+            ]
+          },
+          "limitations": [
+            "advective phase flux only; no WOG capillary/gravity phase flux composition"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "three_phase_1d_transport_boundedness",
+          "module_id": "M4",
+          "validation_level": "stability_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal simplified incompressible WOG benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "sw_min": 0.3,
+            "sw_max": 0.3047877054987962,
+            "so_min": 0.5994116226087066,
+            "so_max": 0.6,
+            "sg_min": 0.0958006718924972,
+            "sg_max": 0.1,
+            "sw_mean": 0.30015959018329325,
+            "so_mean": 0.5999803874202903,
+            "sg_mean": 0.0998600223964166,
+            "closure_max_abs_error": 1.1102230246251565e-16,
+            "closure_l2_error": 5.978733960281817e-16,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "num_bound_violations": 0,
+            "saturation_change_l1": 0.009575410997592362,
+            "saturation_change_l2": 0.006395519404415221,
+            "max_cfl": 0.01,
+            "water_balance_error": -2.8189256484623115e-18,
+            "oil_balance_error": 1.1140177322288558e-17,
+            "gas_balance_error": -1.0842021724855044e-19
+          },
+          "limitations": [
+            "one explicit 1D step with stable dt; no black-oil production controls"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "three_phase_3d_transport_closure",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal simplified incompressible WOG benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "sw_min": 0.3,
+            "sw_max": 0.3002393852749398,
+            "so_min": 0.5999705811304352,
+            "so_max": 0.6,
+            "sg_min": 0.09979003359462486,
+            "sg_max": 0.1,
+            "sw_mean": 0.300059846318735,
+            "so_mean": 0.5999926452826089,
+            "sg_mean": 0.09994750839865624,
+            "closure_max_abs_error": 1.1102230246251565e-16,
+            "closure_l2_error": 5.768888059150692e-16,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "num_bound_violations": 0,
+            "saturation_change_l1": 0.004308934948917556,
+            "saturation_change_l2": 0.0009593279106623554,
+            "max_cfl": 0.0005,
+            "water_balance_error": 3.382710778154774e-17,
+            "oil_balance_error": -1.5486472781239824e-16,
+            "gas_balance_error": -3.7947076036992655e-18
+          },
+          "limitations": [
+            "small structured-grid 3D explicit WOG transport case"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "production_summary_consistency",
+          "module_id": "M4",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal simplified incompressible WOG benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "success": true,
+            "sw_min": 0.3,
+            "sw_max": 0.3047877054987962,
+            "so_min": 0.5994116226087066,
+            "so_max": 0.6,
+            "sg_min": 0.0958006718924972,
+            "sg_max": 0.1,
+            "closure_max_abs_error": 1.1102230246251565e-16,
+            "closure_l2_error": 4.839349969133127e-16,
+            "num_bound_violations": 0,
+            "krw_min": 0.00991735537190082,
+            "krw_max": 0.010889715593754484,
+            "kro_min": 0.4218965799006146,
+            "kro_max": 0.42314049586776853,
+            "krg_min": 0.004160730338785156,
+            "krg_max": 0.0049586776859504135,
+            "lambda_total_min": 511.34206545239294,
+            "lambda_total_max": 590.4132231404958,
+            "fractional_flow_sum_error": 0.0,
+            "max_abs_water_flux": 0.0,
+            "max_abs_oil_flux": 0.0,
+            "max_abs_gas_flux": 0.0,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "water_rate": 1.679731243001119e-07,
+            "oil_rate": 1.433370660694289e-06,
+            "gas_rate": 8.398656215005601e-06,
+            "water_cumulative": 1.679731243001119e-05,
+            "oil_cumulative": 0.0001433370660694289,
+            "gas_cumulative": 0.0008398656215005601,
+            "summary_json_serializable": true,
+            "production_summary_type": "pore-volume phase outflow diagnostic, not surface-volume black-oil rate"
+          },
+          "limitations": [
+            "production summary is a simplified phase outflow diagnostic",
+            "no surface-volume production rate, Bo/Bw/Bg, Rs/Rv, or black-oil material balance"
+          ],
+          "warnings": []
+        }
+      ]
+    },
+    {
+      "benchmark_id": "parameter_fusion_benchmark",
+      "benchmark_name": "parameter_fusion_benchmark",
+      "module_id": "M5",
+      "task_id": "TASK-051",
+      "summary_json_path": "accuracy_reports\\parameter_fusion_benchmark_summary.json",
+      "summary_markdown_path": "accuracy_reports\\parameter_fusion_benchmark_summary.md",
+      "success": true,
+      "num_cases": 8,
+      "num_passed": 8,
+      "num_failed": 0,
+      "main_metrics": {
+        "overall_mae": 0.0,
+        "overall_rmse": 0.0,
+        "overall_max_abs_error": 0.0,
+        "overall_num_bound_violations": 0,
+        "overall_num_masked_cells": 2
+      },
+      "validation_levels": [
+        "diagnostic_sanity",
+        "property_metadata_sanity",
+        "trend_validation"
+      ],
+      "reference_types": [
+        "internal benchmark",
+        "property metadata sanity only"
+      ],
+      "has_nan": false,
+      "has_inf": false,
+      "limitations": [
+        "all-source NaN cells remain masked/NaN and are reported, not silently filled",
+        "confidence is used as a deterministic source weight, not Bayesian uncertainty assimilation",
+        "reports current saturation clipping behavior; no silent physical-property calibration",
+        "same-grid arithmetic mean only; no geostatistical interpolation",
+        "shape mismatch must raise/report; no silent NumPy broadcasting is allowed",
+        "synthetic field fusion sanity only; no history matching or automatic calibration",
+        "uncertainty fusion not implemented in current fusion API",
+        "weights are scalar source weights; negative and non-finite weights are rejected"
+      ],
+      "cases": [
+        {
+          "case_name": "equal_weight_field_fusion",
+          "module_id": "M5",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal equal-weight same-grid fusion benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "success": true,
+            "shape_consistent": true,
+            "mae": 0.0,
+            "rmse": 0.0,
+            "max_abs_error": 0.0,
+            "num_compared": 6,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "fused_mean": 3.0,
+            "field_count": 3,
+            "num_masked_cells": 0,
+            "num_bound_violations": 0
+          },
+          "limitations": [
+            "same-grid arithmetic mean only; no geostatistical interpolation"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "explicit_weight_field_fusion",
+          "module_id": "M5",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal explicit-weight fusion benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "success": true,
+            "shape_consistent": true,
+            "mae": 0.0,
+            "rmse": 0.0,
+            "max_abs_error": 0.0,
+            "num_compared": 6,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "used_weights": [
+              1.0,
+              3.0
+            ],
+            "invalid_weight_rejected": true,
+            "weight_min": 1.0,
+            "weight_max": 3.0,
+            "num_masked_cells": 0,
+            "num_bound_violations": 0
+          },
+          "limitations": [
+            "weights are scalar source weights; negative and non-finite weights are rejected"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "confidence_weighted_fusion",
+          "module_id": "M5",
+          "validation_level": "trend_validation",
+          "reference_type": "internal benchmark",
+          "source": "internal confidence-weighted fusion benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "success": true,
+            "shape_consistent": true,
+            "mean_distance_to_low_confidence": 0.7200000000000001,
+            "mean_distance_to_high_confidence": 0.07999999999999996,
+            "closer_to_high_confidence": true,
+            "high_confidence_influence_ratio": 9.000000000000005,
+            "warnings": [],
+            "fused_mean": 0.8200000000000002,
+            "confidence_min": 0.5,
+            "confidence_max": 0.5,
+            "zero_confidence_source_does_not_dominate": true,
+            "num_masked_cells": 0,
+            "num_bound_violations": 0,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "confidence is used as a deterministic source weight, not Bayesian uncertainty assimilation"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "uncertainty_or_variance_weighted_fusion_if_supported",
+          "module_id": "M5",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "current fusion API capability survey",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "uncertainty_fusion_supported": false,
+            "inverse_variance_weighting_verified": false,
+            "mae": 0.0,
+            "rmse": 0.0,
+            "max_abs_error": 0.0,
+            "num_masked_cells": 0,
+            "num_bound_violations": 0,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "uncertainty fusion not implemented in current fusion API"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "nan_aware_fusion",
+          "module_id": "M5",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal NaN-aware fusion benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "success": true,
+            "shape_consistent": true,
+            "mae": 0.0,
+            "rmse": 0.0,
+            "max_abs_error": 0.0,
+            "num_compared": 6,
+            "has_nan": false,
+            "has_inf": false,
+            "warnings": [],
+            "single_source_nan_ignored": true,
+            "all_source_nan_masked": true,
+            "num_masked_cells": 2,
+            "nan_cells_count": 2,
+            "expected_masked_output_has_nan": true,
+            "num_bound_violations": 0
+          },
+          "limitations": [
+            "all-source NaN cells remain masked/NaN and are reported, not silently filled"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "bounds_and_clipping_report",
+          "module_id": "M5",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "property metadata sanity only",
+          "source": "internal physical-bounds fusion benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "clipped_cells": 6,
+            "saturation_num_bound_violations": 0,
+            "porosity_num_bound_violations": 0,
+            "permeability_positive": true,
+            "num_bound_violations": 0,
+            "num_masked_cells": 0,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "reports current saturation clipping behavior; no silent physical-property calibration"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "shape_mismatch_rejection",
+          "module_id": "M5",
+          "validation_level": "diagnostic_sanity",
+          "reference_type": "internal benchmark",
+          "source": "internal shape-mismatch fusion benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "shape_mismatch_rejected": true,
+            "shape_consistent": false,
+            "mae": 0.0,
+            "rmse": 0.0,
+            "max_abs_error": 0.0,
+            "num_masked_cells": 0,
+            "num_bound_violations": 0,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "shape mismatch must raise/report; no silent NumPy broadcasting is allowed"
+          ],
+          "warnings": []
+        },
+        {
+          "case_name": "multi_field_property_dynamic_fusion_sanity",
+          "module_id": "M5",
+          "validation_level": "property_metadata_sanity",
+          "reference_type": "property metadata sanity only",
+          "source": "internal multi-field property/dynamic fusion sanity benchmark",
+          "is_exact_reproduction": false,
+          "success": true,
+          "key_metrics": {
+            "all_outputs_finite": true,
+            "shape_consistent": true,
+            "permeability_positive": true,
+            "porosity_num_bound_violations": 0,
+            "saturation_num_bound_violations": 0,
+            "updated_saturation_num_bound_violations": 0,
+            "source_names": [
+              "perm_a",
+              "perm_b",
+              "phi_a",
+              "phi_b",
+              "pressure_a",
+              "pressure_b",
+              "sw_sim",
+              "sw_obs"
+            ],
+            "source_count": 8,
+            "mask_shape_consistent": true,
+            "clipped_cells": 0,
+            "num_masked_cells": 0,
+            "num_bound_violations": 0,
+            "mae": 0.0,
+            "rmse": 0.0,
+            "max_abs_error": 0.0,
+            "has_nan": false,
+            "has_inf": false
+          },
+          "limitations": [
+            "synthetic field fusion sanity only; no history matching or automatic calibration"
+          ],
+          "warnings": []
+        }
+      ]
+    }
+  ],
+  "open_source_references": [
+    {
+      "reference_name": "opm_water_1ph_single_cell",
+      "project": "OPM/opm-tests",
+      "path": "water-1ph/WATER2F.DATA",
+      "url": "https://github.com/OPM/opm-tests/blob/master/water-1ph/WATER2F.DATA",
+      "reference_type": "property metadata sanity only",
+      "is_exact_reproduction": false,
+      "runtime_dependency": false,
+      "adapted_benchmark_use": "single-cell property parsing and pressure sanity reference"
+    },
+    {
+      "reference_name": "opm_spe1_case1_layered_subset",
+      "project": "OPM/opm-tests",
+      "path": "spe1/SPE1CASE1.DATA",
+      "url": "https://github.com/OPM/opm-tests/blob/master/spe1/SPE1CASE1.DATA",
+      "reference_type": "adapted reference",
+      "is_exact_reproduction": false,
+      "runtime_dependency": false,
+      "adapted_benchmark_use": "layered heterogeneous Cartesian pressure benchmark precursor"
+    },
+    {
+      "reference_name": "mrst_simple_incomp_tpfa_reference",
+      "project": "SINTEF-AppliedCompSci/MRST",
+      "path": "modules/book/examples/1phase/src/simpleIncompTPFA.m",
+      "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/1phase/src/simpleIncompTPFA.m",
+      "reference_type": "reference context only",
+      "is_exact_reproduction": false,
+      "runtime_dependency": false,
+      "adapted_benchmark_use": "TPFA diagnostic and report schema inspiration; not executed"
+    },
+    {
+      "reference_name": "mrst_buckley_leverett_1d_reference",
+      "project": "SINTEF-AppliedCompSci/MRST",
+      "path": "modules/book/examples/in2ph/buckleyLeverett1D.m",
+      "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/in2ph/buckleyLeverett1D.m",
+      "reference_type": "adapted reference",
+      "is_exact_reproduction": false,
+      "runtime_dependency": false,
+      "adapted_benchmark_use": "1D waterflood front movement and timestep sensitivity reference"
+    }
+  ],
+  "overclaim_warnings": [],
+  "limitations": [
+    "Registry reads existing benchmark summaries and reference fixtures only.",
+    "OPM/MRST materials are adapted references or context only, with no runtime dependency.",
+    "Registry does not claim full SPE1/SPE10 reproduction, OPM Flow equivalence, MRST integration, commercial simulator equivalence, or black-oil validation."
+  ],
+  "recommendations": [
+    "Keep registry generation as a required evidence index after benchmark hardening stages.",
+    "Add future benchmark summaries to BENCHMARK_SPECS rather than scattering independent validation reports.",
+    "Preserve exact/adapted/reference-only wording in reports and docs."
+  ]
+}

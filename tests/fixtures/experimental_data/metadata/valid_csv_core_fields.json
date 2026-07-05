@@ -1,0 +1,1 @@
+{"fixture_id":"valid_csv_core_fields","source_name":"valid_csv_core_fields","required_fields":["time","porosity","permeability","pressure","resistivity"],"description":"Valid CSV core fields for inversion, pressure, transport, and fusion."}
