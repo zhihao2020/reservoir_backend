@@ -69,6 +69,9 @@ requirement-level function.
 - Saturation transport enhancement for CFL adaptive timestep diagnostics,
   optional 1D TVD/MUSCL transport benchmarks, front sharpness, boundedness,
   fallback warnings, and mass-balance reporting
+- IMPES-style pressure-saturation sequential loop for small oil-water
+  synthetic waterfloods, including pressure, flux, Sw, CFL, material balance,
+  production curve, water cut, and breakthrough-time reporting
 - Capillary / gravity benchmark hardening for capillary pressure trend,
   capillary smoothing, gravity segregation direction, combined stability,
   water-flux composer consistency, and OPM SPE1 adapted property sanity
@@ -243,6 +246,19 @@ material balance, an areal-like waterflood trend case, and OPM SPE1CASE1
 saturation sanity metadata. It is not full MRST reproduction, not full SPE1 or
 SPE10 reproduction, not OPM Flow equivalence, not black-oil transport, and has
 no runtime dependency on OPM or MRST.
+
+The lightweight IMPES sequential loop report is available through:
+
+```bash
+python -m reservoir_backend.simulation.impes_report
+```
+
+It writes `accuracy_reports/impes_loop_summary.json` and `.md` for a small
+synthetic oil-water waterflood. The loop follows
+`pressure -> flux -> saturation -> mobility -> pressure`, reports production
+curve, water cut, breakthrough time, CFL, and material balance, and does not
+implement a fully implicit simulator, black-oil model, complex well controls,
+frontend, UDP, or REST API.
 
 The capillary / gravity benchmark is available through:
 

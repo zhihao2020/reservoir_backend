@@ -1,0 +1,434 @@
+{
+  "benchmark_name": "impes_sequential_loop",
+  "breakthrough_time": 16000.0,
+  "case_id": "synthetic_impes_waterflood",
+  "dt": 500.0,
+  "final_water_cut": 0.10003927344643256,
+  "grid_shape": [
+    2,
+    3,
+    8
+  ],
+  "has_inf": false,
+  "has_nan": false,
+  "limitations": [
+    "Sequential pressure-saturation coupling only; no fully implicit simulator.",
+    "Oil-water incompressible MVP only; no black-oil PVT.",
+    "Boundary-production summary only; no complex well-control model."
+  ],
+  "max_cfl": 0.1279680182261241,
+  "max_flux": 3.199200455653111e-05,
+  "max_mass_balance_error": 0.0,
+  "num_steps": 40,
+  "pressure_max": 96.81316853796062,
+  "pressure_min": 6.092891476151518,
+  "production_curve": [
+    {
+      "cumulative_oil": 0.07500000000000012,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015000000000000026,
+      "step": 1,
+      "time": 500.0,
+      "total_liquid_rate": 0.00015000000000000026,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.14868421052631595,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014736842105263166,
+      "step": 2,
+      "time": 1000.0,
+      "total_liquid_rate": 0.00014736842105263166,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.22179890824013418,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014622939542763646,
+      "step": 3,
+      "time": 1500.0,
+      "total_liquid_rate": 0.00014622939542763646,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.29499308464415797,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014638835280804754,
+      "step": 4,
+      "time": 2000.0,
+      "total_liquid_rate": 0.00014638835280804754,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.36847472929766956,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014696328930702314,
+      "step": 5,
+      "time": 2500.0,
+      "total_liquid_rate": 0.00014696328930702314,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.44219465404532315,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014743984949530718,
+      "step": 6,
+      "time": 3000.0,
+      "total_liquid_rate": 0.00014743984949530718,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.5161224327327808,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.0001478555573749152,
+      "step": 7,
+      "time": 3500.0,
+      "total_liquid_rate": 0.0001478555573749152,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.5903325488321143,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.0001484202321986669,
+      "step": 8,
+      "time": 4000.0,
+      "total_liquid_rate": 0.0001484202321986669,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.6649279838323316,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014919087000043473,
+      "step": 9,
+      "time": 4500.0,
+      "total_liquid_rate": 0.00014919087000043473,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.7399480975436834,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015004022742270357,
+      "step": 10,
+      "time": 5000.0,
+      "total_liquid_rate": 0.00015004022742270357,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.8153688830652717,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015084157104317664,
+      "step": 11,
+      "time": 5500.0,
+      "total_liquid_rate": 0.00015084157104317664,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.891169143054901,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.0001516005199792588,
+      "step": 12,
+      "time": 6000.0,
+      "total_liquid_rate": 0.0001516005199792588,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.9673779117565479,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015241753740329367,
+      "step": 13,
+      "time": 6500.0,
+      "total_liquid_rate": 0.00015241753740329367,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.0440576927837135,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015335956205433113,
+      "step": 14,
+      "time": 7000.0,
+      "total_liquid_rate": 0.00015335956205433113,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.1212510771983275,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015438676882922802,
+      "step": 15,
+      "time": 7500.0,
+      "total_liquid_rate": 0.00015438676882922802,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.1989551332266832,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.0001554081120567113,
+      "step": 16,
+      "time": 8000.0,
+      "total_liquid_rate": 0.0001554081120567113,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.2771483325214998,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.0001563863985896333,
+      "step": 17,
+      "time": 8500.0,
+      "total_liquid_rate": 0.0001563863985896333,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.3558352576595687,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015737385027613762,
+      "step": 18,
+      "time": 9000.0,
+      "total_liquid_rate": 0.00015737385027613762,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.4350600609551374,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.0001584496065911372,
+      "step": 19,
+      "time": 9500.0,
+      "total_liquid_rate": 0.0001584496065911372,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.5148750240787565,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015962992624723839,
+      "step": 20,
+      "time": 10000.0,
+      "total_liquid_rate": 0.00015962992624723839,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.5953009793654873,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00016085191057346181,
+      "step": 21,
+      "time": 10500.0,
+      "total_liquid_rate": 0.00016085191057346181,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.6763248698305055,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00016204778093003658,
+      "step": 22,
+      "time": 11000.0,
+      "total_liquid_rate": 0.00016204778093003658,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 1.7579356888442654,
+      "cumulative_water": 6.45821678911839e-30,
+      "oil_rate": 0.0001632216380275199,
+      "step": 23,
+      "time": 11500.0,
+      "total_liquid_rate": 0.0001632216380275199,
+      "water_cut": 7.913432149271169e-29,
+      "water_rate": 1.2916433578236778e-32
+    },
+    {
+      "cumulative_oil": 1.8401584196267635,
+      "cumulative_water": 1.0616623569282666e-25,
+      "oil_rate": 0.00016444546156499617,
+      "step": 24,
+      "time": 12000.0,
+      "total_liquid_rate": 0.00016444546156499617,
+      "water_cut": 1.291124442909341e-24,
+      "water_rate": 2.123195549520751e-28
+    },
+    {
+      "cumulative_oil": 1.9230478511407736,
+      "cumulative_water": 4.297680250767654e-22,
+      "oil_rate": 0.00016577886302802017,
+      "step": 25,
+      "time": 12500.0,
+      "total_liquid_rate": 0.00016577886302802017,
+      "water_cut": 5.183554175642411e-21,
+      "water_rate": 8.593237176821453e-25
+    },
+    {
+      "cumulative_oil": 2.0066480452339674,
+      "cumulative_water": 5.357219040315291e-19,
+      "oil_rate": 0.00016720038818638774,
+      "step": 26,
+      "time": 13000.0,
+      "total_liquid_rate": 0.00016720038818638774,
+      "water_cut": 6.40300111516167e-18,
+      "water_rate": 1.0705842720129047e-21
+    },
+    {
+      "cumulative_oil": 2.090964449280203,
+      "cumulative_water": 2.440979579215974e-16,
+      "oil_rate": 0.00016863280809247075,
+      "step": 27,
+      "time": 13500.0,
+      "total_liquid_rate": 0.00016863280809247124,
+      "water_cut": 2.888669634013405e-15,
+      "water_rate": 4.871244720351316e-19
+    },
+    {
+      "cumulative_oil": 2.1759816082751997,
+      "cumulative_water": 4.690591848129719e-14,
+      "oil_rate": 0.0001700343179899937,
+      "step": 28,
+      "time": 14000.0,
+      "total_liquid_rate": 0.000170034317990087,
+      "water_cut": 5.488517973894655e-13,
+      "water_rate": 9.332364104675119e-17
+    },
+    {
+      "cumulative_oil": 2.261706686493379,
+      "cumulative_water": 4.2981318623846086e-12,
+      "oil_rate": 0.0001714501564363583,
+      "step": 29,
+      "time": 14500.0,
+      "total_liquid_rate": 0.00017145015644486075,
+      "water_cut": 4.959139183136911e-11,
+      "water_rate": 8.502451887806623e-15
+    },
+    {
+      "cumulative_oil": 2.348189105044389,
+      "cumulative_water": 2.0875396930595952e-10,
+      "oil_rate": 0.00017296483710202014,
+      "step": 30,
+      "time": 15000.0,
+      "total_liquid_rate": 0.00017296483751093181,
+      "water_cut": 2.364131812983697e-09,
+      "water_rate": 4.089116748871498e-13
+    },
+    {
+      "cumulative_oil": 2.435490955669412,
+      "cumulative_water": 5.875012266273908e-09,
+      "oil_rate": 0.0001746037012500469,
+      "step": 31,
+      "time": 15500.0,
+      "total_liquid_rate": 0.0001746037125825635,
+      "water_cut": 6.490421323989418e-08,
+      "water_rate": 1.1332516593935897e-11
+    },
+    {
+      "cumulative_oil": 2.52364123435692,
+      "cumulative_water": 1.0324124376326278e-07,
+      "oil_rate": 0.0001763005573750154,
+      "step": 32,
+      "time": 16000.0,
+      "total_liquid_rate": 0.00017630075210747838,
+      "water_cut": 1.104546978195889e-06,
+      "water_rate": 1.9473246299397775e-10
+    },
+    {
+      "cumulative_oil": 2.6126295391819454,
+      "cumulative_water": 1.207655237128812e-06,
+      "oil_rate": 0.00017797660965005103,
+      "step": 33,
+      "time": 16500.0,
+      "total_liquid_rate": 0.00017797881847803776,
+      "water_cut": 1.241062282365732e-05,
+      "water_rate": 2.2088279867310985e-09
+    },
+    {
+      "cumulative_oil": 2.7024446852357706,
+      "cumulative_water": 9.940481940115533e-06,
+      "oil_rate": 0.0001796302921076506,
+      "step": 34,
+      "time": 17000.0,
+      "total_liquid_rate": 0.00017964775776105658,
+      "water_cut": 9.722166100844921e-05,
+      "water_rate": 1.7465653405973443e-08
+    },
+    {
+      "cumulative_oil": 2.7930949891340577,
+      "cumulative_water": 6.038690096987121e-05,
+      "oil_rate": 0.00018130060779657432,
+      "step": 35,
+      "time": 17500.0,
+      "total_liquid_rate": 0.00018140150063463383,
+      "water_cut": 0.0005561852449210033,
+      "water_rate": 1.0089283805951137e-07
+    },
+    {
+      "cumulative_oil": 2.884528300966915,
+      "cumulative_water": 0.00028185221193853516,
+      "oil_rate": 0.00018286662366571467,
+      "step": 36,
+      "time": 18000.0,
+      "total_liquid_rate": 0.000183309554287652,
+      "water_cut": 0.0024162986138860755,
+      "water_rate": 4.4293062193732786e-07
+    },
+    {
+      "cumulative_oil": 2.976431457154112,
+      "cumulative_water": 0.001045881960989896,
+      "oil_rate": 0.00018380631237439424,
+      "step": 37,
+      "time": 18500.0,
+      "total_liquid_rate": 0.00018533437187249696,
+      "water_cut": 0.008244879148234676,
+      "water_rate": 1.5280594981027215e-06
+    },
+    {
+      "cumulative_oil": 3.0679993292185883,
+      "cumulative_water": 0.003177183804073194,
+      "oil_rate": 0.00018313574412895256,
+      "step": 38,
+      "time": 19000.0,
+      "total_liquid_rate": 0.00018739834781511915,
+      "water_cut": 0.022746218074302,
+      "water_rate": 4.262603686166596e-06
+    },
+    {
+      "cumulative_oil": 3.1578450606006045,
+      "cumulative_water": 0.008099808884970881,
+      "oil_rate": 0.00017969146276403285,
+      "step": 39,
+      "time": 19500.0,
+      "total_liquid_rate": 0.00018953671292582823,
+      "water_cut": 0.051943763347041566,
+      "water_rate": 9.845250161795375e-06
+    },
+    {
+      "cumulative_oil": 3.2442197035944056,
+      "cumulative_water": 0.017701179560761754,
+      "oil_rate": 0.00017274928598760245,
+      "step": 40,
+      "time": 20000.0,
+      "total_liquid_rate": 0.0001919520273391842,
+      "water_cut": 0.10003927344643256,
+      "water_rate": 1.9202741351581747e-05
+    }
+  ],
+  "report_json_path": "accuracy_reports\\impes_loop_summary.json",
+  "report_markdown_path": "accuracy_reports\\impes_loop_summary.md",
+  "source_task": "F3-04",
+  "success": true,
+  "sw_max": 0.6188069256331362,
+  "sw_min": 0.2,
+  "warnings": []
+}

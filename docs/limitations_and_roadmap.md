@@ -157,6 +157,7 @@ interface.
 - 003_cross_scale_benchmark_hardening_and_cli_yaml completed
 - 011_pressure_solver_wells_boundaries_backends completed
 - 014_saturation_transport_tvd_cfl_fallback completed
+- F3-04_impes_sequential_loop completed
 - 016_parameter_fusion_uncertainty_completed
 - 019_performance_baseline_completed
 - 056_project_case_management_completed
@@ -180,6 +181,9 @@ interface.
 - optional capillary semi-implicit path if needed
 - optional TVD/MUSCL 1D saturation transport enhancement completed; 3D
   high-order transport and fully implicit fallback remain future work
+- lightweight oil-water IMPES sequential loop completed for synthetic
+  waterflood production-curve reporting; fully implicit simulation and
+  black-oil behavior remain out of scope
 - cross-scale analysis design completed
 - similarity criteria module completed
 - scale-effect analysis module completed
@@ -251,3 +255,11 @@ TASK-056 adds the project / case management layer under
 `reservoir_backend/project/*`. It is limited to file-based metadata and report
 indexing for projects, cases, and runs. It does not add database service,
 frontend integration, UDP, REST API, or Petrel-like workflow.
+
+F3-04 adds the lightweight IMPES-style sequential loop under
+`reservoir_backend/simulation/*` and writes
+`accuracy_reports/impes_loop_summary.md`. It reports pressure, flux, Sw, CFL,
+material balance, production curve, water cut, and breakthrough time for a
+small synthetic oil-water waterflood. It does not implement a fully implicit
+simulator, black-oil PVT, complex well controls, frontend integration, UDP,
+REST API, or solver-core rewrite.
