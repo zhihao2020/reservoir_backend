@@ -84,6 +84,9 @@ requirement-level function.
 - Parameter fusion uncertainty enhancement for variance/std/confidence
   weighting, lightweight Kriging/GP-style interface, IDW uncertainty fallback,
   diagnostics, and EnKF/ES-MDA deferred warnings
+- Synthetic twin dynamic field fusion for static permeability/porosity,
+  dynamic pressure/saturation, production or water-cut time series,
+  confidence/mask/provenance tracking, and truth-error diagnostics
 - Unified benchmark registry for saturation inversion, pressure, saturation
   transport, capillary/gravity, three-phase, and parameter fusion benchmark
   summaries
@@ -299,6 +302,20 @@ shape mismatch rejection, and multi-field property/dynamic fusion sanity. It
 does not implement history matching, automatic calibration, Bayesian inversion,
 EnKF / ES-MDA, kriging, Gaussian-process fusion, black-oil, or commercial
 simulator equivalence.
+
+The synthetic twin dynamic field fusion report is available through:
+
+```bash
+python -m reservoir_backend.fusion.synthetic_twin_report
+```
+
+It writes `accuracy_reports/fusion_synthetic_twin_summary.json` and `.md` for
+a deterministic synthetic twin fixture. The report fuses static permeability
+and porosity fields, dynamic pressure and saturation fields, production /
+water-cut time series, source metadata, confidence, masks, provenance, and
+optional synthetic truth error metrics. It does not implement history matching,
+EnKF / ES-MDA, automatic geological model update, closed-loop digital twin
+control, frontend, UDP, or REST API.
 
 The unified benchmark registry is available through:
 

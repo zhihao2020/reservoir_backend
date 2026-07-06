@@ -1,0 +1,413 @@
+{
+  "diagnostics": {
+    "has_inf": false,
+    "has_nan": false,
+    "num_dynamic_fields": 2,
+    "num_production_series": 1,
+    "num_static_fields": 2,
+    "overall_max_rmse": 0.007999999999999922,
+    "overall_rmse": 0.0034459183555396932,
+    "shape_time_consistency": {
+      "grid_shape": [
+        2,
+        3,
+        4
+      ],
+      "num_dynamic_records": 4,
+      "num_production_records": 2,
+      "num_static_records": 4,
+      "success": true,
+      "time_steps": [
+        0.0,
+        100.0,
+        200.0
+      ],
+      "warnings": []
+    },
+    "success": true,
+    "total_bound_violations": 0
+  },
+  "dynamic_fields": {
+    "pressure": {
+      "diagnostics": {
+        "bounds_violations": 0,
+        "dominant_source": 1,
+        "fallback_used": false,
+        "has_inf": false,
+        "has_nan": false,
+        "num_clipped_cells": 0,
+        "num_inf": 0,
+        "num_masked_cells": 0,
+        "num_nan": 0,
+        "num_sources": 2,
+        "success": true,
+        "uncertainty_nonnegative": true,
+        "variance_max": 0.6666666666666666,
+        "variance_mean": 0.6666666666666666,
+        "variance_min": 0.6666666666666666,
+        "warnings": [],
+        "weighting_policy": "confidence"
+      },
+      "fused_max": 3.238,
+      "fused_min": 2.408,
+      "name": "pressure",
+      "provenance": {
+        "field_or_series": "pressure",
+        "provenance": [
+          {
+            "run": "prior"
+          },
+          {
+            "run": "sensor"
+          }
+        ],
+        "record_count": 2,
+        "sources": [
+          "simulation_prior",
+          "sensor_assimilated"
+        ],
+        "time_steps": [
+          0.0,
+          100.0,
+          200.0
+        ],
+        "units": [
+          "Pa"
+        ]
+      },
+      "shape": [
+        3,
+        2,
+        3,
+        4
+      ],
+      "source_count": 2,
+      "truth_error": {
+        "has_inf": false,
+        "has_nan": false,
+        "mae": 0.00799999999999992,
+        "max_abs_error": 0.008000000000000451,
+        "num_compared": 72,
+        "rmse": 0.007999999999999922,
+        "shape_consistent": true,
+        "success": true,
+        "warnings": []
+      },
+      "unit": "Pa",
+      "variance_max": 0.6666666666666666,
+      "variance_min": 0.6666666666666666
+    },
+    "saturation": {
+      "diagnostics": {
+        "bounds_violations": 0,
+        "dominant_source": 1,
+        "fallback_used": false,
+        "has_inf": false,
+        "has_nan": false,
+        "num_clipped_cells": 0,
+        "num_inf": 0,
+        "num_masked_cells": 0,
+        "num_nan": 0,
+        "num_sources": 2,
+        "success": true,
+        "uncertainty_nonnegative": true,
+        "variance_max": 0.7407407407407407,
+        "variance_mean": 0.7407407407407406,
+        "variance_min": 0.7407407407407407,
+        "warnings": [],
+        "weighting_policy": "confidence"
+      },
+      "fused_max": 0.4497777777777777,
+      "fused_min": 0.19777777777777783,
+      "name": "saturation",
+      "provenance": {
+        "field_or_series": "saturation",
+        "provenance": [
+          {
+            "run": "prior"
+          },
+          {
+            "run": "sensor"
+          }
+        ],
+        "record_count": 2,
+        "sources": [
+          "simulation_prior",
+          "sensor_proxy"
+        ],
+        "time_steps": [
+          0.0,
+          100.0,
+          200.0
+        ],
+        "units": [
+          "fraction"
+        ]
+      },
+      "shape": [
+        3,
+        2,
+        3,
+        4
+      ],
+      "source_count": 2,
+      "truth_error": {
+        "has_inf": false,
+        "has_nan": false,
+        "mae": 0.002222222222222221,
+        "max_abs_error": 0.0022222222222222365,
+        "num_compared": 72,
+        "rmse": 0.002222222222222221,
+        "shape_consistent": true,
+        "success": true,
+        "warnings": []
+      },
+      "unit": "fraction",
+      "variance_max": 0.7407407407407407,
+      "variance_min": 0.7407407407407407
+    }
+  },
+  "limitations": [
+    "No history matching is performed.",
+    "No EnKF or ES-MDA update is performed.",
+    "No automatic geological model update is performed.",
+    "No closed-loop digital twin control is implemented."
+  ],
+  "metadata": {
+    "case_id": "synthetic_dynamic_fusion",
+    "created_at": "2026-07-06T00:00:00+00:00",
+    "grid_shape": [
+      2,
+      3,
+      4
+    ],
+    "metadata": {
+      "stage": "F4-04"
+    },
+    "run_id": "run_f4_04",
+    "source_name": "synthetic_fixture",
+    "time_steps": [
+      0.0,
+      100.0,
+      200.0
+    ],
+    "twin_id": "synthetic_twin_f4_04"
+  },
+  "production_series": {
+    "water_cut": {
+      "diagnostics": {
+        "bounds_violations": 0,
+        "dominant_source": 1,
+        "fallback_used": false,
+        "has_inf": false,
+        "has_nan": false,
+        "num_clipped_cells": 1,
+        "num_inf": 0,
+        "num_masked_cells": 0,
+        "num_nan": 0,
+        "num_sources": 2,
+        "success": true,
+        "uncertainty_nonnegative": true,
+        "variance_max": 0.7407407407407407,
+        "variance_mean": 0.7407407407407408,
+        "variance_min": 0.7407407407407407,
+        "warnings": [],
+        "weighting_policy": "confidence"
+      },
+      "fused_max": 0.41666666666666663,
+      "fused_min": 0.0,
+      "name": "water_cut",
+      "provenance": {
+        "field_or_series": "water_cut",
+        "provenance": [
+          {
+            "series": "prior"
+          },
+          {
+            "series": "observed"
+          }
+        ],
+        "record_count": 2,
+        "sources": [
+          "simulation_prior",
+          "production_observation"
+        ],
+        "time": [
+          0.0,
+          100.0,
+          200.0
+        ],
+        "units": [
+          "fraction"
+        ]
+      },
+      "shape": [
+        3
+      ],
+      "source_count": 2,
+      "truth_error": {
+        "has_inf": false,
+        "has_nan": false,
+        "mae": 0.0022222222222222274,
+        "max_abs_error": 0.003333333333333355,
+        "num_compared": 3,
+        "rmse": 0.002721655269759093,
+        "shape_consistent": true,
+        "success": true,
+        "warnings": []
+      },
+      "unit": "fraction",
+      "variance_max": 0.7407407407407407,
+      "variance_min": 0.7407407407407407
+    }
+  },
+  "provenance": {
+    "dynamic_record_count": 4,
+    "production_record_count": 2,
+    "source_task": "F4-04",
+    "sources": [
+      "core_lab",
+      "dynamic_interpretation",
+      "geology_model",
+      "production_observation",
+      "seismic_proxy",
+      "sensor_assimilated",
+      "sensor_proxy",
+      "simulation_prior"
+    ],
+    "static_record_count": 4
+  },
+  "report_json_path": "accuracy_reports\\fusion_synthetic_twin_summary.json",
+  "report_markdown_path": "accuracy_reports\\fusion_synthetic_twin_summary.md",
+  "source_task": "F4-04",
+  "static_fields": {
+    "permeability": {
+      "diagnostics": {
+        "bounds_violations": 0,
+        "dominant_source": 1,
+        "fallback_used": false,
+        "has_inf": false,
+        "has_nan": false,
+        "num_clipped_cells": 0,
+        "num_inf": 0,
+        "num_masked_cells": 0,
+        "num_nan": 0,
+        "num_sources": 2,
+        "success": true,
+        "uncertainty_nonnegative": true,
+        "variance_max": 0.7142857142857143,
+        "variance_mean": 0.7142857142857143,
+        "variance_min": 0.7142857142857143,
+        "warnings": [],
+        "weighting_policy": "confidence"
+      },
+      "fused_max": 2.0385714285714286e-13,
+      "fused_min": 1.0192857142857143e-13,
+      "name": "permeability",
+      "provenance": {
+        "field_or_series": "permeability",
+        "provenance": [
+          {
+            "kind": "static_prior"
+          },
+          {
+            "kind": "dynamic_proxy"
+          }
+        ],
+        "record_count": 2,
+        "sources": [
+          "geology_model",
+          "dynamic_interpretation"
+        ],
+        "units": [
+          "m2"
+        ]
+      },
+      "shape": [
+        2,
+        3,
+        4
+      ],
+      "source_count": 2,
+      "truth_error": {
+        "has_inf": false,
+        "has_nan": false,
+        "mae": 2.8928571428571536e-15,
+        "max_abs_error": 3.857142857142855e-15,
+        "num_compared": 24,
+        "rmse": 2.95051241545488e-15,
+        "shape_consistent": true,
+        "success": true,
+        "warnings": []
+      },
+      "unit": "m2",
+      "variance_max": 0.7142857142857143,
+      "variance_min": 0.7142857142857143
+    },
+    "porosity": {
+      "diagnostics": {
+        "bounds_violations": 0,
+        "dominant_source": 1,
+        "fallback_used": false,
+        "has_inf": false,
+        "has_nan": false,
+        "num_clipped_cells": 0,
+        "num_inf": 0,
+        "num_masked_cells": 0,
+        "num_nan": 0,
+        "num_sources": 2,
+        "success": true,
+        "uncertainty_nonnegative": true,
+        "variance_max": 0.7142857142857143,
+        "variance_mean": 0.7142857142857143,
+        "variance_min": 0.7142857142857143,
+        "warnings": [],
+        "weighting_policy": "confidence"
+      },
+      "fused_max": 0.24428571428571427,
+      "fused_min": 0.24428571428571427,
+      "name": "porosity",
+      "provenance": {
+        "field_or_series": "porosity",
+        "provenance": [
+          {
+            "kind": "lab"
+          },
+          {
+            "kind": "proxy"
+          }
+        ],
+        "record_count": 2,
+        "sources": [
+          "core_lab",
+          "seismic_proxy"
+        ],
+        "units": [
+          "fraction"
+        ]
+      },
+      "shape": [
+        2,
+        3,
+        4
+      ],
+      "source_count": 2,
+      "truth_error": {
+        "has_inf": false,
+        "has_nan": false,
+        "mae": 0.004285714285714282,
+        "max_abs_error": 0.004285714285714282,
+        "num_compared": 24,
+        "rmse": 0.004285714285714282,
+        "shape_consistent": true,
+        "success": true,
+        "warnings": []
+      },
+      "unit": "fraction",
+      "variance_max": 0.7142857142857143,
+      "variance_min": 0.7142857142857143
+    }
+  },
+  "success": true,
+  "warnings": []
+}

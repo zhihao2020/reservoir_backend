@@ -159,6 +159,7 @@ interface.
 - 014_saturation_transport_tvd_cfl_fallback completed
 - F3-04_impes_sequential_loop completed
 - 016_parameter_fusion_uncertainty_completed
+- F4-04_synthetic_twin_dynamic_field_fusion_completed
 - 019_performance_baseline_completed
 - 056_project_case_management_completed
 
@@ -263,3 +264,13 @@ material balance, production curve, water cut, and breakthrough time for a
 small synthetic oil-water waterflood. It does not implement a fully implicit
 simulator, black-oil PVT, complex well controls, frontend integration, UDP,
 REST API, or solver-core rewrite.
+
+F4-04 adds synthetic twin dynamic field fusion under
+`reservoir_backend/fusion/synthetic_twin.py`,
+`reservoir_backend/fusion/dynamic_field_fusion.py`, and
+`reservoir_backend/fusion/synthetic_twin_report.py`. It fuses static
+permeability/porosity, dynamic pressure/saturation, and production or water-cut
+time series while preserving source, confidence, mask, time step, run metadata,
+and provenance. It does not implement history matching, EnKF/ES-MDA, automatic
+geological model updates, closed-loop digital twin control, frontend
+integration, UDP, REST API, or commercial simulator equivalence.
