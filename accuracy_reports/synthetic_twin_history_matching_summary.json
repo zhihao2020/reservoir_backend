@@ -1,0 +1,48 @@
+{
+  "baseline_update": {
+    "method": "known-truth fractional update for synthetic prototype",
+    "update_fraction": 0.65
+  },
+  "limitations": [
+    "Synthetic truth fields only.",
+    "Uses generated observations and deterministic noise.",
+    "Baseline update is not a field calibration product."
+  ],
+  "non_claims": [
+    "No real field history matching claim.",
+    "No complete EnKF implementation.",
+    "No complete ES-MDA implementation.",
+    "No automatic calibration product.",
+    "No closed-loop digital twin product."
+  ],
+  "observation_generation": {
+    "noise_injected": true,
+    "noise_std": 0.02,
+    "observation_keys": [
+      "pressure",
+      "liquid_rate",
+      "water_cut",
+      "saturation_proxy"
+    ]
+  },
+  "prediction_rmse_after": 0.24421676913448084,
+  "prediction_rmse_before": 0.6866827716038673,
+  "rmse_after": 6.530181396307949,
+  "rmse_before": 18.657661132308423,
+  "shape": [
+    2,
+    4,
+    6
+  ],
+  "source_task": "IND-004",
+  "success": true,
+  "summary_name": "synthetic_twin_history_matching_summary",
+  "uncertainty_summary": {
+    "permeability_abs_error_max": 10.846813019061699,
+    "permeability_abs_error_mean": 9.18869342213084,
+    "permeability_abs_error_min": 7.700189443617049
+  },
+  "warnings": [
+    "synthetic-only prototype; uses known truth fields"
+  ]
+}

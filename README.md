@@ -85,6 +85,7 @@ The current codebase contains tested support for:
 - simplified sequential pressure-saturation coupling for small waterflood
   examples, including an IMPES loop report;
 - parameter fusion, uncertainty diagnostics, and synthetic-twin field summaries;
+- synthetic-only history matching prototype for known-truth generated cases;
 - cross-scale similarity, scale-effect, and curve-comparison reporting;
 - result manifests, project/case/run registries, and report index utilities;
 - industrial case workflow v0 for config to Project/Case/Run to IMPES to
