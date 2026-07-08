@@ -1,0 +1,32 @@
+{
+  "summary_name": "black_oil_pvt_architecture_summary",
+  "source_task": "IND-005",
+  "success": true,
+  "implemented_scope": "architecture documentation only",
+  "document_path": "docs/black_oil_pvt_architecture.md",
+  "covered_topics": [
+    "Bo/Bw/Bg",
+    "Rs/Rv",
+    "bubble point",
+    "phase appearance/disappearance",
+    "surface rates",
+    "well controls",
+    "schedule",
+    "restart",
+    "report step",
+    "state variables"
+  ],
+  "known_limitations": [
+    "No black-oil solver implemented.",
+    "No PVT table parser implemented.",
+    "No Eclipse, CMG, OPM, or commercial simulator equivalence."
+  ],
+  "non_claims": [
+    "No black-oil solver implementation claim.",
+    "No PVT table parser implementation claim.",
+    "No Eclipse/CMG/OPM equivalence claim."
+  ],
+  "next_steps": [
+    "Keep black-oil/PVT as design scope until explicitly scheduled."
+  ]
+}

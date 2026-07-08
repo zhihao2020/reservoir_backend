@@ -90,6 +90,8 @@ The current codebase contains tested support for:
 - result manifests, project/case/run registries, and report index utilities;
 - industrial case workflow v0 for config to Project/Case/Run to IMPES to
   engineering report;
+- black-oil/PVT architecture roadmap documentation, without solver
+  implementation;
 - benchmark registry and performance baseline reports.
 
 Capability maturity and scope boundaries are listed only in

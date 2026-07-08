@@ -38,4 +38,5 @@ Allowed status values:
 | Benchmark registry and performance baseline | Report aggregation, benchmark index, runtime and memory summaries | Testing | `tests/test_benchmark_registry_hardening.py`, `tests/test_performance_baseline.py` | Registry reads existing reports; it is not a solver. |
 | CLI and case configuration | Lightweight script entrypoints and YAML case examples | Testing | `tests/test_cli_run_case.py`, config loader tests | CLI surface is intentionally small. |
 | UDP, REST API, and front-end integration | Product API and UI integration | Deferred | Front-end field contract documents expected fields | No service layer in current MVP. |
-| Black-oil, PVT, history matching, full SPE reproduction, C++ kernels | Advanced simulator and acceleration directions | Deferred | Roadmap and limitation docs | Not part of the current validated Python backend scope. |
+| Black-oil / PVT architecture | Bo/Bw/Bg, Rs/Rv, bubble point, phase behavior, surface rates, well controls, schedule/restart/report-step design | Deferred | `docs/black_oil_pvt_architecture.md`, `tests/test_black_oil_architecture_docs.py` | Design only; no black-oil solver or PVT table parser. |
+| Full SPE reproduction and C++ kernels | Advanced simulator and acceleration directions | Deferred | Roadmap and limitation docs | Not part of the current validated Python backend scope. |
