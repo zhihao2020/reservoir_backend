@@ -1,0 +1,34 @@
+{
+  "results": [
+    {
+      "case_id": "industrial_case_v0",
+      "created_at": "2026-07-08T10:36:46+00:00",
+      "dtype": "json",
+      "field_name": "industrial_case_workflow_summary",
+      "format": "json",
+      "limitations": [
+        "File-based workflow v0 only.",
+        "Uses existing lightweight IMPES loop.",
+        "Synthetic structured-grid case by default.",
+        "No commercial simulator equivalence.",
+        "No black-oil PVT behavior.",
+        "No history matching or automatic calibration."
+      ],
+      "metadata": {
+        "num_steps": 10,
+        "production_curve_points": 10,
+        "result_manifest_path": "accuracy_reports\\industrial_case_workflow_result_manifest.json"
+      },
+      "module": "M8",
+      "path": "accuracy_reports\\industrial_case_workflow_summary.json",
+      "result_id": "industrial_run_v0_engineering_report",
+      "result_type": "engineering_report",
+      "run_id": "industrial_run_v0",
+      "shape": [],
+      "source_report": "accuracy_reports\\industrial_case_workflow_summary.md",
+      "source_task": "IND-001",
+      "unit": "none",
+      "warnings": []
+    }
+  ]
+}

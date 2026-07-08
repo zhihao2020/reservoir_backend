@@ -1,0 +1,386 @@
+{
+  "breakthrough_time": null,
+  "case": {
+    "cases": [
+      {
+        "case_id": "industrial_case_v0",
+        "case_name": "Industrial Case Workflow v0",
+        "input_paths": [],
+        "metadata": {
+          "case_type": "synthetic_waterflood"
+        },
+        "module_tags": [
+          "M8",
+          "IMPES",
+          "result_manifest"
+        ],
+        "output_paths": [
+          "accuracy_reports\\industrial_case_workflow_summary.json",
+          "accuracy_reports\\industrial_case_workflow_summary.md",
+          "accuracy_reports\\industrial_case_workflow_result_manifest.json"
+        ],
+        "project_id": "industrial_project_v0",
+        "status": "validated"
+      }
+    ],
+    "num_cases": 1
+  },
+  "case_config": {
+    "case_id": "industrial_case_v0",
+    "grid": {
+      "dx": 1.0,
+      "dy": 1.0,
+      "dz": 1.0,
+      "nx": 8,
+      "ny": 3,
+      "nz": 2
+    },
+    "num_steps": 10,
+    "project_id": "industrial_project_v0",
+    "run_id": "industrial_run_v0"
+  },
+  "engineering_report_json": "accuracy_reports\\industrial_case_workflow_summary.json",
+  "engineering_report_markdown": "accuracy_reports\\industrial_case_workflow_summary.md",
+  "impes_summary": {
+    "benchmark_name": "impes_sequential_loop",
+    "breakthrough_time": null,
+    "case_id": "industrial_case_v0",
+    "dt": 500.0,
+    "final_water_cut": 0.0,
+    "grid_shape": [
+      2,
+      3,
+      8
+    ],
+    "has_inf": false,
+    "has_nan": false,
+    "limitations": [
+      "Sequential pressure-saturation coupling only; no fully implicit simulator.",
+      "Oil-water incompressible MVP only; no black-oil PVT.",
+      "Boundary-production summary only; no complex well-control model."
+    ],
+    "max_cfl": 0.10002681828180243,
+    "max_flux": 2.5006704570450608e-05,
+    "max_mass_balance_error": 0.0,
+    "num_steps": 10,
+    "pressure_max": 95.20736825041219,
+    "pressure_min": 6.092891476151518,
+    "production_curve": [
+      {
+        "cumulative_oil": 0.07500000000000012,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.00015000000000000026,
+        "step": 1,
+        "time": 500.0,
+        "total_liquid_rate": 0.00015000000000000026,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.14868421052631595,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.00014736842105263166,
+        "step": 2,
+        "time": 1000.0,
+        "total_liquid_rate": 0.00014736842105263166,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.22179890824013418,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.00014622939542763646,
+        "step": 3,
+        "time": 1500.0,
+        "total_liquid_rate": 0.00014622939542763646,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.29499308464415797,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.00014638835280804754,
+        "step": 4,
+        "time": 2000.0,
+        "total_liquid_rate": 0.00014638835280804754,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.36847472929766956,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.00014696328930702314,
+        "step": 5,
+        "time": 2500.0,
+        "total_liquid_rate": 0.00014696328930702314,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.44219465404532315,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.00014743984949530718,
+        "step": 6,
+        "time": 3000.0,
+        "total_liquid_rate": 0.00014743984949530718,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.5161224327327808,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.0001478555573749152,
+        "step": 7,
+        "time": 3500.0,
+        "total_liquid_rate": 0.0001478555573749152,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.5903325488321143,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.0001484202321986669,
+        "step": 8,
+        "time": 4000.0,
+        "total_liquid_rate": 0.0001484202321986669,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.6649279838323316,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.00014919087000043473,
+        "step": 9,
+        "time": 4500.0,
+        "total_liquid_rate": 0.00014919087000043473,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      },
+      {
+        "cumulative_oil": 0.7399480975436834,
+        "cumulative_water": 0.0,
+        "oil_rate": 0.00015004022742270357,
+        "step": 10,
+        "time": 5000.0,
+        "total_liquid_rate": 0.00015004022742270357,
+        "water_cut": 0.0,
+        "water_rate": 0.0
+      }
+    ],
+    "success": true,
+    "sw_max": 0.47985555812554054,
+    "sw_min": 0.2,
+    "warnings": []
+  },
+  "limitations": [
+    "File-based workflow v0 only.",
+    "Uses existing lightweight IMPES loop.",
+    "Synthetic structured-grid case by default.",
+    "No commercial simulator equivalence.",
+    "No black-oil PVT behavior.",
+    "No history matching or automatic calibration."
+  ],
+  "non_claims": [
+    "No black-oil solver is implemented.",
+    "No history matching is implemented.",
+    "No complete EnKF or ES-MDA workflow is implemented.",
+    "No frontend, REST API, or UDP service is implemented.",
+    "No solver core rewrite is performed."
+  ],
+  "production_curve": [
+    {
+      "cumulative_oil": 0.07500000000000012,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015000000000000026,
+      "step": 1,
+      "time": 500.0,
+      "total_liquid_rate": 0.00015000000000000026,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.14868421052631595,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014736842105263166,
+      "step": 2,
+      "time": 1000.0,
+      "total_liquid_rate": 0.00014736842105263166,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.22179890824013418,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014622939542763646,
+      "step": 3,
+      "time": 1500.0,
+      "total_liquid_rate": 0.00014622939542763646,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.29499308464415797,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014638835280804754,
+      "step": 4,
+      "time": 2000.0,
+      "total_liquid_rate": 0.00014638835280804754,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.36847472929766956,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014696328930702314,
+      "step": 5,
+      "time": 2500.0,
+      "total_liquid_rate": 0.00014696328930702314,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.44219465404532315,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014743984949530718,
+      "step": 6,
+      "time": 3000.0,
+      "total_liquid_rate": 0.00014743984949530718,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.5161224327327808,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.0001478555573749152,
+      "step": 7,
+      "time": 3500.0,
+      "total_liquid_rate": 0.0001478555573749152,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.5903325488321143,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.0001484202321986669,
+      "step": 8,
+      "time": 4000.0,
+      "total_liquid_rate": 0.0001484202321986669,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.6649279838323316,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00014919087000043473,
+      "step": 9,
+      "time": 4500.0,
+      "total_liquid_rate": 0.00014919087000043473,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    },
+    {
+      "cumulative_oil": 0.7399480975436834,
+      "cumulative_water": 0.0,
+      "oil_rate": 0.00015004022742270357,
+      "step": 10,
+      "time": 5000.0,
+      "total_liquid_rate": 0.00015004022742270357,
+      "water_cut": 0.0,
+      "water_rate": 0.0
+    }
+  ],
+  "production_summary": {
+    "breakthrough_time": null,
+    "final_oil_rate": 0.00015004022742270357,
+    "final_total_liquid_rate": 0.00015004022742270357,
+    "final_water_cut": 0.0,
+    "final_water_rate": 0.0,
+    "num_curve_points": 10
+  },
+  "project": {
+    "num_projects": 1,
+    "projects": [
+      {
+        "created_at": "2026-07-08T10:36:46+00:00",
+        "description": "File-based industrial workflow v0 example.",
+        "metadata": {
+          "workflow": "industrial_case_v0"
+        },
+        "name": "Industrial Workflow Demo",
+        "project_id": "industrial_project_v0"
+      }
+    ]
+  },
+  "result_manifest_path": "accuracy_reports\\industrial_case_workflow_result_manifest.json",
+  "run_history": {
+    "num_runs": 1,
+    "runs": [
+      {
+        "case_id": "industrial_case_v0",
+        "finished_at": "2026-07-08T10:36:46+00:00",
+        "metrics": {
+          "breakthrough_time": null,
+          "final_water_cut": 0.0,
+          "num_steps": 10
+        },
+        "report_paths": [
+          "accuracy_reports\\industrial_case_workflow_summary.json",
+          "accuracy_reports\\industrial_case_workflow_summary.md"
+        ],
+        "result_manifest_paths": [
+          "accuracy_reports\\industrial_case_workflow_result_manifest.json"
+        ],
+        "run_id": "industrial_run_v0",
+        "started_at": "2026-07-08T10:36:46+00:00",
+        "status": "validated",
+        "warnings": []
+      }
+    ]
+  },
+  "source_task": "IND-001",
+  "success": true,
+  "warnings": [],
+  "water_cut_curve": [
+    {
+      "time": 500.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 1000.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 1500.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 2000.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 2500.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 3000.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 3500.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 4000.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 4500.0,
+      "water_cut": 0.0
+    },
+    {
+      "time": 5000.0,
+      "water_cut": 0.0
+    }
+  ],
+  "workflow_name": "industrial_case_workflow_v0"
+}

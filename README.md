@@ -83,6 +83,8 @@ The current codebase contains tested support for:
 - parameter fusion, uncertainty diagnostics, and synthetic-twin field summaries;
 - cross-scale similarity, scale-effect, and curve-comparison reporting;
 - result manifests, project/case/run registries, and report index utilities;
+- industrial case workflow v0 for config to Project/Case/Run to IMPES to
+  engineering report;
 - benchmark registry and performance baseline reports.
 
 Capability maturity and scope boundaries are listed only in
