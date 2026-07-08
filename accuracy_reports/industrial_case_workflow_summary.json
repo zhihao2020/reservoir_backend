@@ -301,7 +301,7 @@
     "num_projects": 1,
     "projects": [
       {
-        "created_at": "2026-07-08T10:36:46+00:00",
+        "created_at": "2026-07-08T11:07:02+00:00",
         "description": "File-based industrial workflow v0 example.",
         "metadata": {
           "workflow": "industrial_case_v0"
@@ -317,7 +317,7 @@
     "runs": [
       {
         "case_id": "industrial_case_v0",
-        "finished_at": "2026-07-08T10:36:46+00:00",
+        "finished_at": "2026-07-08T11:07:02+00:00",
         "metrics": {
           "breakthrough_time": null,
           "final_water_cut": 0.0,
@@ -331,7 +331,7 @@
           "accuracy_reports\\industrial_case_workflow_result_manifest.json"
         ],
         "run_id": "industrial_run_v0",
-        "started_at": "2026-07-08T10:36:46+00:00",
+        "started_at": "2026-07-08T11:07:02+00:00",
         "status": "validated",
         "warnings": []
       }
