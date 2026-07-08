@@ -25,7 +25,7 @@ engineering source of truth.
 ## Impact
 
 Notion pages and databases must mirror repository documents, especially
-`docs/module_matrix.md` and `requirements/delivery_matrix.md`.
+`STATUS.md` for module status and the active documents under `docs/`.
 
 ## Risks
 

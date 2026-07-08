@@ -3,8 +3,8 @@
 ## Purpose
 
 F3-04 adds a lightweight pressure-saturation sequential coupling loop for the
-existing structured Cartesian oil-water prototype. The loop composes already
-validated pressure, face-flux, saturation-transport, CFL, and production
+existing structured Cartesian oil-water prototype. The loop composes existing
+pressure, face-flux, saturation-transport, CFL, and production
 diagnostic utilities.
 
 The update order is:

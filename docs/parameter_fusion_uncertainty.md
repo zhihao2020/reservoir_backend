@@ -87,7 +87,7 @@ Outputs:
 
 ## Limitations
 
-- No complete EnKF workflow.
+- No EnKF workflow.
 - No ES-MDA history matching.
 - No automatic calibration.
 - No Bayesian inversion workflow.
@@ -101,8 +101,8 @@ Outputs:
 The uncertainty output is not a closed-loop geological uncertainty workflow,
 not automatic history matching, and not commercial geostatistical modeling.
 
-## EnKF / ES-MDA Deferred Scope
+## EnKF / ES-MDA Future Scope
 
 EnKF and ES-MDA are explicitly deferred. Requests for these methods return a
-deferred warning and do not update model states, pressure fields, saturation
+scope warning and do not update model states, pressure fields, saturation
 fields, or production history.

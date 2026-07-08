@@ -134,7 +134,8 @@ TASK-009 adds reusable fixtures and expected QC summaries:
 
 The catalog covers valid CSV core fields, valid JSON multimodal fields, valid
 NPZ grid fields, missing required fields, invalid units and bounds, duplicate
-time/coordinates, and NaN / Inf / missing values. See `docs/data_contract.md`
+time/coordinates, and NaN / Inf / missing values. See
+[API_AND_DATA_CONTRACT.md](API_AND_DATA_CONTRACT.md)
 for the full contract.
 
 ## Limitations

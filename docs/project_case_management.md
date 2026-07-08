@@ -33,15 +33,9 @@ Case records contain:
 - `status`
 - `metadata`
 
-Supported status values are:
-
-- `draft`
-- `ready`
-- `running`
-- `completed`
-- `failed`
-- `validated`
-- `archived`
+Case lifecycle strings are implementation data for project/case bookkeeping,
+not module completion status. Repository module status is maintained only in
+`STATUS.md`.
 
 The case registry supports add, list, find, status update, path validation, and
 JSON serialization.
@@ -85,7 +79,7 @@ python -m reservoir_backend.project.case_report
 
 1. Create a `ProjectMetadata` entry.
 2. Register one or more `CaseMetadata` entries under the project.
-3. Append `RunRecord` entries for completed or validated runs.
+3. Append `RunRecord` entries for runs that have finished and have report paths.
 4. Validate input, output, report, and result manifest paths.
 5. Write the summary report for delivery evidence.
 

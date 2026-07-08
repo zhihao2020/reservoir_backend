@@ -10,7 +10,7 @@ diagnostics, mass-balance reporting, and fallback policy validation.
 
 The existing first-order upwind finite-volume saturation solver remains the
 baseline. `method="upwind"` delegates to `advance_saturation_1d` and preserves
-the validated behavior.
+the existing baseline behavior.
 
 ## CFL Calculation
 
@@ -39,7 +39,7 @@ path for benchmark hardening:
 - `method="tvd"`
 - `method="muscl"`
 - `method="upwind"`
-- `method="implicit"` with deferred fallback behavior
+- `method="implicit"` with scope-warning fallback behavior
 
 Three-dimensional high-order transport remains future work.
 
@@ -72,7 +72,7 @@ The default limiter for the TVD/MUSCL benchmark path is minmod.
 - If CFL is too large, adaptive timestep is preferred.
 - If TVD/MUSCL produces nonphysical values, the path can fall back to upwind or
   clip with a warning.
-- If implicit transport is requested, the report returns a deferred warning and
+- If implicit transport is requested, the report returns a scope warning and
   uses upwind fallback when configured. It does not claim an implicit solver is
   implemented.
 
@@ -98,7 +98,7 @@ warnings, and limitations.
 - Upwind baseline is preserved.
 - TVD/MUSCL is optional.
 - TVD/MUSCL support is currently limited to 1D benchmark scenarios.
-- Implicit solver is deferred and not fully implemented.
+- Implicit solver is deferred and remains outside the current implementation scope.
 - No black-oil.
 - No PVT.
 - No commercial simulator equivalence.

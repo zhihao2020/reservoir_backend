@@ -1,8 +1,8 @@
 # Numerical Methods
 
 This document summarizes the numerical and physical methods currently visible
-in the repository. UDP communication is not a numerical method; see
-`docs/udp_protocol.md`.
+in the repository. Service and data-interface scope is summarized in
+[API_AND_DATA_CONTRACT.md](API_AND_DATA_CONTRACT.md).
 
 ## Grid and Field Representation
 
@@ -206,9 +206,8 @@ Current methods include confidence normalization, nearest-cell mapping, IDW
 point-to-grid mapping, same-grid weighted averages, saturation clipping, and
 fusion reports.
 
-This module currently has unit and pipeline tests, but no dedicated benchmark
-hardening report. It should remain `Testing` until
-`049_parameter_fusion_benchmark_hardening` is complete.
+Module maturity is not tracked in this file. See `STATUS.md` for the current
+project status taxonomy and module table.
 
 ## Cross-Scale Analysis
 

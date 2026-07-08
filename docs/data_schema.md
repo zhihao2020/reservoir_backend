@@ -115,5 +115,5 @@ tests/fixtures/experimental_data/
 The fixture manifest records input paths, metadata paths, expected summaries,
 pass/fail behavior, warnings, errors, and covered fields. See:
 
-- `docs/data_contract.md`
+- [API_AND_DATA_CONTRACT.md](API_AND_DATA_CONTRACT.md)
 - `tests/fixtures/experimental_data/manifest.json`
