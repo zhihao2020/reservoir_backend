@@ -92,6 +92,8 @@ The current codebase contains tested support for:
   engineering report;
 - black-oil/PVT architecture roadmap documentation, without solver
   implementation;
+- REST API and frontend integration roadmap documentation, without service or
+  UI implementation;
 - benchmark registry and performance baseline reports.
 
 Capability maturity and scope boundaries are listed only in
@@ -105,7 +107,7 @@ Primary validation command:
 pytest -q
 ```
 
-This documentation cleanup did not rerun the full test suite. Existing report
+Industrialization tasks should finish with a full-suite run. Existing report
 artifacts are kept under:
 
 - `accuracy_reports/`
@@ -120,6 +122,9 @@ Useful runner and report anchors:
 - `python -m reservoir_backend.cross_scale.runner`: writes `cross_scale_benchmark_summary`.
 - `python -m reservoir_backend.cross_scale.upscaling_report`: writes `cross_scale_upscaling_summary`.
 - `python -m reservoir_backend.performance.performance_report`: writes `performance_baseline_summary`.
+- API/frontend integration roadmap evidence is in
+  `docs/api_frontend_integration_roadmap.md` and
+  `accuracy_reports/api_frontend_integration_roadmap_summary.*`.
 - project_case_management_summary and frontend field contract are indexed by the
   result manifest documentation.
 - Function hardening first remains the benchmark validation principle.

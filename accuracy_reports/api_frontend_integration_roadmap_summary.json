@@ -1,0 +1,30 @@
+{
+  "summary_name": "api_frontend_integration_roadmap_summary",
+  "source_task": "IND-006",
+  "success": true,
+  "implemented_scope": "documentation roadmap only",
+  "document_path": "docs/api_frontend_integration_roadmap.md",
+  "covered_topics": [
+    "REST API roadmap",
+    "project/case/run endpoints",
+    "result manifest serving",
+    "report serving",
+    "frontend field contract",
+    "auth/security placeholder",
+    "UDP deferred rationale"
+  ],
+  "known_limitations": [
+    "No REST service implementation.",
+    "No frontend implementation.",
+    "No UDP implementation.",
+    "No auth/security implementation."
+  ],
+  "non_claims": [
+    "No API runtime implementation claim.",
+    "No frontend implementation claim.",
+    "No UDP implementation claim."
+  ],
+  "next_steps": [
+    "Only implement API or frontend after a separate scoped task."
+  ]
+}
