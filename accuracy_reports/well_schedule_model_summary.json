@@ -1,0 +1,41 @@
+{
+  "control_types": [
+    "bhp",
+    "rate"
+  ],
+  "limitations": [
+    "Schedule v0 validates controls and metadata only.",
+    "No full Peaceman industrial well model.",
+    "No complex wellbore network.",
+    "No black-oil well control.",
+    "No pressure solver rewrite."
+  ],
+  "num_injectors": 1,
+  "num_producers": 1,
+  "num_steps": 4,
+  "num_wells": 2,
+  "open_steps": 3,
+  "production_constraints": {
+    "P1": [
+      {
+        "min_oil_rate": 1.0
+      }
+    ]
+  },
+  "report_steps": [
+    0.0,
+    1.0,
+    2.0,
+    3.0
+  ],
+  "schedule_id": "well_schedule_v0_demo",
+  "shut_steps": 1,
+  "source_task": "IND-003",
+  "statuses": [
+    "open",
+    "shut"
+  ],
+  "success": true,
+  "summary_name": "well_schedule_summary",
+  "warnings": []
+}

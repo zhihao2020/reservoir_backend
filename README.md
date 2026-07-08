@@ -71,6 +71,8 @@ The current codebase contains tested support for:
 - CSV, JSON, and NPZ experimental data ingestion with QC reports;
 - field-data ingestion for well tables, production history, pressure history,
   schedule CSV, and property fields;
+- multi-well schedule v0 metadata, rate/BHP control interfaces, and report
+  steps;
 - Archie-style and multi-signal saturation inversion utilities;
 - finite-volume pressure reconstruction on structured Cartesian grids;
 - Darcy velocity and face-flux calculations;

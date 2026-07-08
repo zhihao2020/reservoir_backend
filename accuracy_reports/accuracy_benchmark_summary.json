@@ -130,5 +130,5 @@
     "which module needs further validation": "Pressure, saturation, capillary, gravity, combined, three-phase, and cross-scale formulas need larger experimental/golden-case validation before production use."
   },
   "success": true,
-  "timestamp": "2026-07-08T10:42:21.460122+00:00"
+  "timestamp": "2026-07-08T10:45:21.556231+00:00"
 }
