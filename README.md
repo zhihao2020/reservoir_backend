@@ -69,6 +69,8 @@ The current codebase contains tested support for:
 - structured grid and field data structures;
 - units, wells, source terms, and lightweight boundary contribution utilities;
 - CSV, JSON, and NPZ experimental data ingestion with QC reports;
+- field-data ingestion for well tables, production history, pressure history,
+  schedule CSV, and property fields;
 - Archie-style and multi-signal saturation inversion utilities;
 - finite-volume pressure reconstruction on structured Cartesian grids;
 - Darcy velocity and face-flux calculations;
@@ -122,7 +124,7 @@ Useful runner and report anchors:
   saturation transport enhancement, capillary / gravity benchmark, parameter fusion benchmark,
   parameter fusion uncertainty, benchmark registry, project / case management, synthetic twin,
   saturation inversion benchmark, lab-field validation, curve-to-curve comparison,
-  similarity criteria, scale-effect analysis.
+  similarity criteria, scale-effect analysis, field data ingestion.
 
 ## Documentation Index
 

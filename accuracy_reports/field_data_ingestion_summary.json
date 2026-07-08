@@ -1,0 +1,101 @@
+{
+  "inputs": {
+    "pressure_history": "C:\\Users\\xuzhihao\\AppData\\Local\\Temp\\field_data_ingestion_demo_zrkqpmit\\pressure_history.csv",
+    "production_history": "C:\\Users\\xuzhihao\\AppData\\Local\\Temp\\field_data_ingestion_demo_zrkqpmit\\production_history.csv",
+    "property_field": "C:\\Users\\xuzhihao\\AppData\\Local\\Temp\\field_data_ingestion_demo_zrkqpmit\\property_field.npz",
+    "schedule": "C:\\Users\\xuzhihao\\AppData\\Local\\Temp\\field_data_ingestion_demo_zrkqpmit\\schedule.csv",
+    "well_table": "C:\\Users\\xuzhihao\\AppData\\Local\\Temp\\field_data_ingestion_demo_zrkqpmit\\well_table.csv"
+  },
+  "limitations": [
+    "File-based CSV/JSON/NPZ ingestion only.",
+    "No database service.",
+    "No commercial data platform.",
+    "LAS, Eclipse deck, and RESQML are roadmap items only."
+  ],
+  "pressure_history": {
+    "num_records": 2,
+    "pressure_max": 10.0,
+    "pressure_min": 9.8
+  },
+  "production_history": {
+    "num_records": 2,
+    "time_max": 1.0,
+    "time_min": 0.0,
+    "well_ids": [
+      "P1"
+    ]
+  },
+  "property_field_qc": {
+    "bounds_violations": {},
+    "duplicate_coordinate_count": 0,
+    "duplicate_time_count": 0,
+    "fields_detected": [
+      "permeability",
+      "porosity"
+    ],
+    "fields_missing": [],
+    "format": "npz",
+    "input_file": "C:\\Users\\xuzhihao\\AppData\\Local\\Temp\\field_data_ingestion_demo_zrkqpmit\\property_field.npz",
+    "metadata": {
+      "npz_arrays": [
+        "porosity",
+        "porosity_unit",
+        "permeability",
+        "permeability_unit"
+      ]
+    },
+    "num_inf": 0,
+    "num_missing": 0,
+    "num_nan": 0,
+    "num_outliers": 0,
+    "num_rows": 3,
+    "recommendations": [
+      "Dataset passed core QC checks for the current lightweight schema."
+    ],
+    "resample_summary": {},
+    "shape": [
+      3
+    ],
+    "shape_consistency": {
+      "field_shapes": {
+        "permeability": [
+          3
+        ],
+        "porosity": [
+          3
+        ]
+      },
+      "shape_consistent": true,
+      "warnings": []
+    },
+    "source_name": "property_field",
+    "success": true,
+    "unit_warnings": [],
+    "warnings": []
+  },
+  "schedule": {
+    "control_types": [
+      "bhp",
+      "rate"
+    ],
+    "num_records": 2,
+    "statuses": [
+      "open"
+    ]
+  },
+  "source_task": "IND-002",
+  "success": true,
+  "summary_name": "field_data_ingestion_summary",
+  "warnings": [],
+  "well_table": {
+    "num_wells": 2,
+    "well_ids": [
+      "I1",
+      "P1"
+    ],
+    "well_types": [
+      "injector",
+      "producer"
+    ]
+  }
+}
