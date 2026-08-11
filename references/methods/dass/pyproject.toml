@@ -1,0 +1,20 @@
+[project]
+name = "dass"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "black",
+    "jupyter",
+    "matplotlib",
+    "nbconvert",
+    "nbmake",
+    "numpy",
+    "p_tqdm",
+    "pandas",
+    "pytest",
+    "scipy",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

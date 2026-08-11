@@ -1,4 +1,10 @@
-"""Lightweight ES-MDA for permeability under well-pressure observations."""
+"""ES-MDA for permeability under well-pressure observations.
+
+Self-contained implementation inspired by Emerick & Reynolds (2013) and
+common open-source practice (normalized alpha, R-preconditioning, optional
+Gaspari–Cohn localization, ensemble inflation). Does **not** import
+``references/`` upstream packages.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,11 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
+from reservoir_backend.pipeline.ensemble_math import (
+    esmda_update_step,
+    normalize_alpha_weights,
+    well_parameter_localization,
+)
 from reservoir_backend.pipeline.run import run_time_slice
 from reservoir_backend.pipeline.state import FieldBundle, MeshBundle, SensorSample
 from reservoir_backend.solver.pressure_solver import solve_steady_state_pressure_3d
@@ -23,6 +34,7 @@ class ESMdaResult:
     phi_mean: NDArray[np.float64]
     history_mean: list[FieldBundle] = field(default_factory=list)
     observation_rmse: list[float] = field(default_factory=list)
+    alpha_schedule: list[float] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -40,17 +52,14 @@ def generate_logk_ensemble(
     Returns array shape ``(ne, nz, ny, nx)`` in linear k [m^2].
     """
     rng = np.random.default_rng(seed)
-    nz, ny, nx = shape
     log_mean = float(np.log(max(k_mean, 1.0e-20)))
     members = []
     for _ in range(ne):
         noise = rng.normal(0.0, 1.0, size=shape)
         smooth = _smooth3(noise, sigma=max(0.5, float(corr_len_cells) / 2.5))
-        # re-std
         s = float(np.std(smooth)) + 1.0e-30
         smooth = smooth / s * float(logk_std)
-        logk = log_mean + smooth
-        members.append(np.exp(logk))
+        members.append(np.exp(log_mean + smooth))
     ens = np.stack(members, axis=0)
     return np.clip(ens, 1.0e-18, 1.0e-10)
 
@@ -70,20 +79,21 @@ def run_esmda_permeability(
     viscosity_pa_s: float = 1.0e-3,
     seed: int = 42,
     n_k_iterations: int = 1,
+    localization_radius_m: float | None = None,
+    ensemble_inflation: float = 1.02,
 ) -> ESMdaResult:
-    """Sequential multi-time ES-MDA on ``log(k)`` using well pressure data.
+    """Multi-time ES-MDA on ``log(k)`` using well pressure as soft data.
 
-    Forward map per member: TPFA pressure reconstruction with that k field;
-    observations are well-cell pressures at each sample time. Between times the
-    ensemble is carried forward (no model error). Alpha schedule is the standard
-    equal-weight ES-MDA ``alpha = Na``.
+    Forward map: TPFA with **face boundary Dirichlet only** (well cells free),
+    so permeability influences predicted well BHP. Alpha weights satisfy
+    ``sum 1/alpha_i = 1`` (Emerick & Reynolds).
     """
     if not samples:
         raise ValueError("samples must not be empty")
     samples = sorted(samples, key=lambda s: s.time)
     ne = int(ne)
-    na = max(1, int(n_assimilations))
-    alpha = float(na)
+    alphas = normalize_alpha_weights(int(n_assimilations))
+    na = int(alphas.size)
 
     k_ens = generate_logk_ensemble(
         mesh.grid.shape,
@@ -94,27 +104,41 @@ def run_esmda_permeability(
         seed=seed,
     )
     notes = [
-        f"ES-MDA ne={ne} Na={na} alpha={alpha}",
+        f"ES-MDA ne={ne} Na={na} alpha={alphas.tolist()}",
         f"prior k_mean={k_mean:.3e} logk_std={logk_std}",
+        "forward operator: boundary Dirichlet only (soft well BHP)",
+        "practice sources: Emerick&Reynolds2013; alpha norm / R-precond / inflation",
     ]
+    if localization_radius_m is not None:
+        notes.append(f"Gaspari-Cohn localization radius_m={localization_radius_m}")
+
     rmse_hist: list[float] = []
     rng = np.random.default_rng(seed + 7)
-
     well_names = _ordered_well_names(mesh, samples[0])
     if not well_names:
         raise ValueError("no wells on mesh for ES-MDA observations")
 
+    md_loc = None
+    if localization_radius_m is not None and float(localization_radius_m) > 0.0:
+        mesh_xyz = np.column_stack([mesh.x, mesh.y, mesh.z])
+        well_xyz = []
+        for name in well_names:
+            c = mesh.well_cell_id[name]
+            well_xyz.append([mesh.x[c], mesh.y[c], mesh.z[c]])
+        md_loc = well_parameter_localization(
+            mesh_xyz, np.asarray(well_xyz, dtype=float), float(localization_radius_m)
+        )
+
+    shape = mesh.grid.shape
+    n_m = int(np.prod(shape))
+
     for sample in samples:
         obs = np.array([float(sample.well_pressure[n]) for n in well_names], dtype=float)
-        n_obs = obs.size
-        # diagonal observation noise
         sigma = np.maximum(np.abs(obs) * float(obs_std_frac), float(obs_std_floor_pa))
         r_diag = sigma**2
 
-        for _ia in range(na):
-            # forecast observations: pressure at well cells WITHOUT hard Dirichlet
-            # so k actually influences predicted well BHP (boundaries only).
-            d_sim = np.zeros((ne, n_obs), dtype=float)
+        for alpha in alphas:
+            d_sim = np.zeros((ne, obs.size), dtype=float)
             for e in range(ne):
                 p = _forward_pressure_no_well_dirichlet(
                     mesh,
@@ -124,29 +148,18 @@ def run_esmda_permeability(
                 )
                 d_sim[e, :] = _sample_well_pressures(mesh, p, well_names)
 
-            # ensemble in log space
-            m = np.log(np.clip(k_ens, 1.0e-20, None)).reshape(ne, -1)  # (ne, n_state)
-            m_mean = np.mean(m, axis=0)
-            d_mean = np.mean(d_sim, axis=0)
-            am = m - m_mean
-            ad = d_sim - d_mean
-
-            # Cov_md (n_state, n_obs), Cov_dd (n_obs, n_obs)
-            cov_md = (am.T @ ad) / max(ne - 1, 1)
-            cov_dd = (ad.T @ ad) / max(ne - 1, 1)
-            cov_dd = cov_dd + alpha * np.diag(r_diag)
-
-            # solve cov_dd X^T = cov_md^T  →  K = cov_md @ inv(cov_dd)
-            try:
-                k_gain = np.linalg.solve(cov_dd, cov_md.T).T  # (n_state, n_obs)
-            except np.linalg.LinAlgError:
-                k_gain = cov_md @ np.linalg.pinv(cov_dd)
-
-            for e in range(ne):
-                innov = obs + np.sqrt(alpha) * rng.normal(0.0, sigma) - d_sim[e]
-                m[e] = m[e] + k_gain @ innov
-
-            k_ens = np.exp(m.reshape(ne, *mesh.grid.shape))
+            m = np.log(np.clip(k_ens, 1.0e-20, None)).reshape(ne, n_m)
+            m = esmda_update_step(
+                m,
+                d_sim,
+                obs,
+                r_diag,
+                float(alpha),
+                rng,
+                md_localization=md_loc,
+                inflation=float(ensemble_inflation),
+            )
+            k_ens = np.exp(m.reshape(ne, *shape))
             k_ens = np.clip(k_ens, 1.0e-18, 1.0e-10)
 
             rmse = float(np.sqrt(np.mean((np.mean(d_sim, axis=0) - obs) ** 2)))
@@ -157,7 +170,6 @@ def run_esmda_permeability(
     k_mean_f = np.mean(k_ens, axis=0)
     k_std_f = np.std(k_ens, axis=0)
 
-    # reconstruct mean history with ensemble-mean k carried across times
     history: list[FieldBundle] = []
     prev: FieldBundle | None = None
     for sample in samples:
@@ -174,7 +186,6 @@ def run_esmda_permeability(
             dt=dt,
             n_k_iterations=n_k_iterations,
         )
-        # blend ES-MDA mean k with local inversion for mild consistency
         bundle.permeability = 0.7 * k_mean_f + 0.3 * bundle.permeability
         bundle.permeability = np.clip(bundle.permeability, 1.0e-18, 1.0e-10)
         bundle.notes = list(bundle.notes) + ["permeability blended with ES-MDA ensemble mean"]
@@ -191,6 +202,7 @@ def run_esmda_permeability(
         phi_mean=phi_mean,
         history_mean=history,
         observation_rmse=rmse_hist,
+        alpha_schedule=[float(a) for a in alphas],
         notes=notes,
     )
 
@@ -225,11 +237,7 @@ def _forward_pressure_no_well_dirichlet(
 
 
 def _ordered_well_names(mesh: MeshBundle, sample: SensorSample) -> list[str]:
-    names = []
-    for n in sample.well_pressure:
-        if n in mesh.well_cell_id:
-            names.append(n)
-    return names
+    return [n for n in sample.well_pressure if n in mesh.well_cell_id]
 
 
 def _sample_well_pressures(
@@ -246,11 +254,9 @@ def _sample_well_pressures(
 
 
 def _smooth3(arr: NDArray[np.float64], *, sigma: float) -> NDArray[np.float64]:
-    """Separable box/gaussian-ish smooth via repeated averaging."""
     out = arr.astype(float, copy=True)
     passes = max(1, int(round(sigma)))
     for _ in range(passes):
-        # 6-neighbor average + self
         padded = np.pad(out, 1, mode="edge")
         acc = padded[1:-1, 1:-1, 1:-1] * 6.0
         acc += padded[1:-1, 1:-1, 0:-2]

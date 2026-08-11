@@ -32,6 +32,12 @@ Shallow clones (`--depth 1`) are recommended. MRST is large; only a few example
 paths are used as offline reading material for humans and for optional path
 checks—never executed by this Python backend.
 
+## Method references (ES-MDA / history matching)
+
+See [methods/README.md](methods/README.md). Local shallow clones of equinor /
+pyesmda / dass etc. Used only to **extract algorithms** into
+`reservoir_backend/pipeline/esmda.py` and `ensemble_math.py` (self-contained).
+
 ## Extraction
 
 ```bash

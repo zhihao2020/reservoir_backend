@@ -14,6 +14,7 @@ from reservoir_backend.pipeline import (
     build_mesh,
     run_time_slice,
 )
+from reservoir_backend.pipeline.ensemble_math import gaspari_cohn, normalize_alpha_weights
 from reservoir_backend.pipeline.esmda import generate_logk_ensemble, run_esmda_permeability
 from reservoir_backend.pipeline.sensor_io import (
     load_sensor_series,
@@ -65,6 +66,23 @@ def test_logk_ensemble_shape_positive() -> None:
     assert np.all(ens > 0.0)
 
 
+def test_normalize_alpha_sum_inv() -> None:
+    a = normalize_alpha_weights(4)
+    assert a.shape == (4,)
+    assert abs(float(np.sum(1.0 / a)) - 1.0) < 1.0e-12
+    b = normalize_alpha_weights(np.array([1.0, 2.0, 3.0]))
+    assert abs(float(np.sum(1.0 / b)) - 1.0) < 1.0e-12
+
+
+def test_gaspari_cohn_support() -> None:
+    d = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 3.0])
+    w = gaspari_cohn(d, 1.0)
+    assert w[0] == 1.0
+    assert w[-1] == 0.0
+    assert w[-2] == 0.0
+    assert np.all(w[:-1] >= 0.0)
+
+
 def test_esmda_reduces_well_pressure_misfit() -> None:
     bounds = AxisAlignedBounds(0.0, 60.0, 0.0, 40.0, 0.0, 30.0)
     wells = [WellPoint("INJ", 10.0, 20.0, 15.0), WellPoint("PROD", 50.0, 20.0, 15.0)]
@@ -96,7 +114,11 @@ def test_esmda_reduces_well_pressure_misfit() -> None:
         corr_len_cells=2.0,
         seed=3,
         n_k_iterations=1,
+        localization_radius_m=40.0,
+        ensemble_inflation=1.02,
     )
+    assert len(result.alpha_schedule) == 3
+    assert abs(sum(1.0 / a for a in result.alpha_schedule) - 1.0) < 1.0e-10
     assert result.k_mean.shape == mesh.grid.shape
     assert result.k_ensemble.shape[0] == 12
     assert len(result.history_mean) == 2

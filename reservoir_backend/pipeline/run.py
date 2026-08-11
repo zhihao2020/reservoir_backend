@@ -279,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
         es = cfg.get("esmda", {})
         ne = int(args.ne if args.ne is not None else es.get("ne", 20))
         na = int(args.na if args.na is not None else es.get("n_assimilations", 4))
+        loc_r = es.get("localization_radius_m", None)
         result = run_esmda_permeability(
             mesh,
             samples,
@@ -291,6 +292,8 @@ def main(argv: list[str] | None = None) -> int:
             porosity_prior=phi0,
             viscosity_pa_s=mu,
             seed=int(es.get("seed", 42)),
+            localization_radius_m=None if loc_r is None else float(loc_r),
+            ensemble_inflation=float(es.get("ensemble_inflation", 1.02)),
         )
         out_root.mkdir(parents=True, exist_ok=True)
         np.save(out_root / "k_mean.npy", result.k_mean)

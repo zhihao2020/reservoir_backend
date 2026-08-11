@@ -40,4 +40,6 @@ esmda:
   logk_std: 0.8
   corr_len_cells: 2.5
   obs_std_frac: 0.02
+  localization_radius_m: 50.0
+  ensemble_inflation: 1.02
   seed: 7

@@ -1,5 +1,9 @@
 """Sensor-driven four-field pipeline: mesh, pressure, saturation, rock properties."""
 
+from reservoir_backend.pipeline.ensemble_math import (
+    gaspari_cohn,
+    normalize_alpha_weights,
+)
 from reservoir_backend.pipeline.esmda import ESMdaResult, generate_logk_ensemble, run_esmda_permeability
 from reservoir_backend.pipeline.mesh_builder import build_mesh
 from reservoir_backend.pipeline.mesh_refine import map_field_to_mesh, refine_mesh_by_indicator
@@ -51,8 +55,10 @@ __all__ = [
     "build_channel_twin",
     "build_faulted_channel_twin",
     "build_mesh",
+    "gaspari_cohn",
     "generate_logk_ensemble",
     "indicator_to_active_mask",
+    "normalize_alpha_weights",
     "infer_shape_indicator",
     "invert_rock_properties",
     "load_sensor_series",

@@ -18,7 +18,8 @@
 | 物性反演 k、φ | MVP | `pipeline.invert_rock_properties` | `tests/test_pipeline_fields.py` | k 数组先验+迭代；φ 连续/物质平衡代理 |
 | 端到端 + CLI | MVP | `python -m reservoir_backend.pipeline.run` | `tests/test_pipeline_e2e_cli.py` | slice/series/discovery/esmda |
 | CSV 多时刻传感器 | 已验证 | `pipeline.load_sensor_series` | `tests/test_sensor_io_esmda.py` | 长表 wells + boundary CSV |
-| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | log-k 集成；井压同化；输出 mean/std |
+| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | α 归一化；R 预条件；可选 GC 局部化；膨胀 |
+| 方法学参考库 | 只读 | `references/methods/` | methods/README.md | equinor/pyesmda/dass；**禁止 import** |
 | 多时刻形态发现 | MVP | `pipeline.run_shape_discovery` | `tests/test_shape_discovery.py` | 指标=ΔSw+k+Δp；跨时刻 k/φ 数组传递 |
 | k–p 固定点迭代 | MVP | `pipeline.run_time_slice` | `tests/test_pipeline_fields.py` | 默认 2 次；加密后映射 k 场 |
 | 正交指示加密 | MVP | `pipeline.refine_mesh_by_indicator` | 同上 | 高指示区 bbox 全局加密 |
