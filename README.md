@@ -1,26 +1,20 @@
 # Reservoir Backend
 
-## Project Positioning
+储层实验数据处理与结构化网格数值验证的 Python 后端原型。
 
-Reservoir Backend is a Python backend for reservoir experiment data handling,
-pressure-field reconstruction, saturation inversion, and small structured-grid
-numerical verification.
+## 项目定位
 
-The project is intended for:
+本仓库用于：
 
-- repeatable handling of lab or synthetic reservoir data;
-- finite-volume pressure and transport experiments on structured grids;
-- validation reports for pressure, saturation, fusion, cross-scale, and data
-  pipeline utilities;
-- future maintenance by developers and Codex agents.
+- 实验室或合成储层实验数据的可重复处理与质控；
+- 结构化笛卡尔网格上的有限体积压力重建与饱和度输运验证；
+- 参数融合、跨尺度分析与基准报告生成。
 
-This repository is not a commercial reservoir simulator, not a black-oil
-simulator, and not a product front end. Current status is maintained only in
-[STATUS.md](STATUS.md).
+**本项目不是**商业储层模拟器、黑油模拟器或产品前端。模块成熟度以 [STATUS.md](STATUS.md) 为唯一权威来源。
 
-## Quick Start
+## 快速开始
 
-Create an environment and install the package in editable mode:
+创建环境并以可编辑模式安装：
 
 ```bash
 python -m venv .venv
@@ -29,19 +23,19 @@ python -m pip install -U pip
 python -m pip install -e .
 ```
 
-Run the test suite:
+运行测试：
 
 ```bash
 pytest -q
 ```
 
-Run a minimal case through the existing script entrypoint:
+通过 CLI 做最小案例检查：
 
 ```bash
 python scripts/run_case.py --config config/demo_case.yaml --dry-run
 ```
 
-Read experimental data through the internal data pipeline:
+读取实验数据：
 
 ```python
 from reservoir_backend.data.reader import read_experimental_data
@@ -52,104 +46,102 @@ qc_report = run_qc_pipeline(dataset)
 print(qc_report["success"])
 ```
 
-Generate an existing report runner when needed:
+生成报告（按需）：
 
 ```bash
 python -m reservoir_backend.simulation.impes_report
 python -m reservoir_backend.fusion.synthetic_twin_report
 ```
 
-Detailed CLI, configuration, data, and result contracts are consolidated in
-[docs/API_AND_DATA_CONTRACT.md](docs/API_AND_DATA_CONTRACT.md).
+## 处理流程
 
-## Current Capabilities
+```mermaid
+flowchart LR
+  input[实验数据或YAML配置]
+  qc[数据质控与单位归一化]
+  inv[饱和度反演]
+  press[压力重建]
+  flux[达西通量与速度]
+  trans[饱和度输运]
+  fuse[参数场融合]
+  out[报告与结果清单]
 
-The current codebase contains tested support for:
+  input --> qc --> inv --> press --> flux --> trans --> fuse --> out
+```
 
-- structured grid and field data structures;
-- units, wells, source terms, and lightweight boundary contribution utilities;
-- CSV, JSON, and NPZ experimental data ingestion with QC reports;
-- field-data ingestion for well tables, production history, pressure history,
-  schedule CSV, and property fields;
-- multi-well schedule v0 metadata, rate/BHP control interfaces, and report
-  steps;
-- Archie-style and multi-signal saturation inversion utilities;
-- finite-volume pressure reconstruction on structured Cartesian grids;
-- Darcy velocity and face-flux calculations;
-- oil-water saturation transport with CFL diagnostics and optional TVD/MUSCL
-  helper paths;
-- capillary, gravity, and combined water-flux diagnostics;
-- combined capillary + gravity transport checks;
-- simplified incompressible WOG utilities for three-phase relperm, phase flux,
-  transport checks, and reports;
-- simplified sequential pressure-saturation coupling for small waterflood
-  examples, including an IMPES loop report;
-- parameter fusion, uncertainty diagnostics, and synthetic-twin field summaries;
-- synthetic-only history matching prototype for known-truth generated cases;
-- cross-scale similarity, scale-effect, and curve-comparison reporting;
-- result manifests, project/case/run registries, and report index utilities;
-- industrial case workflow v0 for config to Project/Case/Run to IMPES to
-  engineering report;
-- black-oil/PVT architecture roadmap documentation, without solver
-  implementation;
-- REST API and frontend integration roadmap documentation, without service or
-  UI implementation;
-- benchmark registry and performance baseline reports.
+跨尺度分析、IMPES 顺序耦合与工业案例工作流作为并行子系统运行，详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
-Capability maturity and scope boundaries are listed only in
-[STATUS.md](STATUS.md).
+## 能力概览
 
-## Validation Summary
+详细状态与证据见 [STATUS.md](STATUS.md)。
 
-Primary validation command:
+| 领域 | 主要内容 | 状态来源 |
+|------|----------|----------|
+| 数据入口 | 实验 CSV/JSON/NPZ、现场井表与生产历史、QC 报告 | [STATUS.md](STATUS.md) |
+| 反演 | Archie 与多信号饱和度反演 | [STATUS.md](STATUS.md) |
+| 数值核心 | finite-volume 压力求解、达西通量、油水输运、毛细管/重力、简化三相 WOG | [STATUS.md](STATUS.md) |
+| 耦合与融合 | IMPES 顺序循环、参数融合与不确定性、合成孪生体 | [STATUS.md](STATUS.md) |
+| 跨尺度 | 相似性准则、尺度效应、实验室-油田曲线对比 | [STATUS.md](STATUS.md) |
+| 工作流 | 项目/案例/运行注册、结果清单、工业案例 v0 | [STATUS.md](STATUS.md) |
+| 延后范围 | 黑油/PVT 架构设计、REST/前端集成、UDP 服务 | [STATUS.md](STATUS.md) |
+
+## 验证
+
+主验证命令：
 
 ```bash
 pytest -q
 ```
 
-Industrialization tasks should finish with a full-suite run. Existing report
-artifacts are kept under:
+基准报告生成命令、报告路径与回归策略见 [docs/VALIDATION.md](docs/VALIDATION.md)。验证原则：**Function hardening first**，以 benchmark validation 报告为证据，而非对外部商业模拟器做等价声明。
 
-- `accuracy_reports/`
-- `validation_reports/` if present in a local checkout
+## 文档导航
 
-Validation organization, benchmark report locations, and rerun guidance are in
-[docs/VALIDATION.md](docs/VALIDATION.md).
+| 文档 | 说明 |
+|------|------|
+| [STATUS.md](STATUS.md) | 模块成熟度（唯一权威） |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 仓库结构、数据流与模块关系 |
+| [docs/API_AND_DATA_CONTRACT.md](docs/API_AND_DATA_CONTRACT.md) | CLI、YAML 配置、实验数据与结果契约 |
+| [docs/VALIDATION.md](docs/VALIDATION.md) | 测试分层、基准命令与报告索引 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 当前限制与未来范围 |
+| [docs/README.md](docs/README.md) | 完整文档地图 |
 
-Useful runner and report anchors:
+实验数据样例位于 `tests/fixtures/experimental_data`。
 
-- `python benchmarks/three_phase_benchmark.py`: Three-phase WOG benchmark hardening.
-- `python -m reservoir_backend.cross_scale.runner`: writes `cross_scale_benchmark_summary`.
-- `python -m reservoir_backend.cross_scale.upscaling_report`: writes `cross_scale_upscaling_summary`.
-- `python -m reservoir_backend.performance.performance_report`: writes `performance_baseline_summary`.
-- API/frontend integration roadmap evidence is in
-  `docs/api_frontend_integration_roadmap.md` and
-  `accuracy_reports/api_frontend_integration_roadmap_summary.*`.
-- project_case_management_summary and frontend field contract are indexed by the
-  result manifest documentation.
-- Function hardening first remains the benchmark validation principle.
-- cross-scale analysis design describes one backend with two first-level modules;
-  cross-scale implementation is not yet complete.
-- pressure solver benchmark, pressure solver enhancement, saturation transport benchmark,
-  saturation transport enhancement, capillary / gravity benchmark, parameter fusion benchmark,
-  parameter fusion uncertainty, benchmark registry, project / case management, synthetic twin,
-  saturation inversion benchmark, lab-field validation, curve-to-curve comparison,
-  similarity criteria, scale-effect analysis, field data ingestion.
-
-## Documentation Index
-
-- [STATUS.md](STATUS.md): the only module status source.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): repository structure, data flow,
-  and numerical workflow overview.
-- CLI Usage and case configuration are summarized in
-  [docs/API_AND_DATA_CONTRACT.md](docs/API_AND_DATA_CONTRACT.md).
-- [docs/VALIDATION.md](docs/VALIDATION.md): tests, benchmark reports, and
-  verification workflow.
-- [docs/ROADMAP.md](docs/ROADMAP.md): current limitations, near-term work, and
-  future scope.
-- [docs/API_AND_DATA_CONTRACT.md](docs/API_AND_DATA_CONTRACT.md): CLI, case
-  configuration, experimental data schema, result manifest, and front-end field
-  contract.
-- [docs/archive/](docs/archive/): historical documentation snapshots retained
-  for traceability, not active status sources.
-- Fixture samples live under `tests/fixtures/experimental_data`.
+<!-- doc-anchors:
+CLI Usage,
+finite-volume,
+combined capillary + gravity transport,
+pressure solver benchmark,
+pressure solver enhancement,
+saturation transport benchmark,
+saturation transport enhancement,
+saturation inversion benchmark,
+capillary / gravity benchmark,
+parameter fusion benchmark,
+parameter fusion uncertainty,
+benchmark registry,
+performance baseline,
+performance_baseline_summary,
+IMPES,
+synthetic twin,
+result manifest,
+frontend field contract,
+project / case management,
+project_case_management_summary,
+lab-field validation,
+curve-to-curve comparison,
+similarity criteria,
+scale-effect analysis,
+cross-scale analysis design,
+one backend with two first-level modules,
+cross-scale implementation is not yet complete,
+reservoir_backend.cross_scale.runner,
+cross_scale_benchmark_summary,
+reservoir_backend.cross_scale.upscaling_report,
+cross_scale_upscaling_summary,
+python benchmarks/three_phase_benchmark.py,
+Three-phase WOG benchmark hardening,
+black-oil simulator,
+udp development is still deferred
+-->

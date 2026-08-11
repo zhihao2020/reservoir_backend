@@ -1,57 +1,50 @@
-# Roadmap
+# 路线图与限制
 
-This document records limitations and development direction. Module status is
-tracked only in [../STATUS.md](../STATUS.md).
+本文记录当前限制、近期维护优先级与未来范围。读完本文你将清楚本后端能做什么、不能做什么，以及文档维护政策。
 
-## Current Limitations
+**下一步阅读：** [../STATUS.md](../STATUS.md)（模块级证据）、[black_oil_pvt_architecture.md](black_oil_pvt_architecture.md)（黑油架构设计，仅文档）。
 
-The current backend is scoped to structured-grid Python workflows and small
-validation cases. Known limits include:
+## 当前限制
 
-- structured Cartesian grids are the main numerical target;
-- explicit transport remains the primary transport path;
-- simplified WOG utilities are incompressible and do not implement black-oil
-  PVT;
-- cross-scale modules provide reporting and diagnostics, not a multiscale
-  finite-volume solver;
-- fusion utilities do not perform history matching, automatic calibration, or
-  ensemble data assimilation;
-- result and project management are file-based and do not provide a database
-  service;
-- no front-end, UDP service, REST API, or C++ acceleration layer is part of the
-  current backend.
+当前后端面向结构化网格 Python 工作流与小型验证案例。已知限制包括：
 
-## Near-Term Maintenance Priorities
+- 结构化笛卡尔网格是主要数值目标；
+- 显式输运仍是主要输运路径；
+- 简化三相 WOG 工具为不可压缩模型，**未实现黑油 PVT**；
+- 跨尺度模块提供报告与诊断，**非多尺度有限体积求解器**；
+- 融合工具**不执行历史拟合、自动校准或集合同化**；
+- 结果与项目管理基于文件，**无数据库服务**；
+- 当前后端**不包含**前端、UDP 服务、REST API 或 C++ 加速层。
 
-Near-term work should focus on:
+## 近期维护优先级
 
-- keeping documentation entry points small and consistent;
-- keeping `STATUS.md` as the only maintained status table;
-- strengthening real experimental dataset coverage for the data pipeline;
-- expanding pressure and transport regression cases only where they fit the
-  existing structured-grid scope;
-- improving report schemas when downstream consumers need stable fields;
-- preserving benchmark reproducibility without adding runtime dependencies on
-  external simulators.
+- 保持文档入口精简且一致；
+- 保持 `STATUS.md` 为唯一维护的状态表；
+- 加强数据管线对真实实验数据集的覆盖；
+- 仅在现有结构化网格范围内扩展压力与输运回归案例；
+- 当下游消费者需要稳定字段时改进报告模式；
+- 保持基准可复现，不增加对外部模拟器的运行时依赖。
 
-## Future Scope
+## 未来范围（明确排除）
 
-The following areas are outside the current MVP:
+以下领域超出当前 MVP：
 
-- black-oil and compositional PVT;
-- broad industrial well controls and wellbore networks;
-- fully implicit reservoir simulation;
-- complex corner-point geological models;
-- full SPE reproduction claims;
-- OPM Flow or MRST equivalence;
-- production front end, database service, UDP service, or REST API;
-- C++ or pybind11 kernel migration without a measured bottleneck;
-- history matching, automatic calibration, EnKF, ES-MDA, or Bayesian inversion
-  workflows.
+- 黑油与组分 PVT；
+- 广泛的工业井控与井筒网络；
+- 全隐式储层模拟；
+- 复杂角点点地质模型；
+- 完整 SPE 复现声明；
+- 与 OPM Flow 或 MRST 的等价声明；
+- 生产前端、数据库服务、UDP 服务或 REST API；
+- 无实测瓶颈时的 C++ 或 pybind11 内核迁移；
+- 历史拟合、自动校准、EnKF、ES-MDA 或贝叶斯反演工作流。
 
-## Documentation Policy
+黑油模拟器相关能力仅存在于架构设计文档中，**非已实现功能**。UDP 开发仍处于延后状态（udp development is still deferred）。
 
-Historical matrix and checklist documents have been moved to
-`docs/archive/doc_consolidation/`. They are retained for traceability but are
-not active status sources. New documentation should link to this roadmap and
-to `STATUS.md` rather than creating another completion matrix.
+## 文档政策
+
+- 历史矩阵与检查清单已移至 `docs/archive/doc_consolidation/`，保留用于追溯，**非活跃状态来源**。
+- 新文档应链接本路线图与 `STATUS.md`，而非创建另一份完成度矩阵。
+- 架构与数据流见 [ARCHITECTURE.md](ARCHITECTURE.md)；接口契约见 [API_AND_DATA_CONTRACT.md](API_AND_DATA_CONTRACT.md)。
+- 完整文档索引见 [README.md](README.md)。
+- **文档与代码一致性**：活跃文档中的路径声明应与仓库树一致；本地用 [QMD](https://www.npmjs.com/package/@tobilu/qmd) 索引 `docs/`、`specs/`、`STATUS.md` 等做语义检索，并用 `python scripts/check_doc_code_consistency.py` 做路径级硬检查。

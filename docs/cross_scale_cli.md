@@ -76,8 +76,8 @@ Default outputs:
 
 ## Result Manifest Integration
 
-The runner creates a result manifest entry when `reservoir_backend.results` is
-available:
+The runner creates a result manifest entry via `reservoir_backend.results`
+when export helpers succeed:
 
 - `result_type`: `cross_scale_report`
 - `module`: `M6`
