@@ -25,7 +25,7 @@
 | CMG 差距报告 | 已跑 | `validation/cmg_gap_report/` | GAP_REPORT.md | 非均质通道/断层 .out 对照 |
 | 端到端 + CLI | MVP | `python -m reservoir_backend.pipeline.run` | `tests/test_pipeline_e2e_cli.py` | slice/series/discovery/esmda |
 | CSV 多时刻传感器 | 已验证 | `pipeline.load_sensor_series` | `tests/test_sensor_series_inversion.py` | 注采井+observer_p/s 时序；边界 CSV |
-| 高精度反演（绿地） | MVP | `run_sensor_inversion` / `run_time_series(assimilate_k=True)` | `tests/test_sensor_io_esmda.py` | **联合多时刻** ES-MDA(p+Sw+qw) → 单次路径 k → 硬点时序；无叠层 outer/second-pass |
+| 高精度反演（绿地） | MVP | `run_sensor_inversion` | `tests/test_k_param.py` | **4 维 k 参数**（背景/通道/宽度/z）+ 多时刻联合 ES-MDA(p+Sw+qw) → 路径增强 → 硬点时序 |
 | ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | 软观测：**p + Sw + 产水代理 qw**（井/测点，无 CMG）；α 归一化；局部化；进程池正演 |
 | 空间插值性能 | 已验证 | `spatial_interp` 向量化 | `tests/test_spatial_interp.py` | IDW/克里金/LOO 矩阵化；克里金 batch RHS |
 | 饱和度自动空间 | MVP | `reconstruct_saturation` | `tests/test_pipeline_fields.py` | 硬点≥8 走 LOO 自动 IDW/克里金/stack；少点保留各向异性 IDW |
