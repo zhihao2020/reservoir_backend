@@ -87,6 +87,21 @@ def test_param_inversion_runs() -> None:
     assert np.all(res.k_mean > 0.0)
 
 
+def test_enforce_channel_contrast() -> None:
+    from reservoir_backend.pipeline.k_param import enforce_k_channel_contrast
+
+    mesh = _mesh()
+    # inverted contrast field
+    theta = np.array([np.log(1e-12), np.log(1e-14), 0.0, 0.0, 0.0, 0.0])
+    # force expand then scramble by swapping via enhance-like damp
+    k = expand_k_from_params(mesh, np.array([np.log(1e-14), np.log(1e-12), 0.0, 0.0, 0.0, 0.0]))
+    k_bad = k.copy()
+    k_bad *= 0.1  # flatten/damage
+    k_fix, th, ratio = enforce_k_channel_contrast(mesh, k_bad, theta, min_ratio=2.5)
+    assert ratio >= 2.0 or not np.isfinite(ratio)
+    assert th[1] > th[0]
+
+
 def test_meander_shifts_mass() -> None:
     mesh = _mesh()
     th0 = np.array([np.log(1e-14), np.log(1e-12), 0.0, 0.0, 0.0, 0.0])

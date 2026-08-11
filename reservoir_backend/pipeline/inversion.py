@@ -27,7 +27,9 @@ from reservoir_backend.pipeline.esmda import (
 )
 from reservoir_backend.pipeline.k_param import (
     N_K_PARAMS,
+    boost_theta_from_indicator,
     default_k_param_prior,
+    enforce_k_channel_contrast,
     expand_k_from_params,
     project_k_to_params,
     sample_k_param_ensemble,
@@ -108,7 +110,7 @@ def run_sensor_inversion(
     )
     notes.extend(es_notes)
 
-    # --- 2) single path enhance ---
+    # --- 2) path enhance in θ-space (never flips channel/matrix ratio) ---
     if path_enhance and len(samples) >= 2:
         draft = _hard_series(
             mesh,
@@ -122,14 +124,29 @@ def run_sensor_inversion(
             ind, stats = infer_shape_indicator(
                 mesh, draft, sw_weight=1.8, k_weight=0.05, pressure_weight=0.9
             )
+            theta_mean = boost_theta_from_indicator(
+                mesh, theta_mean, ind, strength=0.65
+            )
+            k_mean = expand_k_from_params(mesh, theta_mean)
+            # light cell boost only upward on high indicator
             k_mean = enhance_permeability_from_indicator(
-                k_mean, ind, strength=0.70, asymmetric=True
+                k_mean, ind, strength=0.35, asymmetric=True
+            )
+            k_mean, theta_mean, ratio = enforce_k_channel_contrast(
+                mesh, k_mean, theta_mean, min_ratio=2.5
             )
             notes.append(
-                f"path-k enhance indicator_mean={stats.get('indicator_mean', float('nan')):.3f}"
+                f"path-k θ-boost indicator_mean={stats.get('indicator_mean', float('nan')):.3f} "
+                f"k_ch/k_mat≈{ratio:.2f}"
             )
 
-    # --- 3) hard series ---
+    # final contrast guard even without path enhance
+    k_mean, theta_mean, ratio0 = enforce_k_channel_contrast(
+        mesh, k_mean, theta_mean, min_ratio=2.0
+    )
+    notes.append(f"k contrast guard ratio≈{ratio0:.2f}")
+
+    # --- 3) hard series (parametric k dominant — no local rock overwrite of contrast) ---
     history = _hard_series(
         mesh,
         samples,
@@ -139,11 +156,15 @@ def run_sensor_inversion(
         n_k_iterations=n_k_iterations,
     )
     for h in history:
-        h.notes = list(h.notes) + notes[:8]
+        h.notes = list(h.notes) + notes[:10]
+        # keep structure: do not let point-rock IDW destroy channel contrast
         h.permeability = np.clip(
-            0.85 * k_mean + 0.15 * np.asarray(h.permeability, dtype=float),
+            0.92 * k_mean + 0.08 * np.asarray(h.permeability, dtype=float),
             1.0e-18,
             1.0e-10,
+        )
+        h.permeability, _, _ = enforce_k_channel_contrast(
+            mesh, h.permeability, theta_mean, min_ratio=2.0
         )
 
     return InversionResult(

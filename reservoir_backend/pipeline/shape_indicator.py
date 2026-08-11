@@ -101,8 +101,8 @@ def enhance_permeability_from_indicator(
     z = np.clip((ind - mu) / sd, -2.5, 2.5)
     s = float(strength)
     if asymmetric:
-        # boost path (z>0) more; mild damp of matrix (z<0)
-        scale = np.where(z >= 0.0, s * 0.55 * z, s * 0.25 * z)
+        # only boost high-activity cells — never damp matrix (avoids k-ratio flip)
+        scale = np.where(z >= 0.0, s * 0.50 * z, 0.0)
     else:
         scale = s * 0.40 * z
     k_new = k * np.exp(scale)

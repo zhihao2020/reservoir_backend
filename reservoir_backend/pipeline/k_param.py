@@ -103,6 +103,88 @@ def project_k_to_params(
     return _clip_theta(np.array([bg_m, ch_m, 0.0, 0.0, 0.0, 0.0], dtype=float))
 
 
+def enforce_theta_contrast(
+    theta: NDArray[np.float64],
+    *,
+    min_log_ratio: float = 1.2,
+) -> NDArray[np.float64]:
+    """Ensure log_k_ch - log_k_bg >= min_log_ratio (~3.3× linear if 1.2)."""
+    th = _clip_theta(np.asarray(theta, dtype=float).ravel().copy())
+    if th[1] < th[0] + float(min_log_ratio):
+        mid = 0.5 * (th[0] + th[1])
+        half = 0.5 * float(min_log_ratio)
+        th[0] = mid - half
+        th[1] = mid + half
+    return _clip_theta(th)
+
+
+def enforce_k_channel_contrast(
+    mesh: MeshBundle,
+    k_field: NDArray[np.float64],
+    theta: NDArray[np.float64],
+    *,
+    min_ratio: float = 2.5,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], float]:
+    """Protect channel/matrix contrast after grid operations.
+
+    If mean(k|corridor) / mean(k|matrix) < min_ratio, rebuild k from θ with
+    a forced log-contrast (does not invent geometry outside the path model).
+    Returns (k_fixed, theta_fixed, ratio_after).
+    """
+    th = enforce_theta_contrast(theta, min_log_ratio=float(np.log(max(min_ratio, 1.01))))
+    k = np.asarray(k_field, dtype=float)
+    w = _path_weight(
+        mesh,
+        width_scale=float(np.exp(th[2])),
+        z_bias=float(th[3]),
+        meander_amp=float(th[4]),
+        meander_phase=float(th[5]),
+    )
+    high = w >= 0.45
+    low = w <= 0.20
+    if not np.any(high) or not np.any(low):
+        k2 = expand_k_from_params(mesh, th)
+        return k2, th, float("nan")
+    ratio = float(np.mean(k[high]) / max(float(np.mean(k[low])), 1.0e-30))
+    if ratio >= float(min_ratio):
+        return np.clip(k, 1.0e-18, 1.0e-10), th, ratio
+    # rebuild purely from parametric model with enforced contrast
+    k2 = expand_k_from_params(mesh, th)
+    ratio2 = float(np.mean(k2[high]) / max(float(np.mean(k2[low])), 1.0e-30))
+    return k2, th, ratio2
+
+
+def boost_theta_from_indicator(
+    mesh: MeshBundle,
+    theta: NDArray[np.float64],
+    indicator: NDArray[np.float64],
+    *,
+    strength: float = 0.55,
+) -> NDArray[np.float64]:
+    """Increase channel contrast if ΔSw indicator aligns with the corridor."""
+    th = np.asarray(theta, dtype=float).ravel().copy()
+    w = _path_weight(
+        mesh,
+        width_scale=float(np.exp(th[2])),
+        z_bias=float(th[3]),
+        meander_amp=float(th[4]),
+        meander_phase=float(th[5]),
+    )
+    ind = np.asarray(indicator, dtype=float)
+    wf, indf = w.ravel(), ind.ravel()
+    if float(np.std(wf)) < 1e-12 or float(np.std(indf)) < 1e-12:
+        return enforce_theta_contrast(th)
+    corr = float(np.corrcoef(wf, indf)[0, 1])
+    if not np.isfinite(corr):
+        corr = 0.0
+    # positive alignment → raise channel / slightly lower background
+    s = float(strength) * max(corr, 0.0)
+    gap = max(float(th[1] - th[0]), 0.5)
+    th[1] = th[1] + s * 0.6 * gap
+    th[0] = th[0] - s * 0.15 * gap
+    return enforce_theta_contrast(th, min_log_ratio=1.5)
+
+
 def _clip_theta(theta: NDArray[np.float64]) -> NDArray[np.float64]:
     th = np.asarray(theta, dtype=float).copy()
     if th.ndim == 1:
