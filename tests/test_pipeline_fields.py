@@ -75,6 +75,20 @@ def test_run_time_slice_e2e() -> None:
     assert any("k-pressure fixed-point" in n for n in fields.notes)
 
 
+def test_transport_between_times() -> None:
+    mesh, sample0 = _mesh_and_sample()
+    f0 = run_time_slice(mesh, sample0, n_k_iterations=1)
+    sample1 = SensorSample(
+        time=30.0,
+        well_pressure={"INJ": 12.2e6, "PROD": 9.8e6},
+        well_saturation={"INJ": (0.8, 0.2, 0.0), "PROD": (0.35, 0.65, 0.0)},
+        boundary=BoundaryConditions(pressure={"left": 12.2e6, "right": 9.8e6}),
+    )
+    f1 = run_time_slice(mesh, sample1, previous=f0, dt=30.0, n_k_iterations=1)
+    assert any("saturation transport" in n for n in f1.notes)
+    assert np.allclose(f1.sw + f1.so + f1.sg, 1.0, atol=1e-8)
+
+
 def test_pressure_matrix_dirichlet_note() -> None:
     mesh, sample = _mesh_and_sample()
     p, notes = reconstruct_pressure(mesh, sample)

@@ -23,6 +23,10 @@ from reservoir_backend.pipeline.state import (
     SensorSample,
     WellPoint,
 )
+from reservoir_backend.pipeline.transport_saturation import (
+    phases_from_sw,
+    transport_water_saturation,
+)
 
 
 def run_time_slice(
@@ -62,6 +66,7 @@ def run_time_slice(
     sw = so = sg = np.zeros(mesh.grid.shape, dtype=float)
     flux_dict: dict[str, NDArray[np.float64]] = {}
 
+    t_notes: list[str] = []
     for it in range(iters):
         # Step 2
         pressure, p_notes = reconstruct_pressure(
@@ -70,8 +75,23 @@ def run_time_slice(
             permeability_m2=k_work,
             viscosity_pa_s=viscosity_pa_s,
         )
-        # Step 3 (use latest pressure for flow-aligned IDW)
+        # Step 3: sensor IDW (+ optional flux-upwind transport)
         sw, so, sg, s_notes = reconstruct_saturation(mesh, sample, pressure=pressure)
+        if previous is not None and dt is not None and float(dt) > 0.0:
+            # warm-start from previous Sw then transport along Darcy fluxes
+            sw_init = 0.5 * previous.sw + 0.5 * sw
+            sw_t, t_notes = transport_water_saturation(
+                mesh,
+                sw_init,
+                pressure,
+                k_work,
+                sample,
+                porosity=phi_work,
+                viscosity_pa_s=viscosity_pa_s,
+                dt=float(dt),
+                n_substeps=8,
+            )
+            sw, so, sg = phases_from_sw(sw_t, sample=sample, mesh=mesh)
         # Step 4
         k, phi, r_notes, flux_dict = invert_rock_properties(
             mesh,
@@ -94,6 +114,7 @@ def run_time_slice(
         ["four-field steps: pressure → saturation → rock (k,phi)"]
         + p_notes
         + s_notes
+        + t_notes
         + r_notes
         + [f"k-pressure fixed-point iterations={iters}"]
     )
