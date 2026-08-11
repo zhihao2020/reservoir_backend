@@ -1,0 +1,55 @@
+{
+  "mode": "cmg_geometry",
+  "n_samples": 9,
+  "used_out": true,
+  "sample_times": [
+    1.0,
+    32.12,
+    60.0,
+    164.81,
+    242.0,
+    426.0,
+    607.0,
+    730.0,
+    791.0
+  ],
+  "well_sw_last": {
+    "INJ": 0.718,
+    "PROD": 0.275
+  },
+  "indicator_stats": {
+    "indicator_mean": 0.34236547882723956,
+    "indicator_p90": 0.5262560524559363,
+    "active_fraction_at_0.4": 0.2653061224489796,
+    "max_cum_dsw": 0.7484999999999999
+  },
+  "refine_stats": {
+    "coarse_cells": 147.0,
+    "fine_cells": 588.0,
+    "refine_factor": 2.0,
+    "fine_indicator_mean": 0.34236547882723956,
+    "bbox_xmin": 0.0,
+    "bbox_xmax": 672.0840000000001,
+    "bbox_ymin": 0.0,
+    "bbox_ymax": 672.0840000000001,
+    "bbox_zmin": 0.0,
+    "bbox_zmax": 30.48
+  },
+  "overlap_discovery_vs_channel": {
+    "dice": 0.6129032258064516,
+    "precision": 0.4418604651162791,
+    "recall": 1.0,
+    "intersection": 57.0
+  },
+  "overlap_cmg_dsw_footprint_vs_channel": {
+    "dice": 0.8,
+    "precision": 1.0,
+    "recall": 0.6666666666666666,
+    "intersection": 38.0
+  },
+  "notes": [
+    "multi-time reconstruction completed",
+    "shape indicator active_fraction=0.265",
+    "refined mesh cells=588; k_prior=4.652e-14"
+  ]
+}

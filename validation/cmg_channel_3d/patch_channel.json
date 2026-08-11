@@ -1,0 +1,32 @@
+{
+  "operations": [
+    {
+      "type": "replace",
+      "parameter_name": "TITLE",
+      "reason": "Label case as channel twin for sensor inverse validation",
+      "old": "*TITLE1\n   'Seawater Test Problem'\n   *TITLE2\n   '3d Seawater Test Case in a 7x7x3 grid configuration.'",
+      "new": "*TITLE1\n   'Channel Twin for Sensor Inverse Validation'\n   *TITLE2\n   '7x7x3 seawater inject with diagonal high-k channel (patched)'"
+    },
+    {
+      "type": "replace",
+      "parameter_name": "PERMI_J_K",
+      "reason": "Impose diagonal high-k channel between injector and producer",
+      "old": "*PERMI *KVAR\n      200.0   50.0  500.0\n   *PERMJ *KVAR\n      200.0   50.0  500.0\n   *PERMK *KVAR\n       19.2  200.0  200.0",
+      "new": "** Background low-k matrix + diagonal high-k channel (INJ 1,1 -> PROD 7,7)\n   *PERMI *CON\n      50.0\n   *MOD\n   ** i1 i2 j1 j2 k1 k2 value (md)\n      1 2 1 2 1 3  2000.0\n      2 3 2 3 1 3  2000.0\n      3 4 3 4 1 3  2000.0\n      4 5 4 5 1 3  2000.0\n      5 6 5 6 1 3  2000.0\n      6 7 6 7 1 3  2000.0\n   *PERMJ *CON\n      50.0\n   *MOD\n      1 2 1 2 1 3  2000.0\n      2 3 2 3 1 3  2000.0\n      3 4 3 4 1 3  2000.0\n      4 5 4 5 1 3  2000.0\n      5 6 5 6 1 3  2000.0\n      6 7 6 7 1 3  2000.0\n   *PERMK *CON\n      20.0\n   *MOD\n      1 2 1 2 1 3   200.0\n      2 3 2 3 1 3   200.0\n      3 4 3 4 1 3   200.0\n      4 5 4 5 1 3   200.0\n      5 6 5 6 1 3   200.0\n      6 7 6 7 1 3   200.0"
+    },
+    {
+      "type": "replace",
+      "parameter_name": "WPRN",
+      "reason": "Increase grid print frequency and field list for validation handoff",
+      "old": "*WPRN   *WELL 1\n   *WPRN   *GRID 1\n\n   *OUTPRN *WELL    *ALL",
+      "new": "*WPRN   *WELL 1\n   *WPRN   *GRID 5\n   *OUTPRN *GRID *SO *SG *SW *PRES\n\n   *OUTPRN *WELL    *ALL"
+    },
+    {
+      "type": "replace",
+      "parameter_name": "SCHEDULE",
+      "reason": "Shorten schedule for faster validation runs",
+      "old": "*DATE 1988 01 01\n   *DATE 1989 01 01\n   *DATE 1990 01 01\n   *DATE 1991 01 01\n\n   *INCOMPWL 1\n     0.0 0.90\n\n   *DATE 1992 01 01\n   *DATE 1993 01 01\n   *DATE 1994 01 01\n   *DATE 1995 01 01\n\n   *SCLRMV-WELL 2\n    0.75\n\n   *SCLTBL-WELL 2\n    2  1\n\n   *DATE 1996 01 01\n   *DATE 1997 01 01\n   *DATE 1998 01 01\n\n   *STOP",
+      "new": "*DATE 1988 01 01\n   *DATE 1988 07 01\n   *DATE 1989 01 01\n   *DATE 1989 07 01\n   *DATE 1990 01 01\n\n   *STOP"
+    }
+  ]
+}

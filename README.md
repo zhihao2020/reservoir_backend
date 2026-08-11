@@ -27,7 +27,7 @@ python -m pip install -r requirements.txt
 
 ```bash
 python -m reservoir_backend.pipeline.run --config config/sensor_case.yaml --output results/sensor_run
-pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py -q
+pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py tests/test_shape_discovery.py -q
 ```
 
 ```python
@@ -38,6 +38,9 @@ from reservoir_backend.pipeline import (
     BoundaryConditions,
     build_mesh,
     run_time_slice,
+    build_channel_twin,
+    run_shape_discovery,
+    mask_overlap,
 )
 
 mesh = build_mesh(
@@ -52,6 +55,24 @@ sample = SensorSample(
     boundary=BoundaryConditions(pressure={"left": 1.2e7, "right": 1.0e7}),
 )
 fields = run_time_slice(mesh, sample)
+
+# multi-time shape discovery (no geometric mountain input)
+twin = build_channel_twin(n_times=4)
+disc = run_shape_discovery(twin.mesh, twin.samples)
+print(mask_overlap(disc.active_mask, twin.true_channel_mask))
+```
+
+## CMG 三维验证
+
+见 [validation/cmg_channel_3d/README.md](validation/cmg_channel_3d/README.md)：
+
+- 基例 IMEX `mxspr006` + 对角高渗通道补丁
+- 本机已跑通 **Normal Termination**
+- 从 `.out` 回灌井点 p/Sw → `run_shape_discovery`，Dice≈0.61
+
+```bash
+python validation/cmg_channel_3d/run_imex_and_validate.py --synthetic
+python validation/cmg_channel_3d/run_imex_and_validate.py --execute   # 需 CMG 许可证
 ```
 
 ## 文档
@@ -63,6 +84,7 @@ fields = run_time_slice(mesh, sample)
 | [docs/API_AND_DATA_CONTRACT.md](docs/API_AND_DATA_CONTRACT.md) | 契约 |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | 测试 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 限制与排除项 |
+| [validation/cmg_channel_3d/README.md](validation/cmg_channel_3d/README.md) | CMG 通道孪生 |
 
 ## 合规
 

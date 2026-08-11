@@ -4,6 +4,13 @@
 
 实现 `references/软件要求.txt` 四场 MVP：网格、压力、饱和度、k/φ。
 
+已接入多时刻形态发现：`run_time_series` → `infer_shape_indicator` → `refine_mesh_by_indicator` → 再重建。
+
+验证路径：
+
+- 合成通道孪生：`pipeline.build_channel_twin` + `tests/test_shape_discovery.py`
+- CMG IMEX 三维通道：`validation/cmg_channel_3d/`（基例 mxspr006 + 高渗对角通道）
+
 ## 排除
 
 - 角点网格、LGR、NNC
@@ -17,3 +24,5 @@
 - 井点压力参与矩阵钉扎（真 Dirichlet 组装）
 - 两时刻物质平衡强化 φ 反演
 - 传感器 CSV 批量时间序列驱动
+- ES-MDA / EnKF 升级路径
+- CMG .out 解析增强（完整井表 / SR3）
