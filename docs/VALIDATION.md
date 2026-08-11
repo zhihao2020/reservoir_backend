@@ -3,10 +3,23 @@
 ## 主测试
 
 ```bash
-pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py -q
+pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py tests/test_shape_discovery.py -q
 ```
 
 可选保留的单元测试：`tests/test_core_*.py`、`tests/test_pressure_solver_*.py` 等核心求解器测试。
+
+## 形态发现 / CMG
+
+```bash
+# 合成通道孪生
+python validation/cmg_channel_3d/run_imex_and_validate.py --synthetic
+
+# IMEX 三维通道（需本机 CMG）
+python validation/cmg_channel_3d/run_imex_and_validate.py --execute
+python validation/cmg_channel_3d/run_imex_and_validate.py --from-out validation/cmg_channel_3d/mxspr006_channel.out
+```
+
+CMG 用于提供**已知高渗通道的三维正演**；本仓库算法从井点传感器反推形态指标，**不宣称与 IMEX 数值等价**。
 
 ## 原则
 
