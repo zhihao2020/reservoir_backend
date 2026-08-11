@@ -1418,7 +1418,7 @@ def advance_buckley_leverett_1d(
 ) -> SaturationStepResult:
     """Advance a 1D Buckley-Leverett water saturation field by one explicit step."""
     velocity_faces = _velocity_faces(grid, velocity_x)
-    area = grid.dy * grid.dz
+    area = float(grid.spacing_j[0] * grid.spacing_k[0])
     result = advance_saturation_1d(
         grid=grid,
         sw=sw,

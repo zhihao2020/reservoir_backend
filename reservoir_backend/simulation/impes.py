@@ -364,22 +364,22 @@ def _add_dirichlet_boundary_fluxes(
     fy = np.asarray(fluxes.flux_y, dtype=float).copy()
     fz = np.asarray(fluxes.flux_z, dtype=float).copy()
     if "left" in boundaries:
-        t = 2.0 * kx[:, :, 0] * grid.dy * grid.dz / grid.dx
+        t = 2.0 * kx[:, :, 0] * (grid.spacing_j[None, :] * grid.spacing_k[:, None]) / grid.spacing_i[0]
         fx[:, :, 0] = t * (float(boundaries["left"]) - pressure[:, :, 0])
     if "right" in boundaries:
-        t = 2.0 * kx[:, :, -1] * grid.dy * grid.dz / grid.dx
+        t = 2.0 * kx[:, :, -1] * (grid.spacing_j[None, :] * grid.spacing_k[:, None]) / grid.spacing_i[-1]
         fx[:, :, -1] = t * (pressure[:, :, -1] - float(boundaries["right"]))
     if "front" in boundaries:
-        t = 2.0 * ky[:, 0, :] * grid.dx * grid.dz / grid.dy
+        t = 2.0 * ky[:, 0, :] * (grid.spacing_i[None, :] * grid.spacing_k[:, None]) / grid.spacing_j[0]
         fy[:, 0, :] = t * (float(boundaries["front"]) - pressure[:, 0, :])
     if "back" in boundaries:
-        t = 2.0 * ky[:, -1, :] * grid.dx * grid.dz / grid.dy
+        t = 2.0 * ky[:, -1, :] * (grid.spacing_i[None, :] * grid.spacing_k[:, None]) / grid.spacing_j[-1]
         fy[:, -1, :] = t * (pressure[:, -1, :] - float(boundaries["back"]))
     if "bottom" in boundaries:
-        t = 2.0 * kz[0, :, :] * grid.dx * grid.dy / grid.dz
+        t = 2.0 * kz[0, :, :] * (grid.spacing_i[None, :] * grid.spacing_j[:, None]) / grid.spacing_k[0]
         fz[0, :, :] = t * (float(boundaries["bottom"]) - pressure[0, :, :])
     if "top" in boundaries:
-        t = 2.0 * kz[-1, :, :] * grid.dx * grid.dy / grid.dz
+        t = 2.0 * kz[-1, :, :] * (grid.spacing_i[None, :] * grid.spacing_j[:, None]) / grid.spacing_k[-1]
         fz[-1, :, :] = t * (pressure[-1, :, :] - float(boundaries["top"]))
     return FaceFluxes(flux_x=fx, flux_y=fy, flux_z=fz)
 

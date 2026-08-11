@@ -54,10 +54,22 @@ def extract_reference_cases() -> dict:
     return summary
 
 
+def _require_upstream(path: Path) -> Path:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"missing upstream file {path}; run: git submodule update --init --depth 1"
+        )
+    return path
+
+
 def _extract_opm_water_1ph() -> dict:
-    path = UPSTREAM / "opm-tests" / "water-1ph" / "WATER2F.DATA"
+    # WATER2F uses EQUALS blocks and later multiplier lines that would confuse a
+    # last-keyword-wins scan. Keep property reads on the EQUALS-aware helpers.
+    path = _require_upstream(UPSTREAM / "opm-tests" / "water-1ph" / "WATER2F.DATA")
     text = path.read_text(encoding="utf-8")
     dims = _first_ints_after_keyword(text, "SPECGRID", count=3)
+    if dims is None:
+        dims = _first_ints_after_keyword(text, "DIMENS", count=3)
     poro = _equals_value(text, "PORO")
     permx = _equals_value(text, "PERMX")
     permz = _equals_value(text, "PERMZ")
@@ -76,16 +88,20 @@ def _extract_opm_water_1ph() -> dict:
 
 
 def _extract_opm_spe1() -> dict:
-    path = UPSTREAM / "opm-tests" / "spe1" / "SPE1CASE1.DATA"
-    text = path.read_text(encoding="utf-8")
-    dims = _first_ints_after_keyword(text, "DIMENS", count=3)
-    nx, ny, nz = dims
-    poro = _expanded_values_after_keyword(text, "PORO", expected=nx * ny * nz)
-    permx = _expanded_values_after_keyword(text, "PERMX", expected=nx * ny * nz)
-    dz = _expanded_values_after_keyword(text, "DZ", expected=nx * ny * nz)
+    path = _require_upstream(UPSTREAM / "opm-tests" / "spe1" / "SPE1CASE1.DATA")
+    from reservoir_backend.io.structured_deck import load_structured_deck
+
+    bundle = load_structured_deck(path)
+    nx, ny, nz = bundle.grid.nx, bundle.grid.ny, bundle.grid.nz
+    poro = bundle.porosity_field
+    permx = bundle.permeability_x_md
+    if poro is None or permx is None:
+        raise ValueError("SPE1 adapted extract requires PORO and PERMX")
+    dz_vec = bundle.grid.spacing_k
+    dz = np.broadcast_to(dz_vec[:, None, None], (nz, ny, nx)).copy()
     arrays = {
-        "permx_md": np.asarray(permx, dtype=float).reshape((nz, ny, nx)),
-        "dz_ft": np.asarray(dz, dtype=float).reshape((nz, ny, nx)),
+        "permx_md": np.asarray(permx, dtype=float),
+        "dz_ft": np.asarray(dz, dtype=float),
     }
     return {
         "case_name": "opm_spe1_case1_layered_subset",
@@ -94,7 +110,7 @@ def _extract_opm_spe1() -> dict:
             "path": "spe1/SPE1CASE1.DATA",
             "url": "https://github.com/OPM/opm-tests/blob/master/spe1/SPE1CASE1.DATA",
         },
-        "grid": dims,
+        "grid": [nx, ny, nz],
         "porosity_min": float(np.min(poro)),
         "porosity_max": float(np.max(poro)),
         "permeability_min_md": float(np.min(permx)),
@@ -106,7 +122,9 @@ def _extract_opm_spe1() -> dict:
 
 
 def _extract_mrst_tpfa() -> dict:
-    path = UPSTREAM / "mrst" / "modules" / "book" / "examples" / "1phase" / "src" / "simpleIncompTPFA.m"
+    path = _require_upstream(
+        UPSTREAM / "mrst" / "modules" / "book" / "examples" / "1phase" / "src" / "simpleIncompTPFA.m"
+    )
     text = path.read_text(encoding="utf-8")
     return {
         "case_name": "mrst_simple_incomp_tpfa_reference",
@@ -123,7 +141,9 @@ def _extract_mrst_tpfa() -> dict:
 
 
 def _extract_mrst_buckley_leverett() -> dict:
-    path = UPSTREAM / "mrst" / "modules" / "book" / "examples" / "in2ph" / "buckleyLeverett1D.m"
+    path = _require_upstream(
+        UPSTREAM / "mrst" / "modules" / "book" / "examples" / "in2ph" / "buckleyLeverett1D.m"
+    )
     text = path.read_text(encoding="utf-8")
     grid_match = re.search(r"cartGrid\(\[(\d+)\s*,\s*(\d+)\]\)", text)
     rock_match = re.search(r"makeRock\(G,\s*([\d.]+)\*milli\*darcy,\s*([\d.]+)\)", text)

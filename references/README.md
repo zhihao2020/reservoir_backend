@@ -1,20 +1,38 @@
 # Open-Source Reference Materials
 
-This directory stores small upstream reference materials used to design
-open-source-adapted benchmarks.
+This directory stores **read-only** upstream materials used to design adapted
+benchmarks and to exercise the project-local structured deck loader.
 
-## Sources
+## Policy (compliance)
 
-- OPM `opm-tests`: `water-1ph/WATER2F.DATA`
-- OPM `opm-tests`: `spe1/SPE1CASE1.DATA`
-- MRST: `modules/book/examples/1phase/src/simpleIncompTPFA.m`
-- MRST: `modules/book/examples/in2ph/buckleyLeverett1D.m`
+- Upstream trees under `upstream/` are **not imported as runtime dependencies**.
+- Python code in this repository must **never** `import` modules from
+  `references/upstream/**` (no OPM, no MRST, no sys.path injection).
+- Public APIs use project-local names (e.g. `load_structured_deck`,
+  `StructuredDeckBundle`, `Grid3D`). Do not copy third-party class or
+  function names into this package.
+- Fixtures are **adapted** metadata/arrays only. They do **not** claim:
+  full SPE10 reproduction, OPM Flow equivalence, MRST runtime integration, or
+  commercial simulator equivalence.
 
-The files in `upstream/` are reference materials only. They are not imported as runtime dependencies and are not executed by the Python backend.
+## Submodules
+
+```bash
+git submodule update --init --depth 1
+```
+
+Configured in `.gitmodules`:
+
+| Path | Remote |
+|------|--------|
+| `references/upstream/opm-tests` | https://github.com/OPM/opm-tests.git |
+| `references/upstream/mrst` | https://github.com/SINTEF-AppliedCompSci/MRST.git |
+
+Shallow clones (`--depth 1`) are recommended. MRST is large; only a few example
+paths are used as offline reading material for humans and for optional path
+checks—never executed by this Python backend.
 
 ## Extraction
-
-Run:
 
 ```bash
 python references/extract_reference_cases.py
@@ -25,12 +43,14 @@ Outputs:
 - `references/fixtures/open_source_adapted_cases.json`
 - `references/fixtures/open_source_adapted_arrays.npz`
 
-## Policy
+The extractor only **reads file text** via `pathlib` / the project loader. It
+does not import upstream packages.
 
-These fixtures are adapted reference cases. They do not claim:
+## Project loader
 
-- full SPE10 reproduction
-- OPM Flow equivalence
-- MRST runtime integration
-- Egg full dataset import
-- commercial simulator equivalence
+```python
+from reservoir_backend.io.structured_deck import load_structured_deck
+
+bundle = load_structured_deck("references/upstream/opm-tests/spe1/SPE1CASE1.DATA")
+grid = bundle.grid  # Grid3D with optional non-uniform spacing_k
+```

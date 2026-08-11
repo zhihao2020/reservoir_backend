@@ -1,0 +1,6 @@
+[submodule "references/upstream/opm-tests"]
+	path = references/upstream/opm-tests
+	url = https://github.com/OPM/opm-tests.git
+[submodule "references/upstream/mrst"]
+	path = references/upstream/mrst
+	url = https://github.com/SINTEF-AppliedCompSci/MRST.git

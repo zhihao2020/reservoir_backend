@@ -35,9 +35,9 @@ grid:
   nx: 6
   ny: 5
   nz: 3
-  dx: 1.0
+  dx: 1.0          # 标量，或长度为 nx 的列表（非均匀正交间距）
   dy: 1.0
-  dz: 1.0
+  dz: 1.0          # 例如 [20.0, 30.0, 50.0]
 
 rock:
   porosity: 0.2
@@ -66,7 +66,15 @@ saturation:
 | 块 | 说明 |
 |----|------|
 | `case` | 案例 ID、输出目录、运行模式 |
-| `grid` | 结构化网格尺寸与单元长度 |
+| `grid` | 结构化网格尺寸与单元长度（`dx/dy/dz` 可为标量或轴向向量） |
+
+结构化 deck 子集读取（离线 fixture，非运行时依赖）：
+
+```python
+from reservoir_backend.io.structured_deck import load_structured_deck
+
+bundle = load_structured_deck("references/upstream/opm-tests/spe1/SPE1CASE1.DATA")
+```
 | `rock` | 孔隙度、渗透率 |
 | `fluid` | 油水黏度 |
 | `archie` / `electromagnetic` / `acoustic` | 反演模型参数 |

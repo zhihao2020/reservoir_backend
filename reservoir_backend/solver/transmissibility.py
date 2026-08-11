@@ -84,15 +84,21 @@ def compute_transmissibility_between_cells(
     if di != 0:
         values = _permeability_values(grid, kx)
         k_face = harmonic_average(values[ka, ja, ia], values[kb, jb, ib])
-        return float(k_face) * grid.dy * grid.dz / (float(mu) * grid.dx)
+        area = float(grid.spacing_j[ja] * grid.spacing_k[ka])
+        dist = float(grid.center_distances_i()[min(ia, ib)])
+        return float(k_face) * area / (float(mu) * dist)
     if dj != 0:
         values = _permeability_values(grid, ky)
         k_face = harmonic_average(values[ka, ja, ia], values[kb, jb, ib])
-        return float(k_face) * grid.dx * grid.dz / (float(mu) * grid.dy)
+        area = float(grid.spacing_i[ia] * grid.spacing_k[ka])
+        dist = float(grid.center_distances_j()[min(ja, jb)])
+        return float(k_face) * area / (float(mu) * dist)
 
     values = _permeability_values(grid, kz)
     k_face = harmonic_average(values[ka, ja, ia], values[kb, jb, ib])
-    return float(k_face) * grid.dx * grid.dy / (float(mu) * grid.dz)
+    area = float(grid.spacing_i[ia] * grid.spacing_j[ja])
+    dist = float(grid.center_distances_k()[min(ka, kb)])
+    return float(k_face) * area / (float(mu) * dist)
 
 
 def compute_directional_transmissibility(
@@ -113,13 +119,16 @@ def compute_directional_transmissibility(
 
     if direction == "x":
         k_face = harmonic_average(values[:, :, :-1], values[:, :, 1:])
-        return k_face * grid.dy * grid.dz / (float(mu) * grid.dx)
+        dist = grid.center_distances_i()[None, None, :]
+        return k_face * grid.x_face_areas() / (float(mu) * dist)
     if direction == "y":
         k_face = harmonic_average(values[:, :-1, :], values[:, 1:, :])
-        return k_face * grid.dx * grid.dz / (float(mu) * grid.dy)
+        dist = grid.center_distances_j()[None, :, None]
+        return k_face * grid.y_face_areas() / (float(mu) * dist)
     if direction == "z":
         k_face = harmonic_average(values[:-1, :, :], values[1:, :, :])
-        return k_face * grid.dx * grid.dy / (float(mu) * grid.dz)
+        dist = grid.center_distances_k()[:, None, None]
+        return k_face * grid.z_face_areas() / (float(mu) * dist)
 
     raise ValueError("direction must be one of 'x', 'y', or 'z'")
 

@@ -17,7 +17,7 @@
 
 | 领域 | 范围 | 证据 | 边界说明 |
 |------|------|------|----------|
-| 核心网格与场模型 | 结构化笛卡尔网格、场容器、单位、井记录 | `tests/test_core_grid.py`、`tests/test_core_field.py`、`tests/test_units.py`、`tests/test_wells.py` | 仅结构化网格范围。 |
+| 核心网格与场模型 | 结构化正交网格（均匀或轴向非均匀间距）、场容器、单位、井记录 | `tests/test_core_grid.py`、`tests/test_core_grid_tensor.py`、`tests/test_core_field.py`、`tests/test_units.py`、`tests/test_wells.py`、`tests/test_structured_deck.py` | 正交网格；无角点（corner-point）几何。 |
 | 饱和度反演 | Archie 与多信号反演工具 | `tests/test_saturation_inversion_hardening.py`、`accuracy_reports/saturation_inversion_benchmark_summary.*` | 电磁/声学路径仍为经验模型。 |
 | 压力重建 | TPFA 压力求解、井源项、边界工具、求解器统计 | `tests/test_pressure_solver_benchmark_hardening.py`、`tests/test_pressure_solver_enhancement.py`、`accuracy_reports/pressure_solver_*summary.*` | 无有限元求解器与工业井模型。 |
 | 达西通量与速度 | 面通量、速度诊断、传导率辅助 | `tests/test_velocity.py`、`tests/test_transmissibility.py`、压力基准报告 | 仅结构化网格达西流。 |

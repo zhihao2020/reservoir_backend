@@ -31,7 +31,7 @@ def compute_cfl_number(
         + np.abs(fz[:-1, :, :])
         + np.abs(fz[1:, :, :])
     )
-    pore_volume = phi_values * grid.cell_volume
+    pore_volume = phi_values * grid.cell_volumes
     cfl_field = float(dt) * connected_flux / pore_volume
     has_nan = bool(np.isnan(cfl_field).any())
     has_inf = bool(np.isinf(cfl_field).any())
@@ -97,7 +97,7 @@ def estimate_stable_dt(
         + np.abs(fz[:-1, :, :])
         + np.abs(fz[1:, :, :])
     )
-    max_ratio = float(np.max(connected_flux / (phi_values * grid.cell_volume)))
+    max_ratio = float(np.max(connected_flux / (phi_values * grid.cell_volumes)))
     if max_ratio == 0.0:
         return float(np.inf)
     return max_allowed / max_ratio

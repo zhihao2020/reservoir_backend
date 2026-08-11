@@ -131,8 +131,17 @@ def validate_case_config(config: dict[str, Any]) -> None:
     for key in ["nx", "ny", "nz"]:
         if int(grid[key]) <= 1:
             raise InvalidPhysicalValueError(f"grid.{key} must be > 1")
-    for key in ["dx", "dy", "dz"]:
-        if float(grid[key]) <= 0.0:
+    counts = {"dx": int(grid["nx"]), "dy": int(grid["ny"]), "dz": int(grid["nz"])}
+    for key, count in counts.items():
+        raw = grid[key]
+        if isinstance(raw, (list, tuple)):
+            if len(raw) != count:
+                raise InvalidPhysicalValueError(
+                    f"grid.{key} list length must equal grid cell count {count}"
+                )
+            if any(float(v) <= 0.0 for v in raw):
+                raise InvalidPhysicalValueError(f"grid.{key} entries must be > 0")
+        elif float(raw) <= 0.0:
             raise InvalidPhysicalValueError(f"grid.{key} must be > 0")
 
     if not 0.0 < float(config["rock"]["porosity"]) < 1.0:

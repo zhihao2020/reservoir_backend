@@ -67,8 +67,10 @@ def solve_steady_state_pressure_1d(
             matrix[i, i + 1] -= transmissibility
             matrix[i + 1, i] -= transmissibility
 
-    left_t = 2.0 * kx_values[0, 0, 0] * grid.dy * grid.dz / (float(mu) * grid.dx)
-    right_t = 2.0 * kx_values[0, 0, -1] * grid.dy * grid.dz / (float(mu) * grid.dx)
+    left_t = _half_cell_transmissibility(grid, kx_values[0, 0, 0], float(mu), axis="x", i=0, j=0, k=0)
+    right_t = _half_cell_transmissibility(
+        grid, kx_values[0, 0, -1], float(mu), axis="x", i=grid.nx - 1, j=0, k=0
+    )
     matrix[0, 0] += left_t
     matrix[-1, -1] += right_t
     rhs[0] += left_t * left_pressure
@@ -365,11 +367,8 @@ def compute_hydrostatic_pressure(
     if not np.isfinite(datum_depth):
         raise ValueError("datum_depth must be finite")
 
-    values = np.empty(grid.shape, dtype=float)
-    for k in range(grid.nz):
-        depth = datum_depth + (k + 0.5) * grid.dz
-        values[k, :, :] = datum_pressure + density * gravity * depth
-
+    centers = grid.cell_centers()
+    values = datum_pressure + density * gravity * (datum_depth + centers[..., 2])
     return Field3D(grid=grid, values=values, name="pressure", unit="Pa")
 
 
@@ -413,6 +412,34 @@ def _add_internal_face(matrix, cell_a: int, cell_b: int, transmissibility: float
     matrix[cell_b, cell_a] -= transmissibility
 
 
+def _half_cell_transmissibility(
+    grid: Grid3D,
+    permeability: float,
+    mu: float,
+    *,
+    axis: str,
+    i: int,
+    j: int,
+    k: int,
+) -> float:
+    """Geometric half-cell face transmissibility for a Dirichlet boundary."""
+    si = grid.spacing_i
+    sj = grid.spacing_j
+    sk = grid.spacing_k
+    if axis == "x":
+        area = float(sj[j] * sk[k])
+        length = float(si[i])
+    elif axis == "y":
+        area = float(si[i] * sk[k])
+        length = float(sj[j])
+    elif axis == "z":
+        area = float(si[i] * sj[j])
+        length = float(sk[k])
+    else:
+        raise ValueError("axis must be one of 'x', 'y', or 'z'")
+    return 2.0 * float(permeability) * area / (float(mu) * length)
+
+
 def _apply_2d_dirichlet_boundaries(
     matrix,
     rhs: NDArray[np.float64],
@@ -425,28 +452,36 @@ def _apply_2d_dirichlet_boundaries(
     if "left" in boundaries:
         for j in range(grid.ny):
             cell = grid.index(0, j, 0)
-            transmissibility = 2.0 * kx_values[0, j, 0] * grid.dy * grid.dz / (mu * grid.dx)
+            transmissibility = _half_cell_transmissibility(
+                grid, kx_values[0, j, 0], mu, axis="x", i=0, j=j, k=0
+            )
             matrix[cell, cell] += transmissibility
             rhs[cell] += transmissibility * boundaries["left"]
 
     if "right" in boundaries:
         for j in range(grid.ny):
             cell = grid.index(grid.nx - 1, j, 0)
-            transmissibility = 2.0 * kx_values[0, j, -1] * grid.dy * grid.dz / (mu * grid.dx)
+            transmissibility = _half_cell_transmissibility(
+                grid, kx_values[0, j, -1], mu, axis="x", i=grid.nx - 1, j=j, k=0
+            )
             matrix[cell, cell] += transmissibility
             rhs[cell] += transmissibility * boundaries["right"]
 
     if "bottom" in boundaries:
         for i in range(grid.nx):
             cell = grid.index(i, 0, 0)
-            transmissibility = 2.0 * ky_values[0, 0, i] * grid.dx * grid.dz / (mu * grid.dy)
+            transmissibility = _half_cell_transmissibility(
+                grid, ky_values[0, 0, i], mu, axis="y", i=i, j=0, k=0
+            )
             matrix[cell, cell] += transmissibility
             rhs[cell] += transmissibility * boundaries["bottom"]
 
     if "top" in boundaries:
         for i in range(grid.nx):
             cell = grid.index(i, grid.ny - 1, 0)
-            transmissibility = 2.0 * ky_values[0, -1, i] * grid.dx * grid.dz / (mu * grid.dy)
+            transmissibility = _half_cell_transmissibility(
+                grid, ky_values[0, -1, i], mu, axis="y", i=i, j=grid.ny - 1, k=0
+            )
             matrix[cell, cell] += transmissibility
             rhs[cell] += transmissibility * boundaries["top"]
 
@@ -462,19 +497,27 @@ def _compute_2d_boundary_outflow(
     outflow = 0.0
     if "left" in boundaries:
         for j in range(grid.ny):
-            transmissibility = 2.0 * kx_values[0, j, 0] * grid.dy * grid.dz / (mu * grid.dx)
+            transmissibility = _half_cell_transmissibility(
+                grid, kx_values[0, j, 0], mu, axis="x", i=0, j=j, k=0
+            )
             outflow += transmissibility * (pressure_values[0, j, 0] - boundaries["left"])
     if "right" in boundaries:
         for j in range(grid.ny):
-            transmissibility = 2.0 * kx_values[0, j, -1] * grid.dy * grid.dz / (mu * grid.dx)
+            transmissibility = _half_cell_transmissibility(
+                grid, kx_values[0, j, -1], mu, axis="x", i=grid.nx - 1, j=j, k=0
+            )
             outflow += transmissibility * (pressure_values[0, j, -1] - boundaries["right"])
     if "bottom" in boundaries:
         for i in range(grid.nx):
-            transmissibility = 2.0 * ky_values[0, 0, i] * grid.dx * grid.dz / (mu * grid.dy)
+            transmissibility = _half_cell_transmissibility(
+                grid, ky_values[0, 0, i], mu, axis="y", i=i, j=0, k=0
+            )
             outflow += transmissibility * (pressure_values[0, 0, i] - boundaries["bottom"])
     if "top" in boundaries:
         for i in range(grid.nx):
-            transmissibility = 2.0 * ky_values[0, -1, i] * grid.dx * grid.dz / (mu * grid.dy)
+            transmissibility = _half_cell_transmissibility(
+                grid, ky_values[0, -1, i], mu, axis="y", i=i, j=grid.ny - 1, k=0
+            )
             outflow += transmissibility * (pressure_values[0, -1, i] - boundaries["top"])
     return float(outflow)
 
@@ -493,7 +536,9 @@ def _apply_3d_dirichlet_boundaries(
         for k in range(grid.nz):
             for j in range(grid.ny):
                 cell = grid.index(0, j, k)
-                transmissibility = 2.0 * kx_values[k, j, 0] * grid.dy * grid.dz / (mu * grid.dx)
+                transmissibility = _half_cell_transmissibility(
+                    grid, kx_values[k, j, 0], mu, axis="x", i=0, j=j, k=k
+                )
                 matrix[cell, cell] += transmissibility
                 rhs[cell] += transmissibility * boundaries["left"]
 
@@ -501,7 +546,9 @@ def _apply_3d_dirichlet_boundaries(
         for k in range(grid.nz):
             for j in range(grid.ny):
                 cell = grid.index(grid.nx - 1, j, k)
-                transmissibility = 2.0 * kx_values[k, j, -1] * grid.dy * grid.dz / (mu * grid.dx)
+                transmissibility = _half_cell_transmissibility(
+                    grid, kx_values[k, j, -1], mu, axis="x", i=grid.nx - 1, j=j, k=k
+                )
                 matrix[cell, cell] += transmissibility
                 rhs[cell] += transmissibility * boundaries["right"]
 
@@ -509,7 +556,9 @@ def _apply_3d_dirichlet_boundaries(
         for k in range(grid.nz):
             for i in range(grid.nx):
                 cell = grid.index(i, 0, k)
-                transmissibility = 2.0 * ky_values[k, 0, i] * grid.dx * grid.dz / (mu * grid.dy)
+                transmissibility = _half_cell_transmissibility(
+                    grid, ky_values[k, 0, i], mu, axis="y", i=i, j=0, k=k
+                )
                 matrix[cell, cell] += transmissibility
                 rhs[cell] += transmissibility * boundaries["front"]
 
@@ -517,7 +566,9 @@ def _apply_3d_dirichlet_boundaries(
         for k in range(grid.nz):
             for i in range(grid.nx):
                 cell = grid.index(i, grid.ny - 1, k)
-                transmissibility = 2.0 * ky_values[k, -1, i] * grid.dx * grid.dz / (mu * grid.dy)
+                transmissibility = _half_cell_transmissibility(
+                    grid, ky_values[k, -1, i], mu, axis="y", i=i, j=grid.ny - 1, k=k
+                )
                 matrix[cell, cell] += transmissibility
                 rhs[cell] += transmissibility * boundaries["back"]
 
@@ -525,7 +576,9 @@ def _apply_3d_dirichlet_boundaries(
         for j in range(grid.ny):
             for i in range(grid.nx):
                 cell = grid.index(i, j, 0)
-                transmissibility = 2.0 * kz_values[0, j, i] * grid.dx * grid.dy / (mu * grid.dz)
+                transmissibility = _half_cell_transmissibility(
+                    grid, kz_values[0, j, i], mu, axis="z", i=i, j=j, k=0
+                )
                 matrix[cell, cell] += transmissibility
                 rhs[cell] += transmissibility * boundaries["bottom"]
 
@@ -533,7 +586,9 @@ def _apply_3d_dirichlet_boundaries(
         for j in range(grid.ny):
             for i in range(grid.nx):
                 cell = grid.index(i, j, grid.nz - 1)
-                transmissibility = 2.0 * kz_values[-1, j, i] * grid.dx * grid.dy / (mu * grid.dz)
+                transmissibility = _half_cell_transmissibility(
+                    grid, kz_values[-1, j, i], mu, axis="z", i=i, j=j, k=grid.nz - 1
+                )
                 matrix[cell, cell] += transmissibility
                 rhs[cell] += transmissibility * boundaries["top"]
 
@@ -551,32 +606,44 @@ def _compute_3d_boundary_outflow(
     if "left" in boundaries:
         for k in range(grid.nz):
             for j in range(grid.ny):
-                transmissibility = 2.0 * kx_values[k, j, 0] * grid.dy * grid.dz / (mu * grid.dx)
+                transmissibility = _half_cell_transmissibility(
+                    grid, kx_values[k, j, 0], mu, axis="x", i=0, j=j, k=k
+                )
                 outflow += transmissibility * (pressure_values[k, j, 0] - boundaries["left"])
     if "right" in boundaries:
         for k in range(grid.nz):
             for j in range(grid.ny):
-                transmissibility = 2.0 * kx_values[k, j, -1] * grid.dy * grid.dz / (mu * grid.dx)
+                transmissibility = _half_cell_transmissibility(
+                    grid, kx_values[k, j, -1], mu, axis="x", i=grid.nx - 1, j=j, k=k
+                )
                 outflow += transmissibility * (pressure_values[k, j, -1] - boundaries["right"])
     if "front" in boundaries:
         for k in range(grid.nz):
             for i in range(grid.nx):
-                transmissibility = 2.0 * ky_values[k, 0, i] * grid.dx * grid.dz / (mu * grid.dy)
+                transmissibility = _half_cell_transmissibility(
+                    grid, ky_values[k, 0, i], mu, axis="y", i=i, j=0, k=k
+                )
                 outflow += transmissibility * (pressure_values[k, 0, i] - boundaries["front"])
     if "back" in boundaries:
         for k in range(grid.nz):
             for i in range(grid.nx):
-                transmissibility = 2.0 * ky_values[k, -1, i] * grid.dx * grid.dz / (mu * grid.dy)
+                transmissibility = _half_cell_transmissibility(
+                    grid, ky_values[k, -1, i], mu, axis="y", i=i, j=grid.ny - 1, k=k
+                )
                 outflow += transmissibility * (pressure_values[k, -1, i] - boundaries["back"])
     if "bottom" in boundaries:
         for j in range(grid.ny):
             for i in range(grid.nx):
-                transmissibility = 2.0 * kz_values[0, j, i] * grid.dx * grid.dy / (mu * grid.dz)
+                transmissibility = _half_cell_transmissibility(
+                    grid, kz_values[0, j, i], mu, axis="z", i=i, j=j, k=0
+                )
                 outflow += transmissibility * (pressure_values[0, j, i] - boundaries["bottom"])
     if "top" in boundaries:
         for j in range(grid.ny):
             for i in range(grid.nx):
-                transmissibility = 2.0 * kz_values[-1, j, i] * grid.dx * grid.dy / (mu * grid.dz)
+                transmissibility = _half_cell_transmissibility(
+                    grid, kz_values[-1, j, i], mu, axis="z", i=i, j=j, k=grid.nz - 1
+                )
                 outflow += transmissibility * (pressure_values[-1, j, i] - boundaries["top"])
     return float(outflow)
 

@@ -79,7 +79,8 @@ def compute_gravity_fluxes(
     sign = -1.0 if params["gravity"]["depth_positive"] == "down" else 1.0
 
     if grid.nz > 1 and params["gravity"]["depth_axis"] == "z":
-        t_abs = harmonic_average(kz_values[:-1, :, :], kz_values[1:, :, :]) * grid.dx * grid.dy / grid.dz
+        dist = grid.center_distances_k()[:, None, None]
+        t_abs = harmonic_average(kz_values[:-1, :, :], kz_values[1:, :, :]) * grid.z_face_areas() / dist
         m_face = harmonic_average(mobility_values[:-1, :, :], mobility_values[1:, :, :])
         flux_z[1:-1, :, :] = (
             sign
@@ -87,7 +88,7 @@ def compute_gravity_fluxes(
             * m_face
             * density_difference
             * params["gravity"]["g"]
-            * grid.dz
+            * dist
         )
 
     report = _build_report(params["gravity"], flux_x, flux_y, flux_z, mobility_values)

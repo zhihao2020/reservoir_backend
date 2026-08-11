@@ -24,6 +24,8 @@
 运行时输出目录（通常被 git 忽略）：`results/`、`validation_reports/`、`profiling_reports/`。  
 注意：根目录 `results/` **仅存放案例运行产物**；结果契约源码在 `reservoir_backend/results/`，二者不要混放。
 
+开源参考材料以 **git submodule** 放在 `references/upstream/`（只读 deck/示例）。**禁止** `import` 上游代码；仅用 `pathlib` 或 `load_structured_deck` 读文件。详见 [../references/README.md](../references/README.md)。
+
 ## 包内模块
 
 | 模块 | 路径 | 职责 |
@@ -41,7 +43,7 @@
 | project | `reservoir_backend/project/` | 项目/案例/运行文件注册 |
 | schedule | `reservoir_backend/schedule/` | 多井调度模型 v0 |
 | history_matching | `reservoir_backend/history_matching/` | 合成孪生历史拟合原型 |
-| io | `reservoir_backend/io/` | 配置加载、结果管理、写入器 |
+| io | `reservoir_backend/io/` | 配置加载、结果管理、写入器、自研结构化 deck 子集读取 |
 | api | `reservoir_backend/api/` | UDP 最小实现与预留 REST 门面 |
 | cli | `reservoir_backend/cli/` | YAML 驱动案例运行器 |
 | performance | `reservoir_backend/performance/` | 性能分析器与基线报告 |

@@ -6,9 +6,14 @@ in the repository. Service and data-interface scope is summarized in
 
 ## Grid and Field Representation
 
-The backend uses structured Cartesian grids with cell-centered unknowns.
+The backend uses structured orthogonal grids with cell-centered unknowns.
 `reservoir_backend/core/grid.py` defines `Grid3D`, and
 `reservoir_backend/core/field.py` defines `Field3D`.
+
+Spacing may be uniform scalars or per-axis positive vectors (`spacing_i`,
+`spacing_j`, `spacing_k`). Non-uniform axes use TPFA center-to-center distances
+`0.5 * (Δ_i + Δ_{i+1})` and face areas from the transverse spacing. Corner-point
+geometry is out of scope.
 
 Face flux arrays follow finite-volume shapes:
 

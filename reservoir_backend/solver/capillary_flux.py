@@ -71,13 +71,19 @@ def compute_absolute_transmissibility_between_cells(
 
     if di != 0:
         values = _field_values(grid, kx, "permeability")
-        return float(harmonic_average(values[ka, ja, ia], values[kb, jb, ib])) * grid.dy * grid.dz / grid.dx
+        area = float(grid.spacing_j[ja] * grid.spacing_k[ka])
+        dist = float(grid.center_distances_i()[min(ia, ib)])
+        return float(harmonic_average(values[ka, ja, ia], values[kb, jb, ib])) * area / dist
     if dj != 0:
         values = _field_values(grid, ky, "permeability")
-        return float(harmonic_average(values[ka, ja, ia], values[kb, jb, ib])) * grid.dx * grid.dz / grid.dy
+        area = float(grid.spacing_i[ia] * grid.spacing_k[ka])
+        dist = float(grid.center_distances_j()[min(ja, jb)])
+        return float(harmonic_average(values[ka, ja, ia], values[kb, jb, ib])) * area / dist
 
     values = _field_values(grid, kz, "permeability")
-    return float(harmonic_average(values[ka, ja, ia], values[kb, jb, ib])) * grid.dx * grid.dy / grid.dz
+    area = float(grid.spacing_i[ia] * grid.spacing_j[ja])
+    dist = float(grid.center_distances_k()[min(ka, kb)])
+    return float(harmonic_average(values[ka, ja, ia], values[kb, jb, ib])) * area / dist
 
 
 def compute_capillary_fluxes(
@@ -111,15 +117,18 @@ def compute_capillary_fluxes(
     kz_values = _field_values(grid, kz, "permeability")
 
     if grid.nx > 1:
-        t_abs = harmonic_average(kx_values[:, :, :-1], kx_values[:, :, 1:]) * grid.dy * grid.dz / grid.dx
+        dist = grid.center_distances_i()[None, None, :]
+        t_abs = harmonic_average(kx_values[:, :, :-1], kx_values[:, :, 1:]) * grid.x_face_areas() / dist
         m_face = harmonic_average(mobility_values[:, :, :-1], mobility_values[:, :, 1:])
         flux_x[:, :, 1:-1] = t_abs * m_face * (pc_values[:, :, 1:] - pc_values[:, :, :-1])
     if grid.ny > 1:
-        t_abs = harmonic_average(ky_values[:, :-1, :], ky_values[:, 1:, :]) * grid.dx * grid.dz / grid.dy
+        dist = grid.center_distances_j()[None, :, None]
+        t_abs = harmonic_average(ky_values[:, :-1, :], ky_values[:, 1:, :]) * grid.y_face_areas() / dist
         m_face = harmonic_average(mobility_values[:, :-1, :], mobility_values[:, 1:, :])
         flux_y[:, 1:-1, :] = t_abs * m_face * (pc_values[:, 1:, :] - pc_values[:, :-1, :])
     if grid.nz > 1:
-        t_abs = harmonic_average(kz_values[:-1, :, :], kz_values[1:, :, :]) * grid.dx * grid.dy / grid.dz
+        dist = grid.center_distances_k()[:, None, None]
+        t_abs = harmonic_average(kz_values[:-1, :, :], kz_values[1:, :, :]) * grid.z_face_areas() / dist
         m_face = harmonic_average(mobility_values[:-1, :, :], mobility_values[1:, :, :])
         flux_z[1:-1, :, :] = t_abs * m_face * (pc_values[1:, :, :] - pc_values[:-1, :, :])
 

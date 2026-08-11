@@ -5,11 +5,15 @@ benchmark suite. The project stores extracted metadata and small adapted arrays
 under `references/fixtures/`; benchmark runners read those fixtures only.
 
 No runtime dependency on OPM or MRST.
+No Python `import` of code under `references/upstream/**`.
 No exact full reproduction claim.
 No OPM Flow equivalence.
 No MRST integration.
 No commercial simulator equivalence.
 No black-oil validation.
+
+Upstream trees are git submodules (`git submodule update --init --depth 1`).
+See `references/README.md`.
 
 ## OPM water-1ph
 

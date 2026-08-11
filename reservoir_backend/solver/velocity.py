@@ -75,9 +75,10 @@ def compute_face_fluxes(
 def compute_cell_center_velocity(grid: Grid3D, face_fluxes: FaceFluxes) -> tuple[Field3D, Field3D, Field3D]:
     """Compute cell-centered velocity fields by averaging adjacent face fluxes."""
     _validate_flux_shapes(grid, face_fluxes)
-    area_x = grid.dy * grid.dz
-    area_y = grid.dx * grid.dz
-    area_z = grid.dx * grid.dy
+    # Cell-face cross-sectional areas for converting face rates to velocities.
+    area_x = grid.spacing_j[None, :, None] * grid.spacing_k[:, None, None]
+    area_y = grid.spacing_i[None, None, :] * grid.spacing_k[:, None, None]
+    area_z = grid.spacing_i[None, None, :] * grid.spacing_j[None, :, None]
 
     vx = 0.5 * (face_fluxes.flux_x[:, :, :-1] + face_fluxes.flux_x[:, :, 1:]) / area_x
     vy = 0.5 * (face_fluxes.flux_y[:, :-1, :] + face_fluxes.flux_y[:, 1:, :]) / area_y

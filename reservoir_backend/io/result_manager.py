@@ -97,6 +97,11 @@ def save_field_npz(field: Field3D, path: str | Path) -> Path:
     """Save a `Field3D` and grid metadata to a compressed NPZ file."""
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
+    def _spacing_payload(value: float | np.ndarray) -> float | list[float]:
+        if isinstance(value, np.ndarray):
+            return [float(v) for v in value.tolist()]
+        return float(value)
+
     metadata = {
         "name": field.name,
         "unit": field.unit,
@@ -104,9 +109,10 @@ def save_field_npz(field: Field3D, path: str | Path) -> Path:
             "nx": field.grid.nx,
             "ny": field.grid.ny,
             "nz": field.grid.nz,
-            "dx": field.grid.dx,
-            "dy": field.grid.dy,
-            "dz": field.grid.dz,
+            "dx": _spacing_payload(field.grid.dx if field.grid.is_uniform else field.grid.spacing_i),
+            "dy": _spacing_payload(field.grid.dy if field.grid.is_uniform else field.grid.spacing_j),
+            "dz": _spacing_payload(field.grid.dz if field.grid.is_uniform else field.grid.spacing_k),
+            "is_uniform": field.grid.is_uniform,
         },
         "has_confidence": field.confidence is not None,
     }
@@ -129,9 +135,9 @@ def load_field_npz(path: str | Path) -> Field3D:
             nx=int(grid_meta["nx"]),
             ny=int(grid_meta["ny"]),
             nz=int(grid_meta["nz"]),
-            dx=float(grid_meta["dx"]),
-            dy=float(grid_meta["dy"]),
-            dz=float(grid_meta["dz"]),
+            dx=grid_meta["dx"],
+            dy=grid_meta["dy"],
+            dz=grid_meta["dz"],
         )
         confidence = data["confidence"] if metadata["has_confidence"] else None
         return Field3D(

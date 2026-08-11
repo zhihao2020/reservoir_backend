@@ -84,18 +84,8 @@ def _validate_points(points: ArrayLike, values: ArrayLike) -> tuple[NDArray[np.f
 
 def _point_to_ijk(grid: Grid3D, point: NDArray[np.float64]) -> tuple[int, int, int]:
     x, y, z = point
-    if x < 0.0 or y < 0.0 or z < 0.0 or x >= grid.nx * grid.dx or y >= grid.ny * grid.dy or z >= grid.nz * grid.dz:
-        raise InvalidPhysicalValueError("point lies outside grid domain")
-    i = min(int(x / grid.dx), grid.nx - 1)
-    j = min(int(y / grid.dy), grid.ny - 1)
-    k = min(int(z / grid.dz), grid.nz - 1)
-    return i, j, k
+    return grid.locate_cell(float(x), float(y), float(z))
 
 
 def _cell_centers(grid: Grid3D) -> NDArray[np.float64]:
-    centers = np.empty(grid.shape + (3,), dtype=float)
-    for k in range(grid.nz):
-        for j in range(grid.ny):
-            for i in range(grid.nx):
-                centers[k, j, i] = ((i + 0.5) * grid.dx, (j + 0.5) * grid.dy, (k + 0.5) * grid.dz)
-    return centers
+    return grid.cell_centers()
