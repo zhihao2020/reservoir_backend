@@ -80,24 +80,30 @@ def run_time_series(
                 ne=int(esmda_ne),
                 n_assimilations=int(esmda_assimilations),
                 k_mean=k_mean,
-                logk_std=1.0,
-                corr_len_cells=3.0,
+                logk_std=1.2,
+                corr_len_cells=max(2.0, float(np.mean(mesh.grid.shape)) * 0.35),
                 porosity_prior=float(np.mean(np.asarray(porosity_prior, dtype=float))),
                 viscosity_pa_s=viscosity_pa_s,
                 n_k_iterations=1,
                 seed=11,
+                auto_localize=True,
             )
             k_prior0 = es.k_mean
             esmda_notes = [
                 f"pre-series ES-MDA k assimilate (ne={esmda_ne}, "
                 f"Na={esmda_assimilations}, n_times={len(es_samples)})",
-                *es.notes[-3:],
+                *es.notes[-4:],
             ]
         except Exception as exc:
             esmda_notes = [f"ES-MDA skipped ({exc}); plain time series"]
 
     history: list[FieldBundle] = []
     prev: FieldBundle | None = None
+    k_esmda = (
+        np.asarray(k_prior0, dtype=float)
+        if assimilate_k and isinstance(k_prior0, np.ndarray)
+        else None
+    )
     for sample in samples:
         dt = None
         if prev is not None:
@@ -108,7 +114,11 @@ def run_time_series(
             k_prior: float | NDArray[np.float64] = k_prior0
             phi_prior: float | NDArray[np.float64] = phi_prior0
         else:
-            k_prior = prev.permeability
+            # keep a fraction of ES-MDA structure alive across times
+            if k_esmda is not None:
+                k_prior = 0.45 * k_esmda + 0.55 * prev.permeability
+            else:
+                k_prior = prev.permeability
             phi_prior = prev.porosity
         bundle = run_time_slice(
             mesh,
@@ -132,11 +142,14 @@ def run_time_series(
                 + esmda_notes
                 + list(bundle.notes)
             )
-        # when ES-MDA k available, mildly anchor first slices to ensemble mean
-        if assimilate_k and isinstance(k_prior0, np.ndarray) and prev is None:
-            bundle.permeability = 0.6 * np.asarray(k_prior0, dtype=float) + 0.4 * bundle.permeability
+        # anchor every slice to ES-MDA mean (stronger early, milder later)
+        if k_esmda is not None:
+            w = 0.55 if prev is None else 0.35
+            bundle.permeability = (
+                w * k_esmda + (1.0 - w) * np.asarray(bundle.permeability, dtype=float)
+            )
             bundle.permeability = np.clip(bundle.permeability, 1.0e-18, 1.0e-10)
-            bundle.notes = list(bundle.notes) + ["k blended with ES-MDA prior (t0)"]
+            bundle.notes = list(bundle.notes) + [f"k blended with ES-MDA prior (w={w})"]
         history.append(bundle)
         prev = bundle
     return history

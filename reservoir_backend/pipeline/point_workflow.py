@@ -338,7 +338,11 @@ def run_point_first_slice(
             and dt is not None
             and float(dt) > 0.0
         ):
-            sw_init = 0.5 * previous.sw + 0.5 * sw
+            sw_recon = sw.copy()
+            n_s_hard = len(sample_s.well_saturation)
+            # more saturation sensors → trust reconstruction more vs pure transport
+            recon_w = float(min(0.70, 0.20 + 0.10 * n_s_hard))
+            sw_init = (0.45 * previous.sw + 0.55 * sw_recon)
             sw_t, t_notes = transport_water_saturation(
                 mesh,
                 sw_init,
@@ -348,9 +352,13 @@ def run_point_first_slice(
                 porosity=phi_work,
                 viscosity_pa_s=viscosity_pa_s,
                 dt=float(dt),
-                n_substeps=8,
+                n_substeps=max(8, min(20, 6 + n_s_hard)),
             )
-            sw, so, sg = phases_from_sw(sw_t, sample=sample_s, mesh=mesh)
+            sw_blend = recon_w * sw_recon + (1.0 - recon_w) * sw_t
+            sw, so, sg = phases_from_sw(sw_blend, sample=sample_s, mesh=mesh)
+            t_notes = list(t_notes) + [
+                f"transport blended with sat-recon (recon_w={recon_w:.2f}, n_s={n_s_hard})"
+            ]
 
         # complementary fill is automatic: observer_s cells have p from pressure field;
         # observer_p cells have S from saturation field.

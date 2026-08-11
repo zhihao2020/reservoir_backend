@@ -18,6 +18,7 @@ from reservoir_backend.pipeline.ensemble_math import (
     normalize_alpha_weights,
     well_parameter_localization,
 )
+from reservoir_backend.pipeline.pressure_field import _rate_wells_from_sample
 from reservoir_backend.pipeline.run import run_time_slice
 from reservoir_backend.pipeline.state import FieldBundle, MeshBundle, SensorSample
 from reservoir_backend.solver.pressure_solver import solve_steady_state_pressure_3d
@@ -81,12 +82,16 @@ def run_esmda_permeability(
     n_k_iterations: int = 1,
     localization_radius_m: float | None = None,
     ensemble_inflation: float = 1.02,
+    auto_localize: bool = True,
 ) -> ESMdaResult:
-    """Multi-time ES-MDA on ``log(k)`` using well pressure as soft data.
+    """Multi-time ES-MDA on ``log(k)`` using pressure hard data as soft obs.
 
-    Forward map: TPFA with **face boundary Dirichlet only** (well cells free),
-    so permeability influences predicted well BHP. Alpha weights satisfy
-    ``sum 1/alpha_i = 1`` (Emerick & Reynolds).
+    Forward map: TPFA with face Dirichlet + **rate wells** (no cell Dirichlet on
+    sensors), so permeability influences predicted BHP/probe pressures.
+    Alpha weights satisfy ``sum 1/alpha_i = 1`` (Emerick & Reynolds).
+
+    Observations include injectors, producers, and ``observer_p`` entries present
+    in ``sample.well_pressure``.
     """
     if not samples:
         raise ValueError("samples must not be empty")
@@ -106,11 +111,9 @@ def run_esmda_permeability(
     notes = [
         f"ES-MDA ne={ne} Na={na} alpha={alphas.tolist()}",
         f"prior k_mean={k_mean:.3e} logk_std={logk_std}",
-        "forward operator: boundary Dirichlet only (soft well BHP)",
+        "forward: boundary Dirichlet + rate wells; soft pressure at sensors",
         "practice sources: Emerick&Reynolds2013; alpha norm / R-precond / inflation",
     ]
-    if localization_radius_m is not None:
-        notes.append(f"Gaspari-Cohn localization radius_m={localization_radius_m}")
 
     rmse_hist: list[float] = []
     rng = np.random.default_rng(seed + 7)
@@ -118,16 +121,25 @@ def run_esmda_permeability(
     if not well_names:
         raise ValueError("no wells on mesh for ES-MDA observations")
 
+    # default localization: ~0.4 of domain diagonal (helps multi-probe updates)
+    loc_r = localization_radius_m
+    if loc_r is None and auto_localize:
+        dx = float(np.ptp(mesh.x)) if mesh.n_cells else 0.0
+        dy = float(np.ptp(mesh.y)) if mesh.n_cells else 0.0
+        dz = float(np.ptp(mesh.z)) if mesh.n_cells else 0.0
+        diag = float(np.sqrt(dx * dx + dy * dy + dz * dz))
+        loc_r = max(diag * 0.40, 1.0)
     md_loc = None
-    if localization_radius_m is not None and float(localization_radius_m) > 0.0:
+    if loc_r is not None and float(loc_r) > 0.0:
         mesh_xyz = np.column_stack([mesh.x, mesh.y, mesh.z])
         well_xyz = []
         for name in well_names:
             c = mesh.well_cell_id[name]
             well_xyz.append([mesh.x[c], mesh.y[c], mesh.z[c]])
         md_loc = well_parameter_localization(
-            mesh_xyz, np.asarray(well_xyz, dtype=float), float(localization_radius_m)
+            mesh_xyz, np.asarray(well_xyz, dtype=float), float(loc_r)
         )
+        notes.append(f"Gaspari-Cohn localization radius_m={float(loc_r):.3g}")
 
     shape = mesh.grid.shape
     n_m = int(np.prod(shape))
@@ -214,7 +226,7 @@ def _forward_pressure_no_well_dirichlet(
     permeability_m2: float | NDArray[np.float64],
     viscosity_pa_s: float,
 ) -> NDArray[np.float64]:
-    """TPFA pressure using face BC only — well cells remain free unknowns."""
+    """TPFA pressure: face BC + rate sources; sensor cells free (soft obs)."""
     grid = mesh.grid
     boundaries = {
         key: float(value)
@@ -222,6 +234,7 @@ def _forward_pressure_no_well_dirichlet(
         if key in {"left", "right", "front", "back", "bottom", "top"}
     }
     ref = float(next(iter(sample.well_pressure.values()), 0.0))
+    rate_wells = _rate_wells_from_sample(mesh, sample)
     result = solve_steady_state_pressure_3d(
         grid=grid,
         kx=permeability_m2,
@@ -229,7 +242,7 @@ def _forward_pressure_no_well_dirichlet(
         kz=permeability_m2,
         mu=viscosity_pa_s,
         dirichlet_boundaries=boundaries or None,
-        wells=None,
+        wells=rate_wells or None,
         reference_pressure=ref,
         cell_dirichlet=None,
     )
@@ -237,7 +250,20 @@ def _forward_pressure_no_well_dirichlet(
 
 
 def _ordered_well_names(mesh: MeshBundle, sample: SensorSample) -> list[str]:
-    return [n for n in sample.well_pressure if n in mesh.well_cell_id]
+    """Pressure observation names: any hard p on mesh (wells + observer_p)."""
+    names = [n for n in sample.well_pressure if n in mesh.well_cell_id]
+    # stable order: injectors/producers first, then probes
+    def _key(n: str) -> tuple[int, str]:
+        r = mesh.well_role.get(n, "")
+        if r == "injector":
+            return (0, n)
+        if r == "producer":
+            return (1, n)
+        if r == "observer_p":
+            return (2, n)
+        return (3, n)
+
+    return sorted(names, key=_key)
 
 
 def _sample_well_pressures(

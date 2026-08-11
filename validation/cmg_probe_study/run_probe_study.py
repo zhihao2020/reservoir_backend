@@ -281,11 +281,11 @@ def run_one(
         permeability_prior_m2=k_prior,
         porosity_prior=0.3,
         viscosity_pa_s=1.0e-3,
-        n_k_iterations=2,
+        n_k_iterations=3 if (n_p + n_s) >= 4 else 2,
         assimilate_k=use_esmda,
-        esmda_ne=12,
-        esmda_assimilations=3,
-        esmda_max_times=4,
+        esmda_ne=16,
+        esmda_assimilations=4,
+        esmda_max_times=5,
     )
     last = history[-1]
     t_last, sw_cmg = sw_series[-1]
