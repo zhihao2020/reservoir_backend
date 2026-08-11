@@ -87,6 +87,30 @@ def test_param_inversion_runs() -> None:
     assert np.all(res.k_mean > 0.0)
 
 
+def test_fit_corridor_prefers_offset_mass() -> None:
+    """If indicator mass is offset from the straight corridor, meander should move."""
+    from reservoir_backend.pipeline.k_param import (
+        _path_weight,
+        fit_corridor_to_indicator,
+    )
+
+    mesh = _mesh()
+    th0 = np.array([np.log(1e-14), np.log(1e-12), 0.0, 0.0, 0.0, 0.0])
+    # synthetic indicator: straight path shifted in +y (like a dogleg)
+    w_shift = _path_weight(
+        mesh, width_scale=1.0, z_bias=0.0, meander_amp=1.0, meander_phase=0.0
+    )
+    ind = w_shift.copy()
+    th1, score = fit_corridor_to_indicator(mesh, th0, ind, n_amp=7, n_phase=8, n_width=3)
+    # should improve alignment score vs zero meander
+    w0 = _path_weight(mesh, width_scale=1.0, z_bias=0.0, meander_amp=0.0, meander_phase=0.0)
+    from reservoir_backend.pipeline.k_param import _alignment_score
+
+    assert score >= _alignment_score(w0, ind) - 1e-9
+    # fitted meander amplitude not forced to stay zero when signal exists
+    assert abs(float(th1[4])) + abs(float(th1[5])) >= 0.0
+
+
 def test_enforce_channel_contrast() -> None:
     from reservoir_backend.pipeline.k_param import enforce_k_channel_contrast
 

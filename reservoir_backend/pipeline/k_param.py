@@ -171,18 +171,83 @@ def boost_theta_from_indicator(
         meander_phase=float(th[5]),
     )
     ind = np.asarray(indicator, dtype=float)
-    wf, indf = w.ravel(), ind.ravel()
-    if float(np.std(wf)) < 1e-12 or float(np.std(indf)) < 1e-12:
-        return enforce_theta_contrast(th)
-    corr = float(np.corrcoef(wf, indf)[0, 1])
-    if not np.isfinite(corr):
-        corr = 0.0
+    corr = _corr(w, ind)
     # positive alignment → raise channel / slightly lower background
     s = float(strength) * max(corr, 0.0)
     gap = max(float(th[1] - th[0]), 0.5)
     th[1] = th[1] + s * 0.6 * gap
     th[0] = th[0] - s * 0.15 * gap
     return enforce_theta_contrast(th, min_log_ratio=1.5)
+
+
+def fit_corridor_to_indicator(
+    mesh: MeshBundle,
+    theta: NDArray[np.float64],
+    indicator: NDArray[np.float64],
+    *,
+    n_amp: int = 9,
+    n_phase: int = 12,
+    n_width: int = 5,
+) -> tuple[NDArray[np.float64], float]:
+    """Grid-search meander/width so corridor weight aligns with ΔSw indicator.
+
+    Maximizes a blend of Pearson correlation and high-w mean indicator.
+    Does not use CMG truth — only multi-time shape indicator from sensors.
+    """
+    th0 = _clip_theta(np.asarray(theta, dtype=float).ravel().copy())
+    ind = np.asarray(indicator, dtype=float)
+    if float(np.std(ind)) < 1e-12:
+        return th0, 0.0
+
+    best_score = -1.0e30
+    best = th0.copy()
+    amp_grid = np.linspace(-1.35, 1.35, max(3, int(n_amp)))
+    phase_grid = np.linspace(-np.pi, np.pi, max(4, int(n_phase)), endpoint=False)
+    # width: explore around current log_width
+    w0 = float(th0[2])
+    width_grid = np.linspace(w0 - 0.7, w0 + 0.7, max(3, int(n_width)))
+
+    for amp in amp_grid:
+        for ph in phase_grid:
+            for lw in width_grid:
+                th = th0.copy()
+                th[2] = float(lw)
+                th[4] = float(amp)
+                th[5] = float(ph)
+                w = _path_weight(
+                    mesh,
+                    width_scale=float(np.exp(th[2])),
+                    z_bias=float(th[3]),
+                    meander_amp=float(th[4]),
+                    meander_phase=float(th[5]),
+                )
+                score = _alignment_score(w, ind)
+                if score > best_score:
+                    best_score = score
+                    best = th
+
+    return _clip_theta(best), float(best_score)
+
+
+def _alignment_score(weight: NDArray[np.float64], indicator: NDArray[np.float64]) -> float:
+    """Higher when high-indicator mass sits on the corridor."""
+    w = np.asarray(weight, dtype=float)
+    ind = np.asarray(indicator, dtype=float)
+    corr = _corr(w, ind)
+    wsum = float(np.sum(w)) + 1.0e-30
+    high = float(np.sum(ind * w) / wsum)
+    low_m = w <= 0.2
+    low = float(np.mean(ind[low_m])) if np.any(low_m) else float(np.mean(ind))
+    contrast = high - low
+    return 0.55 * corr + 0.45 * contrast
+
+
+def _corr(a: NDArray[np.float64], b: NDArray[np.float64]) -> float:
+    af, bf = np.asarray(a, dtype=float).ravel(), np.asarray(b, dtype=float).ravel()
+    if float(np.std(af)) < 1e-12 or float(np.std(bf)) < 1e-12:
+        return 0.0
+    c = float(np.corrcoef(af, bf)[0, 1])
+    return c if np.isfinite(c) else 0.0
 
 
 def _clip_theta(theta: NDArray[np.float64]) -> NDArray[np.float64]:

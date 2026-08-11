@@ -31,6 +31,7 @@ from reservoir_backend.pipeline.k_param import (
     default_k_param_prior,
     enforce_k_channel_contrast,
     expand_k_from_params,
+    fit_corridor_to_indicator,
     project_k_to_params,
     sample_k_param_ensemble,
 )
@@ -124,19 +125,25 @@ def run_sensor_inversion(
             ind, stats = infer_shape_indicator(
                 mesh, draft, sw_weight=1.8, k_weight=0.05, pressure_weight=0.9
             )
+            # (a) deform corridor (meander/width) to sit on ΔSw footprint
+            theta_mean, align = fit_corridor_to_indicator(
+                mesh, theta_mean, ind, n_amp=9, n_phase=12, n_width=5
+            )
+            # (b) raise contrast when corridor aligns with indicator
             theta_mean = boost_theta_from_indicator(
-                mesh, theta_mean, ind, strength=0.65
+                mesh, theta_mean, ind, strength=0.70
             )
             k_mean = expand_k_from_params(mesh, theta_mean)
-            # light cell boost only upward on high indicator
+            # (c) light upward cell boost only on high indicator
             k_mean = enhance_permeability_from_indicator(
-                k_mean, ind, strength=0.35, asymmetric=True
+                k_mean, ind, strength=0.30, asymmetric=True
             )
             k_mean, theta_mean, ratio = enforce_k_channel_contrast(
                 mesh, k_mean, theta_mean, min_ratio=2.5
             )
             notes.append(
-                f"path-k θ-boost indicator_mean={stats.get('indicator_mean', float('nan')):.3f} "
+                f"corridor-fit align={align:.3f} meander=({theta_mean[4]:.2f},{theta_mean[5]:.2f}) "
+                f"ind_mean={stats.get('indicator_mean', float('nan')):.3f} "
                 f"k_ch/k_mat≈{ratio:.2f}"
             )
 
