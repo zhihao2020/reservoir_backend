@@ -21,6 +21,8 @@
 | 正交指示加密 | MVP | `pipeline.refine_mesh_by_indicator` | 同上 | 高指示区 bbox 全局加密 |
 | 合成通道孪生 | 已验证 | `pipeline.build_channel_twin` | `tests/test_shape_discovery.py` | 已知通道 mask；Dice 软阈值 |
 | CMG 三维通道验证 | MVP | `validation/cmg_channel_3d/` | IMEX Normal Termination + report | `*VARI`+`*DTOP` 起伏山脊；非水平层 |
+| CMG 断层通道验证 | MVP | `validation/cmg_fault_3d/` | IMEX Normal Termination + report | `*FAULT` throw + `*TRANSI` 封闭/窗；狗腿通道 |
+| 合成断层孪生 | MVP | `pipeline.build_faulted_channel_twin` | `tests/test_shape_discovery.py` | 低渗断层带 + 偏移通道 |
 
 ## 排除
 

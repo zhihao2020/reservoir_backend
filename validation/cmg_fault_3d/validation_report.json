@@ -1,0 +1,124 @@
+{
+  "mode": "cmg_fault_geometry",
+  "ok": true,
+  "n_samples": 9,
+  "grid": {
+    "nx": 9,
+    "ny": 9,
+    "nz": 4,
+    "di_ft": 300.0,
+    "dj_ft": 300.0,
+    "dk_ft": [
+      45.0,
+      35.0,
+      25.0,
+      20.0
+    ],
+    "kdir": "DOWN",
+    "k1": "bottom",
+    "grid_type": "CART"
+  },
+  "fault": {
+    "type": "structural_throw_plus_sealing_transmissibility",
+    "plane": "I-face between i=5 and i=6",
+    "throw_ft": 25.0,
+    "trace_ij_ranges": [
+      {
+        "i1": 2,
+        "i2": 2,
+        "j1": 1,
+        "j2": 3
+      },
+      {
+        "i1": 3,
+        "i2": 3,
+        "j1": 1,
+        "j2": 5
+      },
+      {
+        "i1": 4,
+        "i2": 4,
+        "j1": 1,
+        "j2": 7
+      },
+      {
+        "i1": 5,
+        "i2": 5,
+        "j1": 1,
+        "j2": 9
+      },
+      {
+        "i1": 6,
+        "i2": 9,
+        "j1": 1,
+        "j2": 9
+      }
+    ],
+    "seal_j": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "window_j": [
+      7,
+      8,
+      9
+    ],
+    "seal_transi_mult": 0.0,
+    "window_transi_mult": 0.05,
+    "reference_sample": "IMEX TPL geo/mxgeo002.dat (*FAULT) + hrw TRANSI seal pattern"
+  },
+  "sample_times": [
+    1.0,
+    36.46,
+    60.0,
+    161.84,
+    242.0,
+    426.0,
+    607.0,
+    730.0,
+    791.0
+  ],
+  "well_sw_last": {
+    "INJ": 0.694,
+    "PROD": 0.284
+  },
+  "indicator_stats": {
+    "indicator_mean": 0.3469215589768692,
+    "indicator_p90": 0.5158364020150108,
+    "active_fraction_at_0.4": 0.32407407407407407,
+    "max_cum_dsw": 0.72
+  },
+  "refine_stats": {
+    "coarse_cells": 324.0,
+    "fine_cells": 1296.0,
+    "refine_factor": 2.0,
+    "fine_indicator_mean": 0.3469215589768692,
+    "bbox_xmin": 0.0,
+    "bbox_xmax": 822.96,
+    "bbox_ymin": 0.0,
+    "bbox_ymax": 822.96,
+    "bbox_zmin": 0.0,
+    "bbox_zmax": 38.099999999999994
+  },
+  "overlap_discovery_vs_channel": {
+    "dice": 0.5015479876160991,
+    "precision": 0.3432203389830508,
+    "recall": 0.9310344827586207,
+    "intersection": 81.0
+  },
+  "overlap_cmg_dsw_footprint_vs_channel": {
+    "dice": 0.8452380952380952,
+    "precision": 0.8765432098765432,
+    "recall": 0.8160919540229885,
+    "intersection": 71.0
+  },
+  "notes": [
+    "multi-time reconstruction completed",
+    "shape indicator active_fraction=0.324",
+    "refined mesh cells=1296; k_prior=3.851e-14"
+  ]
+}

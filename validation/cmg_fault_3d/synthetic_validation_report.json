@@ -1,0 +1,34 @@
+{
+  "mode": "synthetic_faulted_channel_twin",
+  "indicator_stats": {
+    "indicator_mean": 0.2650036433798872,
+    "indicator_p90": 0.4746153549230126,
+    "active_fraction_at_0.4": 0.23125,
+    "max_cum_dsw": 0.44156249999999997
+  },
+  "refine_stats": {
+    "coarse_cells": 480.0,
+    "fine_cells": 1840.0,
+    "refine_factor": 2.0,
+    "fine_indicator_mean": 0.27004062617600555,
+    "bbox_xmin": 5.0,
+    "bbox_xmax": 120.0,
+    "bbox_ymin": 0.0,
+    "bbox_ymax": 100.0,
+    "bbox_zmin": 0.0,
+    "bbox_zmax": 40.0
+  },
+  "overlap": {
+    "dice": 0.3021148036253776,
+    "precision": 0.18518518518518517,
+    "recall": 0.819672131147541,
+    "intersection": 50.0
+  },
+  "fault_active_fraction": 0.3958333333333333,
+  "notes": [
+    "multi-time reconstruction completed",
+    "shape indicator active_fraction=0.231",
+    "refined mesh cells=1840; k_prior=9.533e-14"
+  ],
+  "fine_cells": 1840
+}

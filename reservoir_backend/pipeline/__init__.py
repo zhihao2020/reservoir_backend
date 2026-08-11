@@ -21,6 +21,7 @@ from reservoir_backend.pipeline.state import (
 from reservoir_backend.pipeline.synthetic_twin import (
     SyntheticTwin,
     build_channel_twin,
+    build_faulted_channel_twin,
     mask_overlap,
 )
 from reservoir_backend.pipeline.time_series import (
@@ -40,6 +41,7 @@ __all__ = [
     "SyntheticTwin",
     "WellPoint",
     "build_channel_twin",
+    "build_faulted_channel_twin",
     "build_mesh",
     "indicator_to_active_mask",
     "infer_shape_indicator",

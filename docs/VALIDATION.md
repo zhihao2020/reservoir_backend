@@ -11,15 +11,17 @@ pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipe
 ## 形态发现 / CMG
 
 ```bash
-# 合成通道孪生
+# 合成：起伏通道 / 断层狗腿通道
 python validation/cmg_channel_3d/run_imex_and_validate.py --synthetic
+python validation/cmg_fault_3d/run_imex_and_validate.py --synthetic
 
-# IMEX 三维通道（需本机 CMG）
+# IMEX（需本机 CMG）
 python validation/cmg_channel_3d/run_imex_and_validate.py --execute
-python validation/cmg_channel_3d/run_imex_and_validate.py --from-out validation/cmg_channel_3d/mxspr006_channel.out
+python validation/cmg_fault_3d/run_imex_and_validate.py --execute
+python validation/cmg_fault_3d/run_imex_and_validate.py --from-out validation/cmg_fault_3d/mxspr006_fault.out
 ```
 
-CMG 用于提供**已知高渗通道的三维正演**；本仓库算法从井点传感器反推形态指标，**不宣称与 IMEX 数值等价**。
+CMG 用于提供**已知高渗通道 / 断层**的三维正演；本仓库算法从井点传感器反推形态指标，**不宣称与 IMEX 数值等价**。
 
 ## 原则
 

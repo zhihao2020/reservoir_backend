@@ -9,7 +9,8 @@
 验证路径：
 
 - 合成通道孪生：`pipeline.build_channel_twin` + `tests/test_shape_discovery.py`
-- CMG IMEX 三维通道：`validation/cmg_channel_3d/`（基例 mxspr006 + 高渗对角通道）
+- CMG IMEX 起伏通道：`validation/cmg_channel_3d/`（`*DTOP` 山脊）
+- CMG IMEX 断层通道：`validation/cmg_fault_3d/`（`*FAULT` + `*TRANSI` 狗腿通道）
 
 ## 排除
 

@@ -64,15 +64,15 @@ print(mask_overlap(disc.active_mask, twin.true_channel_mask))
 
 ## CMG 三维验证
 
-见 [validation/cmg_channel_3d/README.md](validation/cmg_channel_3d/README.md)：
-
-- 基例 IMEX `mxspr006` + 对角高渗通道补丁
-- 本机已跑通 **Normal Termination**
-- 从 `.out` 回灌井点 p/Sw → `run_shape_discovery`，Dice≈0.61
+| 算例 | 文档 | 要点 |
+|------|------|------|
+| 起伏山脊通道 | [validation/cmg_channel_3d](validation/cmg_channel_3d/README.md) | `*VARI` + `*DTOP` 起伏 |
+| 断层 + 偏移通道 | [validation/cmg_fault_3d](validation/cmg_fault_3d/README.md) | `*FAULT` throw + `*TRANSI` 封闭/泄漏窗 |
 
 ```bash
 python validation/cmg_channel_3d/run_imex_and_validate.py --synthetic
-python validation/cmg_channel_3d/run_imex_and_validate.py --execute   # 需 CMG 许可证
+python validation/cmg_fault_3d/run_imex_and_validate.py --synthetic
+python validation/cmg_fault_3d/run_imex_and_validate.py --execute   # 需 CMG 许可证
 ```
 
 ## 文档

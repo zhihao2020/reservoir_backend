@@ -1,0 +1,243 @@
+   ******************************************************************************
+   ** mxgeo002.dat:                Fault Barrier Model                         **                 
+   ******************************************************************************
+   **************************************************************************************
+   **                                                                                  **
+   ** FILE:   MXGEO002.DAT                                                             **
+   **                                                                                  **
+   ** MODEL:  10x10x3               GAS INJECTION                     FAULT BARRIER    **
+   **         FIELD UNIT                                                               **
+   **                                                                                  **        
+   **************************************************************************************
+   **                                                                                  **
+   ** This is a 10x10x3 cartesian grid gas injection problem based on  the  first  SPE **
+   ** Comparative Solution Project (JPT,Jan.,1981). A fault is added to give  a  large **
+   ** permeability contrast in the vertical direction.                                 **          
+   **                                                                                  **
+   **************************************************************************************
+   ** CONTACT:    CMG,   (403)531-1300;   282-6495 (fax);support@cmgl.ca    (Internet) **
+   **************************************************************************************                                
+
+
+   ********************************************************************************
+   **  This data set is based on the First SPE Comparative Solution Project.     **
+   **  (See Odeh & Aziz, "Comparison of solustions to a three-dimensional        **
+   **  black-oil reservoir simulation problem", J.P.T., 33, pp.13-25, 1981(JAN). **
+   **                                                                            **
+   **  This is a 10x10x3 cartesian grid gas injection problem. The gas injector  **
+   **  is located in block (1,1,3), and the producer in block (10,10,1).  There  **
+   **  is a large permeability contrast in the vertical direction.               **
+   **
+   **  The fault is located in grid blocks i = 2 to i = 6
+   **                                      j = 1 to j = 10
+   **                                      k = 1 to k = 10
+   **
+   **            +--+--+--+--+--+--+--+--+--+--+
+   **        10  |              |              |
+   **            +  +  +  +  +--+  +  +  +  +  +
+   **         9  |           |                 |
+   **            +  +  +  +  +  +  +  +  +  +  +
+   **         8  |           |                 |
+   **            +  +  +  +  +  +  +  +  +  +  +
+   **         7  |           |                 |
+   **            +  +  +  +--+  +  +  +  +  +  +
+   **         6  |        |                    |
+   **            +  +  +--+  +  +  +  +  +  +  +
+   **         5  |     |                       |
+   **            +  +  +  +  +  +  +  +  +  +  +
+   **         4  |     |                       |
+   **            +  +  +  +  +  +  +  +  +  +  +
+   **         3  |     |                       |
+   **            +  +--+  +  +  +  +  +  +  +  +
+   **         2  |  |                          |
+   **            +  +  +  +  +  +  +  +  +  +  +
+   **     J = 1  |  |                          |
+   **            +--+--+--+--+--+--+--+--+--+--+
+   **         I = 1   2  3  4  5  6  7  8  9 10
+   **               
+   ********************************************************************************   
+
+RESULTS SIMULATOR IMEX
+
+   ********************************************************************************
+   ** I/O Control Section                                                        **
+   ********************************************************************************
+
+   *TITLE1
+   'Fault Option Test Problem'
+   *TITLE2
+   'Modification of First SPE Comparative Solution Project'
+   *TITLE3
+   '(See Odeh & Aziz, J.P.T., 33, pp.13-25, 1981.)'
+
+   *INUNIT *FIELD              ** Field units are used for both input and output.
+   *WRST   10                  ** Write a restart record every ten timesteps.
+
+   *WPRN   *WELL 10
+   *WPRN   *GRID *TIME
+   *WPRN   *ITER *BRIEF
+   *OUTPRN *WELL *BRIEF
+   *OUTPRN *RES  *ALL
+   *OUTPRN *TABLES *ALL
+   *OUTPRN *GRID *SO *SG *SW *PRES *OILPOT *BPP *IMEXMAP
+
+   *WSRF   *GRID   *TIME
+   *WSRF   *WELL   1
+   *OUTSRF *GRID   *SO *SG *PRES *BPP
+
+
+   ********************************************************************************
+   ** Reservoir Description Section                                              **
+   ********************************************************************************
+
+   *GRID *CART 10   10    3    ** 10 blocks in each the I (x) and J (y) directions.
+                               ** 3 layers in the K (z) direction.
+   *DI *CON 1000.0             ** I direction block dimensions constant at 1000 ft.
+   *DJ *CON 1000.0             ** J direction block dimensions constant at 1000 ft.
+   *DK *KVAR                   ** K direction block dimensions (layer thicknesses)
+    50.0 30.0 20.0             ** are 50 ft., 30 ft. and 20 ft. for the bottommost
+                               ** middle and uppermost layers, respectively.   
+
+   *DEPTH 1 1 1 8400.0         ** Depth to center of first block, in bottom layer.   
+
+   *POR *CON 0.3               ** Porosity is constant throughout the reservoir.
+                
+   *CPOR   3.0E-6              ** Rock compressibility and
+   *PRPOR 14.7                 ** reference pressure.   
+
+   *PERMI *KVAR                ** Each of the I, J, and K permeabilities are
+      200.0   50.0  500.0      ** constant within each layer of the reservoir,
+   *PERMJ *KVAR                ** but vary from layer to layer. Hense the use
+      200.0   50.0  500.0      ** of *KVAR to input them layer by layer. Note
+   *PERMK *KVAR                ** that the first K layer is at bottom of the
+       20.0   40.0   60.0      ** reservoir.
+           
+   ** Enter fault location
+   **     throw   i1:i2  j1:j2
+   *FAULT   20    2      1:2
+                  3      1:5
+                  4      1:6
+                  5      1:9
+                  6:10   1:10
+
+
+   *MODEL *BLACKOIL            ** Solve three equations.
+   ********************************************************************************
+   ** Component Property Section                                                 **
+   ********************************************************************************
+   *PVT
+   ** p              rs      bo          eg    viso     visg
+     14.70000   1.00000   1.06200   6.00000   1.04000 0.0080000
+      264.700  90.50000   1.15000  82.70000 0.9750000 0.0096000
+      514.700   180.000   1.20700   159.000 0.9100000 0.0112000
+     1014.700   371.000   1.29500   313.000 0.8300000 0.0140000
+     2014.700   636.000   1.43500   620.000 0.6950000 0.0189000
+     2514.000   775.000   1.50000   773.000 0.6410000 0.0208000
+     3014.700   930.000   1.56500   926.000 0.5940000 0.0228000
+     4014.700  1270.000   1.69500  1233.000 0.5100000 0.0268000
+     5014.700  1600.000   1.82700  1541.000 0.4490000 0.0309000
+     9014.700  2984.000   2.35700  2591.000 0.2030000 0.0470000
+
+   *DENSITY *OIL    46.244
+   *DENSITY *GAS     0.0647
+   *DENSITY *WATER  62.238
+   *CO    1.3687E-5 
+   *CVO   4.6000E-5
+   *BWI   1.0410
+   *CW    2.9886E-6
+   *REFPW 14.7
+   *VWI   0.31
+   *CVW   0.0   
+
+
+   *ROCKFLUID
+   ********************************************************************************
+   ** Rock-Fluid Property Section                                                **
+   ********************************************************************************
+   *RPT 1
+   *SWT
+   ** sw         krw   krow   
+    0.1200000    0.0   1.0
+    0.8200000    0.0   0.0     
+                               
+   *SLT
+   **  sl     krg        krog  
+      0.12    0.984       0.0 
+      0.15    0.98        0.0       
+      0.30    0.9400002   0.0       
+      0.40    0.87        1.0000E-4       
+      0.50    0.72        0.001
+      0.55    0.6         0.01
+      0.60    0.41        0.021
+      0.70    0.19        0.09
+      0.75    0.125       0.2
+      0.80    0.075       0.35
+      0.88    0.025       0.7
+      0.95    0.005       0.98
+      0.98    0.0         0.997
+      0.999   0.0         1.0
+      1.0     0.0         1.0   
+
+
+   *INITIAL
+   ********************************************************************************
+   ** Initial Conditions Section                                                 **
+   ********************************************************************************
+   *VERTICAL *BLOCK_CENTER *WATER_OIL_GAS ** Use vertical equilibrium initialization 
+   *PB *CON    4014.7          **
+   *REFDEPTH   8400.           ** Give a reference depth and
+   *REFPRES    4800.           ** associated pressure.
+   *DWOC       9500.           ** Depth to water-oil contact
+   *DGOC       7000.           ** Depth to gas-oil contact   
+
+
+   *NUMERICAL
+   ********************************************************************************
+   ** Numerical Control Section                                                  **
+   ********************************************************************************
+   *DTMAX        1000.         ** Maximum time step size
+   *MAXSTEPS      100          ** Maximum number of time steps
+   *NORM *PRESS  1000.0        ** Normal maximum changes per time step
+   *NORM *SATUR     0.20
+   *AIM  *THRESH    0.25 .25   ** Use thresh hold switching criteria   
+
+
+   *RUN
+   ********************************************************************************
+   ** Well and Recurrent Data Section                                            **
+   ********************************************************************************
+   *DATE 1986 04 22
+   *DTWELL 1.0
+                     
+   *WELL 1  'Injector'   
+
+   *INJECTOR  *UNWEIGHT  1             ** Define the type of well 1.
+   *INCOMP *GAS                        ** Injecting gas.
+   *OPERATE  *MAX  *STG  1.0E+8        ** Operating on a rate specification.     
+   *OPERATE *MAX *BHP 147000.0
+   *MONITOR  *BACKFLOW *STOP           ** If backflow occurs, stop the simulation.   
+
+   *PERF 1 
+   ** if     jf     kf     wi 
+      1      1      3      1.0E+5
+
+   *WELL 2  'Producer'
+
+   *PRODUCER  2                        ** Define the type of well 2.
+   *OPERATE *MAX  *STO 20000.0         ** Initially, operate on a rate constraint.
+   *OPERATE *MIN  *BHP  1000.0         ** If the BHP falls below 1000 psi, switch
+                                       ** to a minimum pressure constraint.
+   *MONITOR *MIN  *STO  1000.0  *STOP  ** When the oil rate falls below 1000 bbl/D
+                                       ** stop the simulation.
+   *MONITOR *BACKFLOW           *STOP  ** Stop if backflow occurs.
+   *MONITOR *GOR       20000.0  *STOP  ** Stop if the GOR exceeds 20000.   
+
+   ** Well geometry for the producer.
+   **            rad    geofac  wfrac   skin
+   *GEOMETRY *K  0.25    0.34    1.0    0.0 
+   *PERF *GEO 2
+   ** if     jf     kf     ff                         
+      10     10     1     1.0
+
+   *TIME 3650.0                        ** Time of next well change.
+   *STOP                               ** Stop the simulation.

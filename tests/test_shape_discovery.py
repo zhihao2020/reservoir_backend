@@ -6,6 +6,7 @@ import numpy as np
 
 from reservoir_backend.pipeline import (
     build_channel_twin,
+    build_faulted_channel_twin,
     indicator_to_active_mask,
     mask_overlap,
     run_shape_discovery,
@@ -77,3 +78,26 @@ def test_save_discovery_writes_artifacts(tmp_path) -> None:
     assert (out / "active_mask.npy").is_file()
     assert (out / "indicator_stats.json").is_file()
     assert (out / "coarse" / "t_0000" / "summary.json").is_file()
+
+
+def test_faulted_channel_twin_discovery() -> None:
+    twin = build_faulted_channel_twin(nx=10, ny=8, nz=4, n_times=4)
+    assert twin.true_fault_mask is not None
+    assert np.any(twin.true_fault_mask)
+    assert np.any(twin.true_channel_mask)
+    # fault and channel should be mostly disjoint
+    overlap_fc = float(np.mean(twin.true_fault_mask & twin.true_channel_mask))
+    assert overlap_fc < 0.05
+
+    result = run_shape_discovery(
+        twin.mesh,
+        twin.samples,
+        permeability_prior_m2=1.0e-13,
+        refine=False,
+        indicator_threshold=0.30,
+    )
+    metrics = mask_overlap(result.active_mask, twin.true_channel_mask)
+    assert metrics["dice"] > 0.08, metrics
+    # sealing cells should not dominate the active discovery mask
+    fault_frac = float(np.mean(result.active_mask[twin.true_fault_mask].astype(float)))
+    assert fault_frac < 0.9, fault_frac
