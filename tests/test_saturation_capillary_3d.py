@@ -177,31 +177,6 @@ def test_3d_capillary_repeatability() -> None:
     assert first.report["material_balance_error"] == pytest.approx(second.report["material_balance_error"])
 
 
-def test_existing_1d_saturation_tests_still_pass() -> None:
-    grid = Grid3D(nx=8, ny=1, nz=1, dx=1.0, dy=1.0, dz=1.0)
-    flux_x = np.full((1, 1, grid.nx + 1), 1.0e-5)
-    result = advance_saturation_1d(grid, 0.2, 0.2, flux_x, 100.0, _relperm())
-    assert result.sw.values.shape == grid.shape
-    assert result.report["stable"] is True
-
-
-def test_existing_3d_saturation_tests_still_pass() -> None:
-    grid = _grid()
-    result = advance_saturation_3d(grid, 0.2, 0.2, *_zero_fluxes(grid), 100.0, _relperm())
-    assert np.allclose(result.sw.values, 0.2)
-
-
-def test_existing_1d_capillary_tests_still_pass() -> None:
-    grid = Grid3D(nx=8, ny=1, nz=1, dx=1.0, dy=1.0, dz=1.0)
-    sw = np.full(grid.shape, 0.35)
-    sw[0, 0, :4] = 0.65
-    result = advance_saturation_1d_with_capillary(
-        grid, sw, 0.2, np.zeros((1, 1, grid.nx + 1)), 100.0, _relperm(), _cap_enabled(), 1.0e-9
-    )
-    assert result.report["capillary_flux_included"] is True
-    assert not np.allclose(result.sw.values, sw)
-
-
 def _grid() -> Grid3D:
     return Grid3D(nx=6, ny=5, nz=4, dx=1.0, dy=1.0, dz=1.0)
 

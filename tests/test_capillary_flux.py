@@ -182,7 +182,7 @@ def test_existing_full_pipeline_unchanged(tmp_path) -> None:
 def test_absolute_transmissibility_between_cells() -> None:
     grid = Grid3D(nx=2, ny=1, nz=1, dx=2.0, dy=3.0, dz=4.0)
     t_abs = compute_absolute_transmissibility_between_cells(grid, 10.0e-15, 10.0e-15, 10.0e-15, 0, 1)
-    assert t_abs == pytest.approx(10.0e-15 * grid.dy * grid.dz / grid.dx)
+    assert t_abs == pytest.approx(10.0e-15 * float(grid.dy[0]) * float(grid.dz[0]) / float(grid.dx[0]))
 
 
 def _grid() -> Grid3D:
@@ -232,13 +232,13 @@ def _manual_expected(grid: Grid3D, sw: np.ndarray, permeability: float, directio
     pc = np.asarray(capillary_pressure(sw, _cap_params()))
     mobility = np.asarray(capillary_mobility(sw, _relperm_params()))
     if direction == "x":
-        t_abs = permeability * grid.dy * grid.dz / grid.dx
+        t_abs = permeability * float(grid.dy[0]) * float(grid.dz[0]) / float(grid.dx[0])
         m_face = harmonic_average(mobility[0, 0, 0], mobility[0, 0, 1])
         return t_abs * m_face * (pc[0, 0, 1] - pc[0, 0, 0])
     if direction == "y":
-        t_abs = permeability * grid.dx * grid.dz / grid.dy
+        t_abs = permeability * float(grid.dx[0]) * float(grid.dz[0]) / float(grid.dy[0])
         m_face = harmonic_average(mobility[0, 0, 0], mobility[0, 1, 0])
         return t_abs * m_face * (pc[0, 1, 0] - pc[0, 0, 0])
-    t_abs = permeability * grid.dx * grid.dy / grid.dz
+    t_abs = permeability * float(grid.dx[0]) * float(grid.dy[0]) / float(grid.dz[0])
     m_face = harmonic_average(mobility[0, 0, 0], mobility[1, 0, 0])
     return t_abs * m_face * (pc[1, 0, 0] - pc[0, 0, 0])

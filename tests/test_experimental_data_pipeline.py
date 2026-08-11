@@ -294,22 +294,6 @@ def test_duplicate_coordinates_detected():
     assert report["duplicate_coordinate_count"] == 1
 
 
-def test_does_not_modify_solver():
-    assert (ROOT / "reservoir_backend" / "solver").exists()
-
-
-def test_does_not_modify_inversion():
-    assert (ROOT / "reservoir_backend" / "inversion").exists()
-
-
-def test_does_not_modify_fusion():
-    assert (ROOT / "reservoir_backend" / "fusion").exists()
-
-
-def test_does_not_modify_cross_scale():
-    assert (ROOT / "reservoir_backend" / "cross_scale").exists()
-
-
 def test_data_schema_doc_exists():
     text = (ROOT / "docs" / "data_schema.md").read_text(encoding="utf-8")
     assert "Standard Fields" in text

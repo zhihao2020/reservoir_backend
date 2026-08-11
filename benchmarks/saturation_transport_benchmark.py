@@ -89,7 +89,7 @@ def _buckley_leverett_qualitative_case() -> dict:
     flux = _x_flux_1d(grid, 1.0e-5)
     sw0 = np.full(grid.shape, DEFAULT_RELPERM["swi"], dtype=float)
     sw_field = Field3D(grid=grid, values=sw0, name="sw", unit="fraction")
-    initial_front = _front_position(sw0, threshold=0.25, dx=grid.dx)
+    initial_front = _front_position(sw0, threshold=0.25, dx=float(grid.dx[0]))
     injected = 0.0
     produced = 0.0
     max_cfl = 0.0
@@ -102,7 +102,7 @@ def _buckley_leverett_qualitative_case() -> dict:
         produced += float(result.report["produced_water_volume"])
         max_cfl = max(max_cfl, float(result.report["max_cfl"]))
     sw = sw_field.values
-    final_front = _front_position(sw, threshold=0.25, dx=grid.dx)
+    final_front = _front_position(sw, threshold=0.25, dx=float(grid.dx[0]))
     pore_volume = phi * grid.cell_volume
     balance = compute_material_balance_error(sw0, sw, injected, produced, pore_volume)
     metrics = {

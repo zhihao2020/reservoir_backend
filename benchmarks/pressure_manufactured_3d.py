@@ -20,8 +20,8 @@ def run_benchmark() -> dict:
         mu=1.0e-3,
         dirichlet_boundaries={"left": left_pressure, "right": right_pressure},
     )
-    x = (np.arange(grid.nx) + 0.5) * grid.dx
-    expected_x = left_pressure + (right_pressure - left_pressure) * x / (grid.nx * grid.dx)
+    x = (np.arange(grid.nx) + 0.5) * float(grid.dx[0])
+    expected_x = left_pressure + (right_pressure - left_pressure) * x / (grid.nx * float(grid.dx[0]))
     expected = np.broadcast_to(expected_x.reshape(1, 1, grid.nx), grid.shape)
     pressure = result.pressure.values
     diff = pressure - expected

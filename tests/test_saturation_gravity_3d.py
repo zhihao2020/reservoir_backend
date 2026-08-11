@@ -208,44 +208,6 @@ def test_3d_gravity_repeatability() -> None:
     assert first.report["material_balance_error"] == pytest.approx(second.report["material_balance_error"])
 
 
-def test_existing_1d_gravity_tests_still_pass() -> None:
-    grid = Grid3D(nx=1, ny=1, nz=5, dx=1.0, dy=1.0, dz=1.0)
-    result = advance_saturation_1d_vertical_with_gravity(
-        grid,
-        np.full(grid.shape, 0.5),
-        0.2,
-        np.zeros((grid.nz + 1, 1, 1)),
-        100.0,
-        _relperm(),
-        _gravity_enabled(),
-        1.0e-12,
-    )
-    assert result.report["stable"] is True
-    assert result.sw.values.shape == grid.shape
-
-
-def test_existing_1d_3d_saturation_tests_still_pass() -> None:
-    grid_1d = Grid3D(nx=6, ny=1, nz=1, dx=1.0, dy=1.0, dz=1.0)
-    result_1d = advance_saturation_1d(
-        grid_1d, 0.2, 0.2, np.full((1, 1, grid_1d.nx + 1), 1.0e-5), 100.0, _relperm()
-    )
-    assert result_1d.report["stable"] is True
-
-    grid_3d = _grid()
-    fx, fy, fz = _zero_fluxes(grid_3d)
-    result_3d = advance_saturation_3d(grid_3d, _uniform_sw(grid_3d), 0.2, fx, fy, fz, 100.0, _relperm())
-    assert np.allclose(result_3d.sw.values, _uniform_sw(grid_3d))
-
-
-def test_existing_capillary_tests_still_pass() -> None:
-    grid = Grid3D(nx=6, ny=1, nz=1, dx=1.0, dy=1.0, dz=1.0)
-    sw = np.full(grid.shape, 0.45)
-    result = advance_saturation_1d_with_capillary(
-        grid, sw, 0.2, np.zeros((1, 1, grid.nx + 1)), 100.0, _relperm(), _capillary_disabled(), 1.0e-12
-    )
-    assert np.allclose(result.sw.values, sw)
-
-
 def _grid() -> Grid3D:
     return Grid3D(nx=4, ny=3, nz=4, dx=1.0, dy=1.0, dz=1.0)
 

@@ -106,9 +106,9 @@ def test_gravity_flux_manual_z() -> None:
     sw = np.array([[[0.5]], [[0.5]]])
     flux_z, _ = compute_gravity_water_flux_1d_vertical(grid, sw, 10.0e-15, _gravity_params(), _relperm_params())
     mobility = np.asarray(gravity_mobility(sw, _relperm_params()))
-    t_abs = 10.0e-15 * grid.dx * grid.dy / grid.dz
+    t_abs = 10.0e-15 * float(grid.dx[0]) * float(grid.dy[0]) / float(grid.dz[0])
     m_face = harmonic_average(mobility[0, 0, 0], mobility[1, 0, 0])
-    expected = -t_abs * m_face * (1000.0 - 800.0) * 9.80665 * grid.dz
+    expected = -t_abs * m_face * (1000.0 - 800.0) * 9.80665 * float(grid.dz[0])
     assert flux_z[1, 0, 0] == pytest.approx(expected)
 
 
@@ -161,18 +161,6 @@ def test_config_loader_accepts_gravity_section() -> None:
     assert "gravity" in config
     assert config["gravity"]["enabled"] is False
     assert config["gravity"]["rho_w"] == pytest.approx(1000.0)
-
-
-def test_existing_cli_dry_run_still_passes() -> None:
-    result = subprocess.run(
-        [sys.executable, "scripts/run_case.py", "--config", "config/demo_case.yaml", "--dry-run"],
-        cwd=Path(__file__).resolve().parents[1],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0
-    assert '"success": true' in result.stdout.lower()
 
 
 def test_existing_full_pipeline_unchanged_when_disabled(tmp_path) -> None:

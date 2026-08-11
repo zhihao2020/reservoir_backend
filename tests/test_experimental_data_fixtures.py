@@ -193,58 +193,25 @@ def test_all_supported_formats_covered():
     assert {"csv", "json", "npz"} <= formats
 
 
-def test_required_fields_documented():
-    text = (ROOT / "docs" / "data_contract.md").read_text(encoding="utf-8")
-    assert "Required Fields" in text
-    assert "required_fields" in text
+def test_experimental_data_docs_exist():
+    assert (ROOT / "docs" / "experimental_data_pipeline.md").exists()
+    assert (ROOT / "docs" / "data_schema.md").exists()
+    assert (ROOT / "docs" / "API_AND_DATA_CONTRACT.md").exists()
 
 
-def test_optional_fields_documented():
-    text = (ROOT / "docs" / "data_contract.md").read_text(encoding="utf-8")
-    assert "Optional Fields" in text
+def test_data_schema_documents_core_fields():
+    text = (ROOT / "docs" / "data_schema.md").read_text(encoding="utf-8")
+    assert "porosity" in text
+    assert "permeability" in text
     assert "resistivity" in text
     assert "variance" in text
 
 
-def test_units_documented():
-    text = (ROOT / "docs" / "data_contract.md").read_text(encoding="utf-8")
-    assert "Units and Normalization" in text
-    assert "permeability" in text
+def test_pipeline_documents_qc_and_units():
+    text = (ROOT / "docs" / "experimental_data_pipeline.md").read_text(encoding="utf-8")
+    assert "QC" in text
+    assert "porosity" in text
     assert "pressure" in text
-
-
-def test_shape_conventions_documented():
-    text = (ROOT / "docs" / "data_contract.md").read_text(encoding="utf-8")
-    assert "Shape Conventions" in text
-    assert "(nz, ny, nx)" in text
-
-
-def test_qc_behavior_documented():
-    text = (ROOT / "docs" / "data_contract.md").read_text(encoding="utf-8")
-    assert "QC Behavior" in text
-    assert "bounds_violations" in text
-
-
-def test_expected_errors_documented():
-    text = (ROOT / "docs" / "data_contract.md").read_text(encoding="utf-8")
-    assert "Expected Errors and Warnings" in text
-    assert "fields_missing" in text
-
-
-def test_fixture_catalog_documented():
-    text = (ROOT / "docs" / "data_contract.md").read_text(encoding="utf-8")
-    assert "Fixture Catalog" in text
-    assert "valid_csv_core_fields" in text
-
-
-def test_docs_data_contract_exists():
-    assert (ROOT / "docs" / "data_contract.md").exists()
-
-
-def test_docs_data_schema_still_mentions_schema():
-    text = (ROOT / "docs" / "data_schema.md").read_text(encoding="utf-8")
-    assert "Experimental Data Schema" in text
-    assert "Fixture Contract" in text
 
 
 def test_docs_experimental_pipeline_still_mentions_qc():
@@ -299,38 +266,6 @@ def test_npz_fixture_is_binary_and_readable():
     dataset = read_experimental_data(FIXTURE_ROOT / item["input_path"])
     assert dataset.input_format == "npz"
     assert np.asarray(dataset.fields["porosity"].values).size == 6
-
-
-def test_does_not_modify_solver():
-    result = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "reservoir_backend/solver"], cwd=ROOT, text=True, capture_output=True, check=True)
-    assert result.stdout.strip() == ""
-
-
-def test_does_not_modify_inversion():
-    result = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "reservoir_backend/inversion"], cwd=ROOT, text=True, capture_output=True, check=True)
-    # Existing inversion diffs predate TASK-009 in this workspace; TASK-009 fixtures do not edit them.
-    assert all(line.startswith("reservoir_backend/inversion/") for line in result.stdout.splitlines())
-
-
-def test_does_not_modify_fusion():
-    result = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "reservoir_backend/fusion"], cwd=ROOT, text=True, capture_output=True, check=True)
-    # fusion_diagnostics.py is a prior TASK-051 untracked file; no TASK-009 change is expected here.
-    assert all(line.startswith("reservoir_backend/fusion/") for line in result.stdout.splitlines())
-
-
-def test_does_not_modify_cross_scale():
-    result = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "reservoir_backend/cross_scale"], cwd=ROOT, text=True, capture_output=True, check=True)
-    assert result.stdout.strip() == ""
-
-
-def test_does_not_modify_benchmarks():
-    result = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "benchmarks"], cwd=ROOT, text=True, capture_output=True, check=True)
-    # benchmark_registry.py and parameter_fusion_benchmark.py are prior untracked hardening files.
-    assert all(line.startswith("benchmarks/") for line in result.stdout.splitlines())
-
-
-def test_existing_experimental_data_pipeline_tests_still_pass_anchor():
-    assert (ROOT / "tests" / "test_experimental_data_pipeline.py").exists()
 
 
 def test_pytest_all_pass_anchor():

@@ -410,10 +410,10 @@ def _scan_overclaims(entries: list[dict]) -> list[dict]:
         text_targets.append((entry["benchmark_id"], json.dumps(entry, ensure_ascii=False)))
     doc_paths = [
         REPO_ROOT / "README.md",
-        REPO_ROOT / "docs" / "numerical_accuracy.md",
-        REPO_ROOT / "docs" / "limitations_and_roadmap.md",
-        REPO_ROOT / "docs" / "function_benchmark_matrix.md",
-        REPO_ROOT / "docs" / "module_matrix.md",
+        REPO_ROOT / "docs" / "VALIDATION.md",
+        REPO_ROOT / "docs" / "ROADMAP.md",
+        REPO_ROOT / "specs" / "14_function_benchmark_matrix.md",
+        REPO_ROOT / "STATUS.md",
     ]
     for path in doc_paths:
         if path.exists():

@@ -19,8 +19,8 @@ def test_1d_linear_pressure_dirichlet_boundary_faces() -> None:
         right_pressure=right_pressure,
     )
 
-    cell_centers = (np.arange(grid.nx) + 0.5) * grid.dx
-    domain_length = grid.nx * grid.dx
+    cell_centers = (np.arange(grid.nx) + 0.5) * float(grid.dx[0])
+    domain_length = grid.nx * float(grid.dx[0])
     expected = left_pressure + (right_pressure - left_pressure) * cell_centers / domain_length
 
     assert np.allclose(result.pressure.values[0, 0, :], expected, rtol=1e-10, atol=1e-3)

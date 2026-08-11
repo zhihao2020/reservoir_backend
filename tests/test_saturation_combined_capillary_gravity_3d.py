@@ -190,31 +190,6 @@ def test_combined_does_not_modify_input_sw() -> None:
     assert np.allclose(sw, original)
 
 
-def test_existing_capillary_tests_still_pass() -> None:
-    grid = Grid3D(nx=8, ny=1, nz=1, dx=1.0, dy=1.0, dz=1.0)
-    sw = np.full(grid.shape, 0.35)
-    sw[0, 0, :4] = 0.65
-    result = advance_saturation_1d_with_capillary(
-        grid, sw, 0.2, np.zeros((1, 1, grid.nx + 1)), 100.0, _relperm(), _cap_enabled(), _k()
-    )
-    assert result.report["capillary_flux_included"] is True
-
-
-def test_existing_gravity_tests_still_pass() -> None:
-    grid = Grid3D(nx=1, ny=1, nz=5, dx=1.0, dy=1.0, dz=1.0)
-    result = advance_saturation_1d_vertical_with_gravity(
-        grid,
-        np.full(grid.shape, 0.5),
-        0.2,
-        np.zeros((grid.nz + 1, 1, 1)),
-        100.0,
-        _relperm(),
-        _gravity_enabled(),
-        _k(),
-    )
-    assert result.report["gravity_flux_included"] is True
-
-
 def test_config_accepts_capillary_gravity_together_when_flags_consistent() -> None:
     config = load_case_config("config/combined_case.yaml")
     assert config["capillary_pressure"]["enabled"] is True

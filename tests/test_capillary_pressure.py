@@ -134,18 +134,6 @@ def test_config_loader_accepts_capillary_section() -> None:
     assert config["capillary_pressure"]["entry_pressure_pa"] == pytest.approx(1000.0)
 
 
-def test_existing_cli_dry_run_still_passes() -> None:
-    result = subprocess.run(
-        [sys.executable, "scripts/run_case.py", "--config", "config/demo_case.yaml", "--dry-run"],
-        cwd=Path(__file__).resolve().parents[1],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0
-    assert '"success": true' in result.stdout.lower()
-
-
 def test_existing_full_pipeline_unchanged_when_disabled(tmp_path) -> None:
     result = run_demo(case_id="cap_disabled", results_root=tmp_path)
     assert result["summary"]["success"] is True

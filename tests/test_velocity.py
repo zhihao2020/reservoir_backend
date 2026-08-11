@@ -95,7 +95,7 @@ def test_darcy_formula_x() -> None:
     grid = Grid3D(nx=2, ny=1, nz=1, dx=2.0, dy=3.0, dz=4.0)
     pressure = Field3D(grid, np.array([[[10.0e6, 8.0e6]]]), name="pressure", unit="Pa")
     fluxes = compute_face_fluxes(grid, pressure, 10.0e-15, 10.0e-15, 10.0e-15, 2.0e-3)
-    transmissibility = 10.0e-15 * grid.dy * grid.dz / (2.0e-3 * grid.dx)
+    transmissibility = 10.0e-15 * float(grid.dy[0]) * float(grid.dz[0]) / (2.0e-3 * float(grid.dx[0]))
     expected = -transmissibility * (8.0e6 - 10.0e6)
     assert fluxes.flux_x[0, 0, 1] == pytest.approx(expected)
 
@@ -104,7 +104,7 @@ def test_darcy_formula_y() -> None:
     grid = Grid3D(nx=1, ny=2, nz=1, dx=2.0, dy=3.0, dz=4.0)
     pressure = Field3D(grid, np.array([[[10.0e6], [8.0e6]]]), name="pressure", unit="Pa")
     fluxes = compute_face_fluxes(grid, pressure, 10.0e-15, 10.0e-15, 10.0e-15, 2.0e-3)
-    transmissibility = 10.0e-15 * grid.dx * grid.dz / (2.0e-3 * grid.dy)
+    transmissibility = 10.0e-15 * float(grid.dx[0]) * float(grid.dz[0]) / (2.0e-3 * float(grid.dy[0]))
     expected = -transmissibility * (8.0e6 - 10.0e6)
     assert fluxes.flux_y[0, 1, 0] == pytest.approx(expected)
 
@@ -113,7 +113,7 @@ def test_darcy_formula_z() -> None:
     grid = Grid3D(nx=1, ny=1, nz=2, dx=2.0, dy=3.0, dz=4.0)
     pressure = Field3D(grid, np.array([[[10.0e6]], [[8.0e6]]]), name="pressure", unit="Pa")
     fluxes = compute_face_fluxes(grid, pressure, 10.0e-15, 10.0e-15, 10.0e-15, 2.0e-3)
-    transmissibility = 10.0e-15 * grid.dx * grid.dy / (2.0e-3 * grid.dz)
+    transmissibility = 10.0e-15 * float(grid.dx[0]) * float(grid.dy[0]) / (2.0e-3 * float(grid.dz[0]))
     expected = -transmissibility * (8.0e6 - 10.0e6)
     assert fluxes.flux_z[1, 0, 0] == pytest.approx(expected)
 

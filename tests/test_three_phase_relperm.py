@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -189,11 +191,6 @@ def test_repeatability() -> None:
 
 def test_three_phase_design_doc_still_exists() -> None:
     assert __import__("pathlib").Path("specs/12_three_phase_flow_design.md").exists()
-
-
-def test_existing_two_phase_relperm_tests_still_pass() -> None:
-    fw = fractional_flow_water(0.5, 0.2, 0.2, 1.0, 1.0, 2.0, 2.0, 1.0e-3, 5.0e-3)
-    assert 0.0 <= fw <= 1.0
 
 
 def _params(**overrides: float) -> dict[str, float]:

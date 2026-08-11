@@ -249,10 +249,6 @@ def test_existing_combined_case_unchanged(tmp_path: Path) -> None:
     assert (case_dir / "combined_report.json").exists()
 
 
-def test_existing_oil_water_pipeline_tests_still_pass() -> None:
-    assert callable(run_demo)
-
-
 def test_three_phase_not_black_oil(tmp_path: Path) -> None:
     summary = _json(_run_three_phase(tmp_path, "three_phase_not_black_oil")["case_dir"] / "case_summary.json")
     assert summary["black_oil_enabled"] is False

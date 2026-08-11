@@ -40,7 +40,7 @@ def test_transmissibility_x_direction() -> None:
     t = compute_transmissibility_between_cells(
         grid, kx=kx, ky=1.0, kz=1.0, mu=mu, cell_a=grid.index(0, 0, 0), cell_b=grid.index(1, 0, 0)
     )
-    assert t == pytest.approx(15.0 * grid.dy * grid.dz / (mu * grid.dx))
+    assert t == pytest.approx(15.0 * float(grid.dy[0]) * float(grid.dz[0]) / (mu * float(grid.dx[0])))
 
 
 def test_transmissibility_y_direction() -> None:
@@ -50,7 +50,7 @@ def test_transmissibility_y_direction() -> None:
     t = compute_transmissibility_between_cells(
         grid, kx=1.0, ky=ky, kz=1.0, mu=mu, cell_a=grid.index(0, 0, 0), cell_b=grid.index(0, 1, 0)
     )
-    assert t == pytest.approx(15.0 * grid.dx * grid.dz / (mu * grid.dy))
+    assert t == pytest.approx(15.0 * float(grid.dx[0]) * float(grid.dz[0]) / (mu * float(grid.dy[0])))
 
 
 def test_transmissibility_z_direction() -> None:
@@ -60,7 +60,7 @@ def test_transmissibility_z_direction() -> None:
     t = compute_transmissibility_between_cells(
         grid, kx=1.0, ky=1.0, kz=kz, mu=mu, cell_a=grid.index(0, 0, 0), cell_b=grid.index(0, 0, 1)
     )
-    assert t == pytest.approx(15.0 * grid.dx * grid.dy / (mu * grid.dz))
+    assert t == pytest.approx(15.0 * float(grid.dx[0]) * float(grid.dy[0]) / (mu * float(grid.dz[0])))
 
 
 def test_anisotropic_permeability() -> None:
@@ -110,7 +110,7 @@ def test_field3d_permeability_input() -> None:
     t = compute_transmissibility_between_cells(
         grid, kx=kx, ky=1.0, kz=1.0, mu=2.0, cell_a=grid.index(0, 0, 0), cell_b=grid.index(1, 0, 0)
     )
-    assert t == pytest.approx(15.0 * grid.dy * grid.dz / (2.0 * grid.dx))
+    assert t == pytest.approx(15.0 * float(grid.dy[0]) * float(grid.dz[0]) / (2.0 * float(grid.dx[0])))
 
 
 def test_ndarray_permeability_input() -> None:
@@ -118,11 +118,11 @@ def test_ndarray_permeability_input() -> None:
     kx = np.array([[[10.0, 30.0, 30.0]]])
     tx = compute_directional_transmissibility(grid, k_field=kx, mu=2.0, direction="x")
     assert tx.shape == (1, 1, 2)
-    assert tx[0, 0, 0] == pytest.approx(15.0 * grid.dy * grid.dz / (2.0 * grid.dx))
+    assert tx[0, 0, 0] == pytest.approx(15.0 * float(grid.dy[0]) * float(grid.dz[0]) / (2.0 * float(grid.dx[0])))
 
 
 def test_scalar_permeability_input() -> None:
     grid = Grid3D(nx=2, ny=1, nz=1, dx=2.0, dy=3.0, dz=4.0)
     tx = compute_directional_transmissibility(grid, k_field=10.0, mu=2.0, direction="x")
     assert tx.shape == (1, 1, 1)
-    assert tx[0, 0, 0] == pytest.approx(10.0 * grid.dy * grid.dz / (2.0 * grid.dx))
+    assert tx[0, 0, 0] == pytest.approx(10.0 * float(grid.dy[0]) * float(grid.dz[0]) / (2.0 * float(grid.dx[0])))

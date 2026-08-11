@@ -235,28 +235,6 @@ def test_three_phase_pipeline_config_exists_after_pipeline_stage() -> None:
     assert Path("config/three_phase_case.yaml").exists()
 
 
-def test_existing_three_phase_transport_1d_tests_still_pass() -> None:
-    sw = np.array([0.30, 0.32, 0.34])
-    sg = np.array([0.10, 0.11, 0.12])
-    sw_new, sg_new, so_new, report = advance_three_phase_saturation_1d(
-        np.zeros(4), sw, sg, _phi(), _volume(), _dt(), _params()
-    )
-    assert np.allclose(sw_new, sw)
-    assert np.allclose(sg_new, sg)
-    assert np.allclose(so_new, 1.0 - sw - sg)
-    assert report["transport_dimension"] == "1d"
-
-
-def test_existing_three_phase_flux_tests_still_pass() -> None:
-    fx, fy, fz = _internal_fluxes()
-    result = compute_three_phase_fluxes_3d(fx, fy, fz, _sw(), _sg(), _params())
-    assert np.allclose(result[0] + result[3] + result[6], fx)
-
-
-def test_existing_two_phase_solver_tests_still_pass() -> None:
-    assert callable(advance_saturation_3d)
-
-
 def test_material_balance_helper_direct_call() -> None:
     fx, fy, fz = _internal_fluxes()
     sw, sg = _sw(), _sg()

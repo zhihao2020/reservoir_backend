@@ -1,0 +1,137 @@
+"""Reconstruct full-grid pressure from sparse well and boundary sensors."""
+
+from __future__ import annotations
+
+import numpy as np
+from numpy.typing import NDArray
+
+from reservoir_backend.core.field import Field3D
+from reservoir_backend.pipeline.state import MeshBundle, SensorSample
+from reservoir_backend.solver.pressure_solver import solve_steady_state_pressure_3d
+from reservoir_backend.solver.transmissibility import validate_viscosity
+
+
+def reconstruct_pressure(
+    mesh: MeshBundle,
+    sample: SensorSample,
+    *,
+    permeability_m2: float | NDArray[np.float64] = 1.0e-13,
+    viscosity_pa_s: float = 1.0e-3,
+) -> tuple[NDArray[np.float64], list[str]]:
+    """Return pressure field shape ``(nz, ny, nx)`` and diagnostic notes.
+
+    Well pressures pin the corresponding cells (Dirichlet). Face boundary
+    pressures use the existing TPFA boundary treatment. A permeability prior
+    is required (constant or array); without rock properties the problem is
+    under-determined and this prior regularizes the solve.
+    """
+    notes: list[str] = [
+        "pressure reconstruction uses permeability prior for TPFA transmissibility",
+    ]
+    grid = mesh.grid
+    validate_viscosity(viscosity_pa_s)
+
+    boundaries = {
+        key: float(value)
+        for key, value in sample.boundary.pressure.items()
+        if key in {"left", "right", "front", "back", "bottom", "top"}
+    }
+
+    # Prefer structured TPFA when the grid is large enough for the 3D solver.
+    if grid.nx > 1 and grid.ny > 1 and grid.nz > 1:
+        try:
+            result = solve_steady_state_pressure_3d(
+                grid=grid,
+                kx=permeability_m2,
+                ky=permeability_m2,
+                kz=permeability_m2,
+                mu=viscosity_pa_s,
+                dirichlet_boundaries=boundaries or None,
+                wells=None,
+                reference_pressure=float(next(iter(sample.well_pressure.values()), 0.0)),
+            )
+            pressure = result.pressure.values.copy()
+            # Pin well cells to sensor readings after solve for hard match.
+            pressure = _pin_well_pressures(mesh, sample, pressure)
+            notes.append("used finite-volume TPFA pressure solve with well-cell pinning")
+            return pressure, notes
+        except Exception as exc:  # pragma: no cover - fallback path
+            notes.append(f"TPFA path failed ({exc}); falling back to sparse blending")
+
+    pressure = _blend_from_sensors(mesh, sample)
+    notes.append("used inverse-distance blending of well and boundary sensors")
+    return pressure, notes
+
+
+def _pin_well_pressures(
+    mesh: MeshBundle,
+    sample: SensorSample,
+    pressure: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    out = pressure.copy()
+    for name, value in sample.well_pressure.items():
+        if name not in mesh.well_cell_id:
+            raise KeyError(f"sensor well {name} is not on the mesh")
+        cell = mesh.well_cell_id[name]
+        i, j, k = mesh.grid.ijk(cell)
+        out[k, j, i] = float(value)
+    return out
+
+
+def _blend_from_sensors(mesh: MeshBundle, sample: SensorSample) -> NDArray[np.float64]:
+    """Inverse-distance weighting from well points and optional boundary faces."""
+    grid = mesh.grid
+    anchors_xyz: list[tuple[float, float, float]] = []
+    anchors_p: list[float] = []
+
+    for name, value in sample.well_pressure.items():
+        cell = mesh.well_cell_id[name]
+        anchors_xyz.append((float(mesh.x[cell]), float(mesh.y[cell]), float(mesh.z[cell])))
+        anchors_p.append(float(value))
+
+    # Boundary face centers as soft anchors
+    bounds = mesh.bounds
+    if bounds is not None:
+        for side, value in sample.boundary.pressure.items():
+            if side == "left":
+                anchors_xyz.append((bounds.xmin, 0.5 * (bounds.ymin + bounds.ymax), 0.5 * (bounds.zmin + bounds.zmax)))
+            elif side == "right":
+                anchors_xyz.append((bounds.xmax, 0.5 * (bounds.ymin + bounds.ymax), 0.5 * (bounds.zmin + bounds.zmax)))
+            elif side == "front":
+                anchors_xyz.append((0.5 * (bounds.xmin + bounds.xmax), bounds.ymin, 0.5 * (bounds.zmin + bounds.zmax)))
+            elif side == "back":
+                anchors_xyz.append((0.5 * (bounds.xmin + bounds.xmax), bounds.ymax, 0.5 * (bounds.zmin + bounds.zmax)))
+            elif side == "bottom":
+                anchors_xyz.append((0.5 * (bounds.xmin + bounds.xmax), 0.5 * (bounds.ymin + bounds.ymax), bounds.zmin))
+            elif side == "top":
+                anchors_xyz.append((0.5 * (bounds.xmin + bounds.xmax), 0.5 * (bounds.ymin + bounds.ymax), bounds.zmax))
+            else:
+                continue
+            anchors_p.append(float(value))
+
+    if not anchors_p:
+        raise ValueError("at least one well or boundary pressure sensor is required")
+
+    field = np.zeros(grid.shape, dtype=float)
+    power = 2.0
+    eps = 1.0e-12
+    for idx in range(mesh.n_cells):
+        px, py, pz = mesh.x[idx], mesh.y[idx], mesh.z[idx]
+        weights = []
+        values = []
+        for (ax, ay, az), ap in zip(anchors_xyz, anchors_p):
+            dist = np.sqrt((px - ax) ** 2 + (py - ay) ** 2 + (pz - az) ** 2)
+            if dist < eps:
+                weights = [1.0]
+                values = [ap]
+                break
+            w = 1.0 / (dist**power)
+            weights.append(w)
+            values.append(ap)
+        wsum = float(np.sum(weights))
+        field.flat[idx] = float(np.dot(weights, values) / wsum)
+    return field
+
+
+def pressure_as_field(mesh: MeshBundle, pressure: NDArray[np.float64]) -> Field3D:
+    return Field3D(grid=mesh.grid, values=pressure, name="pressure", unit="Pa")

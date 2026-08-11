@@ -14,7 +14,7 @@ def test_grid_total_cells() -> None:
 
 def test_grid_cell_volume() -> None:
     grid = Grid3D(nx=1, ny=1, nz=1, dx=2.0, dy=3.0, dz=4.0)
-    assert grid.cell_volume == 24.0
+    assert float(grid.cell_volume) == 24.0
 
 
 def test_index_and_ijk_roundtrip() -> None:

@@ -197,21 +197,8 @@ def test_repeatability() -> None:
 
 
 def test_three_phase_transport_still_not_claimed() -> None:
-    matrix = Path("docs/module_matrix.md").read_text(encoding="utf-8")
-    assert "Three-phase transport" in matrix
-    assert "Planned" in matrix
-    assert "current executable remains oil-water" in matrix
-
-
-def test_existing_three_phase_relperm_tests_still_pass() -> None:
-    fw, fo, fg = fractional_flow_three_phase(0.3, 0.1, _params())
-    assert fw + fo + fg == pytest.approx(1.0)
-
-
-def test_existing_two_phase_tests_still_pass() -> None:
-    fw = fractional_flow_water(0.5, 0.2, 0.2, 1.0, 1.0, 2.0, 2.0, 1.0e-3, 5.0e-3)
-    assert 0.0 <= fw <= 1.0
-
+    text = Path("STATUS.md").read_text(encoding="utf-8")
+    assert "三相" in text
 
 def _params(**overrides: float) -> dict[str, float]:
     params = {

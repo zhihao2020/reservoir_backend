@@ -16,8 +16,8 @@ def run_benchmark() -> dict:
     k = 100.0e-15
     mu = 1.0e-3
     result = solve_steady_state_pressure_1d(grid, k, mu, left_pressure, right_pressure)
-    x = (np.arange(grid.nx) + 0.5) * grid.dx
-    expected = left_pressure + (right_pressure - left_pressure) * x / (grid.nx * grid.dx)
+    x = (np.arange(grid.nx) + 0.5) * float(grid.dx[0])
+    expected = left_pressure + (right_pressure - left_pressure) * x / (grid.nx * float(grid.dx[0]))
     pressure = result.pressure.values[0, 0, :]
     error = np.abs(pressure - expected)
     flux = compute_face_fluxes(grid, result.pressure, k, k, k, mu).flux_x[0, 0, 1:-1]

@@ -333,8 +333,8 @@ def _boundary_sanity_case() -> dict:
 
 
 def _linear_x_reference(grid: Grid3D, left: float, right: float) -> np.ndarray:
-    x = (np.arange(grid.nx) + 0.5) * grid.dx
-    domain_length = grid.nx * grid.dx
+    x = (np.arange(grid.nx) + 0.5) * float(grid.dx[0])
+    domain_length = grid.nx * float(grid.dx[0])
     line = left + (right - left) * x / domain_length
     values = np.empty(grid.shape, dtype=float)
     values[:, :, :] = line[None, None, :]

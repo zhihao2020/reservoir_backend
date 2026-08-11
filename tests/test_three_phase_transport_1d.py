@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -185,21 +187,6 @@ def test_invalid_three_phase_params_raises() -> None:
 
 def test_three_phase_pipeline_config_exists_after_pipeline_stage() -> None:
     assert __import__("pathlib").Path("config/three_phase_case.yaml").exists()
-
-
-def test_existing_three_phase_flux_tests_still_pass() -> None:
-    water, oil, gas, _ = compute_three_phase_flux_1d(np.full(5, 1.0e-5), _sw(), _sg(), _params())
-    assert np.allclose(water + oil + gas, 1.0e-5)
-
-
-def test_existing_three_phase_relperm_tests_still_pass() -> None:
-    fw, fo, fg = fractional_flow_three_phase(0.3, 0.1, _params())
-    assert fw + fo + fg == pytest.approx(1.0)
-
-
-def test_existing_two_phase_solver_tests_still_pass() -> None:
-    # Smoke-check import and callable presence without coupling this module into oil-water transport.
-    assert callable(advance_saturation_3d)
 
 
 def test_material_balance_helper_direct_call() -> None:

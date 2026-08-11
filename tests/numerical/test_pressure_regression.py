@@ -38,9 +38,9 @@ def test_pressure_1d_linear_dirichlet() -> None:
     transmissibility = (
         2.0
         * meta["permeability_m2"]
-        * grid.dy
-        * grid.dz
-        / (meta["viscosity_pa_s"] * grid.dx)
+        * float(grid.dy[0])
+        * float(grid.dz[0])
+        / (meta["viscosity_pa_s"] * float(grid.dx[0]))
     )
     left_flux = transmissibility * (meta["left_pressure_pa"] - pressure[0, 0, 0])
     right_flux = transmissibility * (pressure[0, 0, -1] - meta["right_pressure_pa"])
@@ -71,7 +71,7 @@ def test_pressure_2d_no_flow_boundaries() -> None:
     assert np.allclose(np.diff(pressure, axis=1), 0.0, atol=1e-6)
 
     transmissibility = (
-        2.0 * meta["kx_m2"] * grid.dy * grid.dz / (meta["viscosity_pa_s"] * grid.dx)
+        2.0 * meta["kx_m2"] * float(grid.dy[0]) * float(grid.dz[0]) / (meta["viscosity_pa_s"] * float(grid.dx[0]))
     )
     left_flux = transmissibility * (meta["left_pressure_pa"] - pressure[0, :, 0])
     right_flux = transmissibility * (pressure[0, :, -1] - meta["right_pressure_pa"])
@@ -96,5 +96,5 @@ def test_hydrostatic_pressure_with_gravity() -> None:
     assert pressure.unit == "Pa"
     assert np.allclose(pressure.values, reference["pressure"], rtol=0.0, atol=1e-8)
     assert np.all(np.diff(pressure.values[:, 0, 0]) > 0.0)
-    expected_step = meta["density_kg_m3"] * meta["gravity_m_s2"] * grid.dz
+    expected_step = meta["density_kg_m3"] * meta["gravity_m_s2"] * float(grid.dz[0])
     assert np.allclose(np.diff(pressure.values[:, 0, 0]), expected_step)

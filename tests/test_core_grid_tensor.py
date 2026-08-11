@@ -10,13 +10,13 @@ from reservoir_backend.core.grid import Grid3D
 from reservoir_backend.solver.transmissibility import compute_directional_transmissibility
 
 
-def test_uniform_grid_still_scalar_spacing() -> None:
+def test_uniform_grid_broadcasts_scalar_spacing() -> None:
     grid = Grid3D(nx=4, ny=3, nz=2, dx=2.0, dy=3.0, dz=4.0)
     assert grid.is_uniform
-    assert grid.dx == 2.0
-    assert grid.dy == 3.0
-    assert grid.dz == 4.0
-    assert grid.cell_volume == 24.0
+    assert np.allclose(float(grid.dx[0]), 2.0)
+    assert np.allclose(float(grid.dy[0]), 3.0)
+    assert np.allclose(float(grid.dz[0]), 4.0)
+    assert float(np.unique(grid.cell_volume)[0]) == 24.0
 
 
 def test_nonuniform_spacing_volumes_and_centers() -> None:
