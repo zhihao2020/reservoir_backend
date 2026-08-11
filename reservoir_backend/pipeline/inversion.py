@@ -233,23 +233,17 @@ def run_param_joint_esmda(
         d_sim = np.zeros((ne, n_obs), dtype=float)
         for e in range(ne):
             k_e = expand_k_from_params(mesh, theta_ens[e])
-            chunks = []
-            for si, (s, sp) in enumerate(zip(samples, specs)):
-                if not sp:
-                    continue
-                chunks.append(
-                    _forward_joint_obs(
-                        mesh,
-                        s,
-                        k_e,
-                        obs_spec=sp,
-                        viscosity_pa_s=viscosity_pa_s,
-                        oil_viscosity_pa_s=oil_viscosity_pa_s,
-                        porosity=porosity_prior,
-                        rate_wells=rate_wells[si],
-                    )
-                )
-            d_sim[e, :] = np.concatenate(chunks)
+            # sequential multi-time forward (real Δt transport) for physical Sw
+            d_sim[e, :] = _forward_member_all_times(
+                mesh,
+                samples,
+                specs,
+                k_e,
+                rate_wells=rate_wells,
+                viscosity_pa_s=viscosity_pa_s,
+                oil_viscosity_pa_s=oil_viscosity_pa_s,
+                porosity=porosity_prior,
+            )
 
         # update θ directly (n_m = N_K_PARAMS) — no localization needed
         m = theta_ens.copy()
@@ -288,6 +282,87 @@ def run_param_joint_esmda(
         f"log_w={theta_mean[2]:.3f} z_bias={theta_mean[3]:.3f}"
     )
     return k_mean, k_std, theta_mean, nrmse_hist, notes
+
+
+def _forward_member_all_times(
+    mesh: MeshBundle,
+    samples: list[SensorSample],
+    specs: list,
+    k_field: NDArray[np.float64],
+    *,
+    rate_wells: list,
+    viscosity_pa_s: float,
+    oil_viscosity_pa_s: float,
+    porosity: float,
+) -> NDArray[np.float64]:
+    """One ensemble member: walk times with carried Sw state."""
+    from reservoir_backend.pipeline.esmda import (
+        _forward_pressure_cached,
+        _sample_obs_from_fields,
+    )
+    from reservoir_backend.pipeline.saturation_field import reconstruct_saturation
+    from reservoir_backend.pipeline.state import SensorSample as SS
+    from reservoir_backend.pipeline.transport_saturation import (
+        phases_from_sw,
+        transport_water_saturation,
+    )
+
+    chunks: list[NDArray[np.float64]] = []
+    sw_prev: NDArray[np.float64] | None = None
+    t_prev: float | None = None
+
+    for si, (sample, sp) in enumerate(zip(samples, specs)):
+        if not sp:
+            continue
+        dt = None if t_prev is None else float(sample.time - t_prev)
+        p = _forward_pressure_cached(
+            mesh,
+            sample,
+            permeability_m2=k_field,
+            viscosity_pa_s=viscosity_pa_s,
+            rate_wells=rate_wells[si],
+        )
+        sample_s = SS(
+            time=sample.time,
+            well_pressure={},
+            well_saturation=dict(sample.well_saturation or {}),
+            boundary=sample.boundary,
+            well_rate={},
+        )
+        sw_rec, _, _, _ = reconstruct_saturation(mesh, sample_s, pressure=p)
+        if sw_prev is None or dt is None or dt <= 0.0 or not sample.well_rate:
+            sw_state = sw_rec
+        else:
+            n_sub = int(np.clip(round(dt / 5.0), 4, 24))
+            sw_t, _ = transport_water_saturation(
+                mesh,
+                0.35 * sw_prev + 0.65 * sw_rec,
+                p,
+                k_field,
+                sample,
+                porosity=porosity,
+                viscosity_pa_s=viscosity_pa_s,
+                oil_viscosity_pa_s=oil_viscosity_pa_s,
+                dt=dt,
+                n_substeps=n_sub,
+            )
+            sw_state, _, _ = phases_from_sw(sw_t, sample=sample_s, mesh=mesh)
+
+        chunks.append(
+            _sample_obs_from_fields(
+                mesh,
+                sample,
+                sp,
+                pressure=p,
+                sw=sw_state,
+                viscosity_pa_s=viscosity_pa_s,
+                oil_viscosity_pa_s=oil_viscosity_pa_s,
+            )
+        )
+        sw_prev = sw_state
+        t_prev = float(sample.time)
+
+    return np.concatenate(chunks) if chunks else np.zeros(0, dtype=float)
 
 
 def _hard_series(

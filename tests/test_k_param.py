@@ -29,7 +29,7 @@ def _mesh():
 
 def test_expand_channel_higher_than_background() -> None:
     mesh = _mesh()
-    theta = np.array([np.log(1e-14), np.log(1e-12), 0.0, 0.0])
+    theta = np.array([np.log(1e-14), np.log(1e-12), 0.0, 0.0, 0.0, 0.0])
     k = expand_k_from_params(mesh, theta)
     mid = k[:, :, k.shape[2] // 2]
     edge = k[:, :, 0]
@@ -44,7 +44,7 @@ def test_ensemble_shape() -> None:
 
 def test_project_roundtrip_reasonable() -> None:
     mesh = _mesh()
-    theta = np.array([np.log(2e-14), np.log(8e-13), 0.2, 0.1])
+    theta = np.array([np.log(2e-14), np.log(8e-13), 0.2, 0.1, 0.3, 0.5])
     k = expand_k_from_params(mesh, theta)
     th2 = project_k_to_params(mesh, k)
     assert th2[1] > th2[0]
@@ -85,3 +85,13 @@ def test_param_inversion_runs() -> None:
     assert res.theta_mean[1] >= res.theta_mean[0] - 1e-9
     assert any("param joint ES-MDA" in n for n in res.notes)
     assert np.all(res.k_mean > 0.0)
+
+
+def test_meander_shifts_mass() -> None:
+    mesh = _mesh()
+    th0 = np.array([np.log(1e-14), np.log(1e-12), 0.0, 0.0, 0.0, 0.0])
+    th1 = np.array([np.log(1e-14), np.log(1e-12), 0.0, 0.0, 1.0, 0.0])
+    k0 = expand_k_from_params(mesh, th0)
+    k1 = expand_k_from_params(mesh, th1)
+    # meander should move high-k mass (not identical fields)
+    assert float(np.mean(np.abs(k1 - k0))) > 0.0

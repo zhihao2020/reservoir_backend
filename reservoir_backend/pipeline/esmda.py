@@ -557,11 +557,15 @@ def _forward_joint_obs(
     oil_viscosity_pa_s: float,
     porosity: float,
     rate_wells: list | None,
+    dt: float | None = None,
+    sw_prev: NDArray[np.float64] | None = None,
 ) -> NDArray[np.float64]:
-    """Soft pressure + Sw reconstruction (+ light transport) → obs vector."""
-    from reservoir_backend.pipeline.fractional_flow import water_fractional_flow
+    """Soft pressure + Sw reconstruction (+ transport) → obs vector."""
     from reservoir_backend.pipeline.saturation_field import reconstruct_saturation
-    from reservoir_backend.pipeline.transport_saturation import transport_water_saturation
+    from reservoir_backend.pipeline.transport_saturation import (
+        phases_from_sw,
+        transport_water_saturation,
+    )
 
     p = _forward_pressure_cached(
         mesh,
@@ -580,41 +584,72 @@ def _forward_joint_obs(
             boundary=sample.boundary,
             well_rate={},
         )
-        sw, _so, _sg, _ = reconstruct_saturation(mesh, sample_s, pressure=p)
-        # light transport couples k/p to Sw footprint when rates exist
-        if sample.well_rate:
-            sw, _ = transport_water_saturation(
+        sw_rec, _so, _sg, _ = reconstruct_saturation(mesh, sample_s, pressure=p)
+        if sw_prev is not None and dt is not None and float(dt) > 0.0 and sample.well_rate:
+            n_sub = int(np.clip(round(float(dt) / 5.0), 4, 24))
+            sw_t, _ = transport_water_saturation(
                 mesh,
-                sw,
+                0.4 * sw_prev + 0.6 * sw_rec,
                 p,
                 permeability_m2,
                 sample,
                 porosity=porosity,
                 viscosity_pa_s=viscosity_pa_s,
                 oil_viscosity_pa_s=oil_viscosity_pa_s,
-                dt=1.0,  # one nominal day-scale step for sensitivity (proxy)
-                n_substeps=4,
+                dt=float(dt),
+                n_substeps=n_sub,
             )
+            sw, _, _ = phases_from_sw(sw_t, sample=sample_s, mesh=mesh)
+        else:
+            sw = sw_rec
+
+    return _sample_obs_from_fields(
+        mesh,
+        sample,
+        obs_spec,
+        pressure=p,
+        sw=sw,
+        viscosity_pa_s=viscosity_pa_s,
+        oil_viscosity_pa_s=oil_viscosity_pa_s,
+    )
+
+
+def _sample_obs_from_fields(
+    mesh: MeshBundle,
+    sample: SensorSample,
+    obs_spec: list[ObsSpec],
+    *,
+    pressure: NDArray[np.float64],
+    sw: NDArray[np.float64] | None,
+    viscosity_pa_s: float,
+    oil_viscosity_pa_s: float,
+) -> NDArray[np.float64]:
+    """Extract soft-obs vector from pressure/Sw fields."""
+    from reservoir_backend.pipeline.fractional_flow import water_fractional_flow
 
     out = np.zeros(len(obs_spec), dtype=float)
     for i, ch in enumerate(obs_spec):
         ii, jj, kk = mesh.grid.ijk(ch.cell_id)
         if ch.kind == "p":
-            out[i] = float(p[kk, jj, ii])
+            out[i] = float(pressure[kk, jj, ii])
         elif ch.kind == "sw":
-            assert sw is not None
-            out[i] = float(sw[kk, jj, ii])
+            if sw is None:
+                out[i] = 0.0
+            else:
+                out[i] = float(sw[kk, jj, ii])
         else:
-            assert sw is not None
-            q = float((sample.well_rate or {}).get(ch.name, 0.0))
-            fw = float(
-                water_fractional_flow(
-                    float(sw[kk, jj, ii]),
-                    mu_w=viscosity_pa_s,
-                    mu_o=oil_viscosity_pa_s,
+            if sw is None:
+                out[i] = 0.0
+            else:
+                q = float((sample.well_rate or {}).get(ch.name, 0.0))
+                fw = float(
+                    water_fractional_flow(
+                        float(sw[kk, jj, ii]),
+                        mu_w=viscosity_pa_s,
+                        mu_o=oil_viscosity_pa_s,
+                    )
                 )
-            )
-            out[i] = abs(q) * fw
+                out[i] = abs(q) * fw
     return out
 
 
