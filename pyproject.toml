@@ -22,7 +22,7 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["reservoir_backend*"]
-exclude = ["tests*", "benchmarks*", "examples*", "scripts*", "harness*", "docs*", "specs*", "config*", "results*", "accuracy_reports*", "validation_reports*", "profiling_reports*", "references*", "requirements*"]
+exclude = ["tests*", "benchmarks*", "examples*", "scripts*", "docs*", "specs*", "config*", "results*", "accuracy_reports*", "validation_reports*", "profiling_reports*", "references*", "requirements*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

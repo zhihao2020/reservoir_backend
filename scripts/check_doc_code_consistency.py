@@ -37,7 +37,7 @@ SKIP_PARTS = {"archive"}
 # Backtick paths that look like repo-relative file/dir references.
 PATH_RE = re.compile(
     r"`("
-    r"(?:reservoir_backend|tests|scripts|examples|benchmarks|harness|config|docs|specs|"
+    r"(?:reservoir_backend|tests|scripts|examples|benchmarks|config|docs|specs|"
     r"requirements|references|accuracy_reports|validation_reports|profiling_reports|"
     r"results)"
     r"/[^`\s]+"
@@ -60,7 +60,6 @@ IGNORE_EXACT = {
     "scripts/",
     "examples/",
     "benchmarks/",
-    "harness/",
     "requirements/",
     "references/",
     "reservoir_backend/",
