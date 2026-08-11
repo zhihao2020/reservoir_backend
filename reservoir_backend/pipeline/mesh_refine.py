@@ -32,7 +32,13 @@ def refine_mesh_by_indicator(
 
     bounds = mesh.bounds
     wells = [
-        WellPoint(name=n, x=float(mesh.x[c]), y=float(mesh.y[c]), z=float(mesh.z[c]))
+        WellPoint(
+            name=n,
+            x=float(mesh.x[c]),
+            y=float(mesh.y[c]),
+            z=float(mesh.z[c]),
+            role=mesh.well_role.get(n, "observer"),
+        )
         for n, c in mesh.well_cell_id.items()
     ]
     # recover well true coords from centers is ok for refine continuity
