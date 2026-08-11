@@ -47,6 +47,7 @@ def run_time_series(
     esmda_max_times: int = 5,
     refine_dynamic_k: bool = True,
     esmda_second_pass: bool = True,
+    n_outer_loops: int = 2,
 ) -> list[FieldBundle]:
     """Sequential multi-time inversion from wells + probes.
 
@@ -59,10 +60,12 @@ def run_time_series(
     Default ``point_first`` workflow per time, carrying full-grid k/φ as the
     prior into the next time (time-series inversion).
 
-    If ``assimilate_k`` is True, run ES-MDA on log(k) first (using all pressure
-    hard data: wells + observer_p), then point-first series with the ensemble
-    mean as permeability prior. Optional second ES-MDA pass and dynamic-k
-    refinement from multi-time ΔSw / pressure indicator further improve paths.
+    If ``assimilate_k`` is True:
+    1. ES-MDA on log(k) from pressure hard data (wells + observer_p)
+    2. Optional second pass around the **spatial** k map
+    3. Point-first multi-time series
+    4. Dynamic-k path enhancement from multi-time ΔSw
+    5. Outer loop (default 2): re-assimilate around refined k and re-solve series
     """
     if not samples:
         raise ValueError("samples must not be empty")
@@ -72,87 +75,128 @@ def run_time_series(
     phi_prior0: float | NDArray[np.float64] = porosity_prior
     esmda_notes: list[str] = []
     phi0 = float(np.mean(np.asarray(porosity_prior, dtype=float)))
-    if assimilate_k:
-        from reservoir_backend.pipeline.esmda import run_esmda_permeability
+    outer_n = max(1, int(n_outer_loops) if assimilate_k else 1)
+    history: list[FieldBundle] = []
 
-        # subsample times for speed while spanning the series
-        es_samples = _subsample_times(samples, int(esmda_max_times))
-        k_mean = float(np.mean(np.asarray(permeability_prior_m2, dtype=float)))
-        try:
-            es = run_esmda_permeability(
+    for outer in range(outer_n):
+        if assimilate_k:
+            k_prior0, more_notes = _esmda_prior_for_series(
                 mesh,
-                es_samples,
-                ne=int(esmda_ne),
-                n_assimilations=int(esmda_assimilations),
-                k_mean=k_mean,
-                logk_std=1.2,
-                corr_len_cells=max(2.0, float(np.mean(mesh.grid.shape)) * 0.35),
-                porosity_prior=phi0,
+                samples,
+                k_seed=k_prior0,
+                phi0=phi0,
                 viscosity_pa_s=viscosity_pa_s,
-                n_k_iterations=1,
-                seed=11,
-                auto_localize=True,
-                # n_workers default: full accuracy, auto process pool by forward count
+                esmda_ne=esmda_ne,
+                esmda_assimilations=esmda_assimilations,
+                esmda_max_times=esmda_max_times,
+                esmda_second_pass=esmda_second_pass,
+                outer=outer,
             )
-            k_prior0 = es.k_mean
-            esmda_notes = [
-                f"pre-series ES-MDA k assimilate (ne={esmda_ne}, "
-                f"Na={esmda_assimilations}, n_times={len(es_samples)})",
-                *es.notes[-4:],
-            ]
-            # second pass: tighter prior around first-pass mean
-            if esmda_second_pass and len(es_samples) >= 2:
-                try:
-                    es2 = run_esmda_permeability(
-                        mesh,
-                        es_samples,
-                        ne=max(8, int(esmda_ne) // 2),
-                        n_assimilations=max(2, int(esmda_assimilations) - 1),
-                        k_mean=float(np.exp(np.mean(np.log(np.clip(es.k_mean, 1e-30, None))))),
-                        logk_std=0.65,
-                        corr_len_cells=max(2.0, float(np.mean(mesh.grid.shape)) * 0.30),
-                        porosity_prior=phi0,
-                        viscosity_pa_s=viscosity_pa_s,
-                        n_k_iterations=1,
-                        seed=23,
-                        auto_localize=True,
-                        ensemble_inflation=1.01,
-                    )
-                    k_prior0 = 0.55 * es2.k_mean + 0.45 * es.k_mean
-                    k_prior0 = np.clip(k_prior0, 1.0e-18, 1.0e-10)
-                    esmda_notes.append("second-pass ES-MDA blended into k prior")
-                except Exception as exc2:
-                    esmda_notes.append(f"second-pass ES-MDA skipped ({exc2})")
-        except Exception as exc:
-            esmda_notes = [f"ES-MDA skipped ({exc}); plain time series"]
+            esmda_notes = more_notes if outer == 0 else (esmda_notes + more_notes)
 
-    history = _run_point_first_series(
-        mesh,
-        samples,
-        k_prior0=k_prior0,
-        phi_prior0=phi_prior0,
-        viscosity_pa_s=viscosity_pa_s,
-        n_k_iterations=n_k_iterations,
-        mode=mode,
-        assimilate_k=assimilate_k,
-        esmda_notes=esmda_notes,
-        k_esmda=(
-            np.asarray(k_prior0, dtype=float)
-            if assimilate_k and isinstance(k_prior0, np.ndarray)
-            else None
-        ),
-    )
-
-    if refine_dynamic_k and len(history) >= 2:
-        history = _refine_tail_with_dynamic_k(
+        history = _run_point_first_series(
             mesh,
             samples,
-            history,
+            k_prior0=k_prior0,
+            phi_prior0=phi_prior0 if outer == 0 else history[-1].porosity,
             viscosity_pa_s=viscosity_pa_s,
             n_k_iterations=n_k_iterations,
             mode=mode,
+            assimilate_k=assimilate_k,
+            esmda_notes=esmda_notes + [f"outer_loop={outer + 1}/{outer_n}"],
+            k_esmda=(
+                np.asarray(k_prior0, dtype=float)
+                if assimilate_k and isinstance(k_prior0, np.ndarray)
+                else None
+            ),
         )
+
+        if refine_dynamic_k and len(history) >= 2:
+            history = _refine_tail_with_dynamic_k(
+                mesh,
+                samples,
+                history,
+                viscosity_pa_s=viscosity_pa_s,
+                n_k_iterations=n_k_iterations,
+                mode=mode,
+            )
+        # seed next outer loop from refined k
+        k_prior0 = history[-1].permeability
+        phi_prior0 = history[-1].porosity
+
     return history
+
+
+def _esmda_prior_for_series(
+    mesh: MeshBundle,
+    samples: list[SensorSample],
+    *,
+    k_seed: float | NDArray[np.float64],
+    phi0: float,
+    viscosity_pa_s: float,
+    esmda_ne: int,
+    esmda_assimilations: int,
+    esmda_max_times: int,
+    esmda_second_pass: bool,
+    outer: int,
+) -> tuple[NDArray[np.float64] | float, list[str]]:
+    """Run ES-MDA (optionally two passes) → spatial k prior for the series."""
+    from reservoir_backend.pipeline.esmda import run_esmda_permeability
+
+    notes: list[str] = []
+    es_samples = _subsample_times(samples, int(esmda_max_times))
+    k_arr = np.asarray(k_seed, dtype=float)
+    use_field = k_arr.ndim == 3
+    k_mean = float(np.exp(np.mean(np.log(np.clip(k_arr if use_field else np.array([float(k_seed)]), 1e-30, None)))))
+    try:
+        es = run_esmda_permeability(
+            mesh,
+            es_samples,
+            ne=int(esmda_ne),
+            n_assimilations=int(esmda_assimilations),
+            k_mean=k_mean,
+            k_prior_field=k_arr if use_field else None,
+            logk_std=1.15 if outer == 0 else 0.75,
+            corr_len_cells=max(2.0, float(np.mean(mesh.grid.shape)) * 0.35),
+            porosity_prior=phi0,
+            viscosity_pa_s=viscosity_pa_s,
+            n_k_iterations=1,
+            seed=11 + 17 * outer,
+            auto_localize=True,
+        )
+        k_out: NDArray[np.float64] | float = es.k_mean
+        notes = [
+            f"ES-MDA outer={outer + 1} ne={esmda_ne} Na={esmda_assimilations} "
+            f"n_times={len(es_samples)} field_prior={use_field}",
+            *es.notes[-3:],
+        ]
+        if esmda_second_pass and len(es_samples) >= 2:
+            try:
+                es2 = run_esmda_permeability(
+                    mesh,
+                    es_samples,
+                    ne=max(10, int(esmda_ne) // 2),
+                    n_assimilations=max(2, int(esmda_assimilations) - 1),
+                    k_mean=float(
+                        np.exp(np.mean(np.log(np.clip(es.k_mean, 1e-30, None))))
+                    ),
+                    k_prior_field=es.k_mean,
+                    logk_std=0.55,
+                    corr_len_cells=max(2.0, float(np.mean(mesh.grid.shape)) * 0.28),
+                    porosity_prior=phi0,
+                    viscosity_pa_s=viscosity_pa_s,
+                    n_k_iterations=1,
+                    seed=23 + 17 * outer,
+                    auto_localize=True,
+                    ensemble_inflation=1.01,
+                )
+                k_out = np.clip(0.60 * es2.k_mean + 0.40 * es.k_mean, 1.0e-18, 1.0e-10)
+                notes.append("second-pass ES-MDA around spatial k map")
+            except Exception as exc2:
+                notes.append(f"second-pass ES-MDA skipped ({exc2})")
+        return k_out, notes
+    except Exception as exc:
+        return k_seed, [f"ES-MDA skipped ({exc}); plain time series"]
 
 
 def _run_point_first_series(
@@ -228,18 +272,19 @@ def _refine_tail_with_dynamic_k(
     mode: str,
 ) -> list[FieldBundle]:
     """Boost k on multi-time activity indicator and re-run last few slices."""
+    # Prefer ΔSw + pressure over current k to avoid locking inverted contrast
     ind, stats = infer_shape_indicator(
         mesh,
         history,
-        sw_weight=1.6,
-        k_weight=0.15,
-        pressure_weight=0.75,
+        sw_weight=1.8,
+        k_weight=0.08,
+        pressure_weight=0.85,
     )
     k_enh = enhance_permeability_from_indicator(
-        history[-1].permeability, ind, strength=0.70
+        history[-1].permeability, ind, strength=0.95, asymmetric=True
     )
     n = len(samples)
-    start = max(0, n - 3)
+    start = max(0, n - 4)
     out = list(history[:start])
     prev = history[start - 1] if start > 0 else None
     for i in range(start, n):
@@ -253,7 +298,7 @@ def _refine_tail_with_dynamic_k(
             k_prior: float | NDArray[np.float64] = k_enh
             phi_prior: float | NDArray[np.float64] = history[0].porosity
         else:
-            k_prior = 0.60 * k_enh + 0.40 * prev.permeability
+            k_prior = 0.70 * k_enh + 0.30 * prev.permeability
             phi_prior = prev.porosity
         bundle = run_time_slice(
             mesh,
@@ -266,7 +311,7 @@ def _refine_tail_with_dynamic_k(
             n_k_iterations=n_k_iterations,
             mode=mode,
         )
-        bundle.permeability = 0.65 * k_enh + 0.35 * bundle.permeability
+        bundle.permeability = 0.75 * k_enh + 0.25 * bundle.permeability
         bundle.permeability = np.clip(bundle.permeability, 1.0e-18, 1.0e-10)
         # keep multi-time stamp from the pre-refine history when present
         prior_notes = list(history[i].notes) if i < len(history) else []

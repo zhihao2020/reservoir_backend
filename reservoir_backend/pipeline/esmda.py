@@ -125,15 +125,36 @@ def generate_logk_ensemble(
 
     Returns array shape ``(ne, nz, ny, nx)`` in linear k [m^2].
     """
+    base = np.full(shape, float(max(k_mean, 1.0e-20)), dtype=float)
+    return generate_logk_ensemble_around(
+        base, ne=ne, logk_std=logk_std, corr_len_cells=corr_len_cells, seed=seed
+    )
+
+
+def generate_logk_ensemble_around(
+    k_base: NDArray[np.float64],
+    *,
+    ne: int,
+    logk_std: float = 1.0,
+    corr_len_cells: float = 3.0,
+    seed: int = 42,
+) -> NDArray[np.float64]:
+    """Ensemble of log-k perturbations around a **spatial** permeability map.
+
+    Used for second-pass / outer-loop ES-MDA so updates refine structure instead
+    of re-drawing from a scalar prior (accuracy-critical).
+    """
+    base = np.clip(np.asarray(k_base, dtype=float), 1.0e-30, None)
+    log_base = np.log(base)
     rng = np.random.default_rng(seed)
-    log_mean = float(np.log(max(k_mean, 1.0e-20)))
     members = []
-    for _ in range(ne):
-        noise = rng.normal(0.0, 1.0, size=shape)
-        smooth = _smooth3(noise, sigma=max(0.5, float(corr_len_cells) / 2.5))
+    sigma = max(0.5, float(corr_len_cells) / 2.5)
+    for _ in range(int(ne)):
+        noise = rng.normal(0.0, 1.0, size=base.shape)
+        smooth = _smooth3(noise, sigma=sigma)
         s = float(np.std(smooth)) + 1.0e-30
         smooth = smooth / s * float(logk_std)
-        members.append(np.exp(log_mean + smooth))
+        members.append(np.exp(log_base + smooth))
     ens = np.stack(members, axis=0)
     return np.clip(ens, 1.0e-18, 1.0e-10)
 
@@ -145,6 +166,7 @@ def run_esmda_permeability(
     ne: int = 24,
     n_assimilations: int = 4,
     k_mean: float = 1.0e-13,
+    k_prior_field: NDArray[np.float64] | None = None,
     logk_std: float = 1.0,
     corr_len_cells: float = 3.0,
     obs_std_frac: float = 0.02,
@@ -171,14 +193,23 @@ def run_esmda_permeability(
     alphas = normalize_alpha_weights(int(n_assimilations))
     na = int(alphas.size)
 
-    k_ens = generate_logk_ensemble(
-        mesh.grid.shape,
-        ne=ne,
-        k_mean=k_mean,
-        logk_std=logk_std,
-        corr_len_cells=corr_len_cells,
-        seed=seed,
-    )
+    if k_prior_field is not None:
+        k_ens = generate_logk_ensemble_around(
+            np.asarray(k_prior_field, dtype=float),
+            ne=ne,
+            logk_std=logk_std,
+            corr_len_cells=corr_len_cells,
+            seed=seed,
+        )
+    else:
+        k_ens = generate_logk_ensemble(
+            mesh.grid.shape,
+            ne=ne,
+            k_mean=float(k_mean),
+            logk_std=logk_std,
+            corr_len_cells=corr_len_cells,
+            seed=seed,
+        )
     n_forwards = len(samples) * na * ne
     workers = (
         int(n_workers)

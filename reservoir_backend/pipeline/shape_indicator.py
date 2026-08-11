@@ -61,15 +61,17 @@ def infer_shape_indicator(
     indicator = np.clip(indicator, 0.0, 1.0)
 
     # Boost cells on the well-to-well corridor if two+ wells exist (channel prior).
+    corridor = None
     if len(mesh.well_cell_id) >= 2:
         corridor = _well_corridor_mask(mesh)
-        indicator = np.clip(indicator + 0.15 * corridor, 0.0, 1.0)
+        indicator = np.clip(indicator + 0.28 * corridor.astype(float), 0.0, 1.0)
 
     stats = {
         "indicator_mean": float(np.mean(indicator)),
         "indicator_p90": float(np.quantile(indicator, 0.9)),
         "active_fraction_at_0.4": float(np.mean(indicator >= 0.4)),
         "max_cum_dsw": float(np.max(cum_dsw)),
+        "corridor_fraction": float(np.mean(corridor)) if corridor is not None else 0.0,
     }
     return indicator, stats
 
@@ -80,11 +82,15 @@ def enhance_permeability_from_indicator(
     *,
     strength: float = 0.55,
     clip: tuple[float, float] = (1.0e-18, 1.0e-10),
+    asymmetric: bool = True,
 ) -> NDArray[np.float64]:
     """Log-space k boost on high-indicator cells (preferential flow paths).
 
     Does not use external truth masks — only the multi-time shape indicator
     built from ΔSw / pressure contrast (and optionally prior k).
+
+    With ``asymmetric=True`` (default), high-activity cells are boosted more
+    than quiet cells are reduced, improving channel/matrix contrast.
     """
     k = np.asarray(permeability, dtype=float)
     ind = np.asarray(indicator, dtype=float)
@@ -93,8 +99,13 @@ def enhance_permeability_from_indicator(
     mu = float(np.mean(ind))
     sd = float(np.std(ind)) + 1.0e-12
     z = np.clip((ind - mu) / sd, -2.5, 2.5)
-    # positive z (active path) → higher k; quiet matrix slightly lower
-    k_new = k * np.exp(float(strength) * 0.40 * z)
+    s = float(strength)
+    if asymmetric:
+        # boost path (z>0) more; mild damp of matrix (z<0)
+        scale = np.where(z >= 0.0, s * 0.55 * z, s * 0.25 * z)
+    else:
+        scale = s * 0.40 * z
+    k_new = k * np.exp(scale)
     return np.clip(k_new, float(clip[0]), float(clip[1]))
 
 

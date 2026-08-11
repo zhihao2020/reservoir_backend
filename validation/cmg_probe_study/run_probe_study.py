@@ -285,9 +285,12 @@ def run_one(
         viscosity_pa_s=1.0e-3,
         n_k_iterations=3 if (n_p + n_s) >= 4 else 2,
         assimilate_k=use_esmda,
-        esmda_ne=16,
+        esmda_ne=20,
         esmda_assimilations=4,
-        esmda_max_times=5,
+        esmda_max_times=6,
+        refine_dynamic_k=True,
+        esmda_second_pass=True,
+        n_outer_loops=2 if use_esmda else 1,
     )
     last = history[-1]
     t_last, sw_cmg = sw_series[-1]

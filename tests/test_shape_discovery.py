@@ -20,9 +20,20 @@ def test_enhance_permeability_from_indicator() -> None:
     k = np.full((2, 3, 4), 1.0e-13)
     ind = np.zeros((2, 3, 4))
     ind[0, 1, 2] = 1.0
-    k2 = enhance_permeability_from_indicator(k, ind, strength=0.8)
+    k2 = enhance_permeability_from_indicator(k, ind, strength=0.8, asymmetric=True)
     assert k2[0, 1, 2] > k[0, 0, 0]
     assert np.all(k2 > 0.0)
+
+
+def test_logk_ensemble_around_field() -> None:
+    from reservoir_backend.pipeline.esmda import generate_logk_ensemble_around
+
+    base = np.full((2, 3, 4), 1.0e-13)
+    base[0, 1, :] = 5.0e-13
+    ens = generate_logk_ensemble_around(base, ne=6, logk_std=0.4, seed=1)
+    assert ens.shape == (6, 2, 3, 4)
+    # ensemble mean should preserve high-k stripe structure
+    assert float(np.mean(ens[:, 0, 1, :])) > float(np.mean(ens[:, 0, 0, :]))
 
 
 def test_run_time_series_sorted_and_shapes() -> None:
