@@ -1,1 +1,0 @@
-{"fixture_id":"invalid_units_and_bounds","source_name":"invalid_units_and_bounds","required_fields":["time","porosity","permeability","pressure","resistivity","confidence","variance"],"description":"Invalid fixture with unsupported unit suffix and physical bounds violations."}

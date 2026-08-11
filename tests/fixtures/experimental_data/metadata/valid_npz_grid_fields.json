@@ -1,1 +1,0 @@
-{"fixture_id":"valid_npz_grid_fields","source_name":"valid_npz_grid_fields","required_fields":["porosity","permeability","pressure","saturation"],"target_shape":[1,2,3],"description":"Valid NPZ structured-grid fixture for shape alignment and property fields."}

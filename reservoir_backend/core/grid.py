@@ -55,10 +55,6 @@ class Grid3D:
     _spacing_i: NDArray[np.float64] = field(init=False, repr=False, compare=False)
     _spacing_j: NDArray[np.float64] = field(init=False, repr=False, compare=False)
     _spacing_k: NDArray[np.float64] = field(init=False, repr=False, compare=False)
-    _dx_public: float | NDArray[np.float64] = field(init=False, repr=False, compare=False)
-    _dy_public: float | NDArray[np.float64] = field(init=False, repr=False, compare=False)
-    _dz_public: float | NDArray[np.float64] = field(init=False, repr=False, compare=False)
-
     def __post_init__(self) -> None:
         for name in ("nx", "ny", "nz"):
             value = getattr(self, name)
@@ -72,25 +68,10 @@ class Grid3D:
         object.__setattr__(self, "_spacing_j", spacing_j)
         object.__setattr__(self, "_spacing_k", spacing_k)
 
-        # Backward-compatible public scalars when an axis is uniform.
-        object.__setattr__(
-            self,
-            "_dx_public",
-            float(spacing_i[0]) if self._axis_uniform(spacing_i) else spacing_i.copy(),
-        )
-        object.__setattr__(
-            self,
-            "_dy_public",
-            float(spacing_j[0]) if self._axis_uniform(spacing_j) else spacing_j.copy(),
-        )
-        object.__setattr__(
-            self,
-            "_dz_public",
-            float(spacing_k[0]) if self._axis_uniform(spacing_k) else spacing_k.copy(),
-        )
-        object.__setattr__(self, "dx", self._dx_public)
-        object.__setattr__(self, "dy", self._dy_public)
-        object.__setattr__(self, "dz", self._dz_public)
+        # Public dx/dy/dz are always 1-D spacing vectors (single representation).
+        object.__setattr__(self, "dx", spacing_i)
+        object.__setattr__(self, "dy", spacing_j)
+        object.__setattr__(self, "dz", spacing_k)
 
         if self.active_mask is None:
             mask = np.ones(self.shape, dtype=bool)
@@ -143,15 +124,9 @@ class Grid3D:
         return self.nx * self.ny * self.nz
 
     @property
-    def cell_volume(self) -> float | NDArray[np.float64]:
-        """Return cell volume(s) in cubic meters.
-
-        Uniform grids return a scalar; non-uniform grids return `(nz, ny, nx)`.
-        """
-        volumes = self.cell_volumes
-        if self.is_uniform:
-            return float(volumes.flat[0])
-        return volumes
+    def cell_volume(self) -> NDArray[np.float64]:
+        """Return per-cell volumes with shape `(nz, ny, nx)`."""
+        return self.cell_volumes
 
     @property
     def cell_volumes(self) -> NDArray[np.float64]:

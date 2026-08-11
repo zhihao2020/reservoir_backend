@@ -1,9 +1,0 @@
-{
-  "case_id": "cross_scale_invalid",
-  "lab_case": {
-    "descriptor": {
-      "length_scale_m": 1.0
-    }
-  },
-  "curves": []
-}

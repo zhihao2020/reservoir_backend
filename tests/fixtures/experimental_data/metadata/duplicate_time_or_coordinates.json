@@ -1,1 +1,0 @@
-{"fixture_id":"duplicate_time_or_coordinates","source_name":"duplicate_time_or_coordinates","required_fields":["time","x","y","z","porosity","permeability"],"description":"Fixture with duplicate time and coordinate tuple."}

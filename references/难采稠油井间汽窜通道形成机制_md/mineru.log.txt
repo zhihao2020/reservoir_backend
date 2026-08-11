@@ -1,0 +1,5 @@
+Thinking... 难采稠油井间汽窜通道形成机制及多元热复合体系汽窜调控能力实验.pdf
+2026/08/11 11:55:27 [DEBUG] → POST https://mineru.net/api/v4/file-urls/batch
+2026/08/11 11:55:27 [DEBUG]    body: {"files":[{"name":"难采稠油井间汽窜通道形成机制及多元热复合体系汽窜调控能力实验.pdf"}],"language":"ch","model_version":"vlm"}
+2026/08/11 11:55:27 [DEBUG] ← 401 POST https://mineru.net/api/v4/file-urls/batch (182.5078ms)
+Error: HTTP 401: {"traceId":"0df437c69b57","msgCode":"A0202","msg":"user authenticate failed","data":null,"success":false,"total":0}
