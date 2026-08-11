@@ -3,7 +3,18 @@
 ## 产品主线
 
 ```text
-build_mesh → reconstruct_pressure → reconstruct_saturation → invert_rock_properties
+软件要求 1–4（每时刻 t）：
+
+```text
+1 build_mesh(边界, 井, dx/dy/dz)
+2 reconstruct_pressure(井压, 边界P/流量, k先验)     → 全网格 p
+3 reconstruct_saturation(井饱和度, 边界流量, p)      → 全网格 sw,so,sg
+4 invert_rock_properties(p, S, 流量)                 → 全网格 k, φ（可非均质）
+```
+
+端到端：`run_time_slice` / `run_time_series`（k–p 固定点迭代）。
+
+CMG 仅作**非均质**正演对照（起伏通道 / 断层狗腿），不进产品内核。
 ```
 
 ## 保留的包

@@ -12,10 +12,11 @@
 
 | 能力 | 状态 | 入口 | 证据 | 假设/边界 |
 |------|------|------|------|-----------|
-| 网格划分 | 已验证 | `pipeline.build_mesh` | `tests/test_pipeline_mesh.py` | 轴对齐包围盒；正交间距 |
-| 压力场重建 | MVP | `pipeline.reconstruct_pressure` | `tests/test_pipeline_fields.py` / `test_pressure_solver_3d` | **矩阵井点 Dirichlet**；k 标量/数组先验 |
-| 饱和度场重建 | MVP | `pipeline.reconstruct_saturation` | `tests/test_pipeline_fields.py` | 井点 IDW；sw+so+sg=1 |
-| 物性反演 k、φ | MVP | `pipeline.invert_rock_properties` | `tests/test_pipeline_fields.py` | k 数组先验+迭代；φ 连续/物质平衡代理 |
+| 1 网格划分 | 已验证 | `pipeline.build_mesh` | `tests/test_pipeline_mesh.py` | 边界+井+dx/dy/dz → 序号/坐标 |
+| 2 压力场 | MVP | `pipeline.reconstruct_pressure` | `tests/test_pipeline_fields.py` / `test_pressure_solver_3d` | 井压 Dirichlet；边界 P + **流量 Neumann**；支持非均质 k |
+| 3 饱和度场 | MVP | `pipeline.reconstruct_saturation` | `tests/test_pipeline_fields.py` | 井饱和度；边界流量锚点；流线软各向异性 IDW |
+| 4 物性场 k/φ | MVP | `pipeline.invert_rock_properties` | `tests/test_pipeline_fields.py` | 达西 k；流量场；φ 物质平衡；**非均质数组** |
+| 非均质四场验收 | MVP | `validation/heterogeneous_four_field/` | run_validate.py | **禁止均质**；通道/断层孪生 |
 | 端到端 + CLI | MVP | `python -m reservoir_backend.pipeline.run` | `tests/test_pipeline_e2e_cli.py` | slice/series/discovery/esmda |
 | CSV 多时刻传感器 | 已验证 | `pipeline.load_sensor_series` | `tests/test_sensor_io_esmda.py` | 长表 wells + boundary CSV |
 | ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | α 归一化；R 预条件；可选 GC 局部化；膨胀 |

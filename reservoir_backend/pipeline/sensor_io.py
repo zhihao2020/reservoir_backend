@@ -11,7 +11,8 @@ from reservoir_backend.pipeline.state import BoundaryConditions, SensorSample
 # Expected long-format well rows:
 #   time,well,pressure_pa,sw,so,sg
 # Optional boundary CSV:
-#   time,side,pressure_pa
+#   time,side,pressure_pa[,flux_m3_s]
+# flux_m3_s: net volumetric rate into domain (optional)
 
 
 def load_well_series_csv(path: str | Path) -> list[SensorSample]:
@@ -60,41 +61,64 @@ def load_well_series_csv(path: str | Path) -> list[SensorSample]:
     return samples
 
 
-def load_boundary_series_csv(path: str | Path) -> dict[float, dict[str, float]]:
-    """Load boundary pressures keyed by time then side name."""
+def load_boundary_series_csv(
+    path: str | Path,
+) -> tuple[dict[float, dict[str, float]], dict[float, dict[str, float]]]:
+    """Load boundary pressures and optional fluxes keyed by time then side.
+
+    Returns ``(pressure_by_time, flux_by_time)``.
+    """
     path = Path(path)
     rows = _read_csv_dicts(path)
-    out: dict[float, dict[str, float]] = {}
+    p_out: dict[float, dict[str, float]] = {}
+    q_out: dict[float, dict[str, float]] = {}
     for row in rows:
         t = float(row["time"])
         side = str(row["side"]).strip().lower()
-        p = float(row["pressure_pa"])
-        out.setdefault(t, {})[side] = p
-    return out
+        if row.get("pressure_pa") not in (None, ""):
+            p_out.setdefault(t, {})[side] = float(row["pressure_pa"])
+        if row.get("flux_m3_s") not in (None, ""):
+            q_out.setdefault(t, {})[side] = float(row["flux_m3_s"])
+    return p_out, q_out
 
 
 def merge_boundary_series(
     samples: list[SensorSample],
     boundaries_by_time: dict[float, dict[str, float]],
     *,
+    flux_by_time: dict[float, dict[str, float]] | None = None,
     tol: float = 1.0e-9,
 ) -> list[SensorSample]:
-    """Attach boundary pressures to samples with matching times."""
-    if not boundaries_by_time:
+    """Attach boundary pressures/fluxes to samples with matching times."""
+    if not boundaries_by_time and not flux_by_time:
         return samples
-    times = sorted(boundaries_by_time)
+    p_times = sorted(boundaries_by_time) if boundaries_by_time else []
+    q_times = sorted(flux_by_time) if flux_by_time else []
     merged: list[SensorSample] = []
     for s in samples:
-        side_map = _nearest_time_map(s.time, boundaries_by_time, times, tol=tol)
+        side_map = (
+            _nearest_time_map(s.time, boundaries_by_time, p_times, tol=tol)
+            if boundaries_by_time
+            else {}
+        )
+        flux_map = (
+            _nearest_time_map(s.time, flux_by_time, q_times, tol=tol)
+            if flux_by_time
+            else {}
+        )
         if side_map is None:
-            merged.append(s)
-            continue
+            side_map = {}
+        if flux_map is None:
+            flux_map = {}
         merged.append(
             SensorSample(
                 time=s.time,
                 well_pressure=dict(s.well_pressure),
                 well_saturation=dict(s.well_saturation),
-                boundary=BoundaryConditions(pressure=dict(side_map), flux=dict(s.boundary.flux)),
+                boundary=BoundaryConditions(
+                    pressure=dict(side_map) if side_map else dict(s.boundary.pressure),
+                    flux=dict(flux_map) if flux_map else dict(s.boundary.flux),
+                ),
             )
         )
     return merged
@@ -107,8 +131,8 @@ def load_sensor_series(
     """Convenience: wells CSV + optional boundary CSV → sample list."""
     samples = load_well_series_csv(well_csv)
     if boundary_csv is not None and Path(boundary_csv).is_file():
-        bmap = load_boundary_series_csv(boundary_csv)
-        samples = merge_boundary_series(samples, bmap)
+        bmap, qmap = load_boundary_series_csv(boundary_csv)
+        samples = merge_boundary_series(samples, bmap, flux_by_time=qmap)
     return samples
 
 
@@ -142,11 +166,17 @@ def write_boundary_series_csv(path: str | Path, samples: list[SensorSample]) -> 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["time", "side", "pressure_pa"])
+        w = csv.DictWriter(fh, fieldnames=["time", "side", "pressure_pa", "flux_m3_s"])
         w.writeheader()
         for s in sorted(samples, key=lambda x: x.time):
-            for side, p in s.boundary.pressure.items():
-                w.writerow({"time": s.time, "side": side, "pressure_pa": p})
+            sides = set(s.boundary.pressure) | set(s.boundary.flux)
+            for side in sorted(sides):
+                row = {"time": s.time, "side": side, "pressure_pa": "", "flux_m3_s": ""}
+                if side in s.boundary.pressure:
+                    row["pressure_pa"] = s.boundary.pressure[side]
+                if side in s.boundary.flux:
+                    row["flux_m3_s"] = s.boundary.flux[side]
+                w.writerow(row)
     return path
 
 

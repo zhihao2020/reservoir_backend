@@ -57,12 +57,13 @@ def test_property_inversion_positive() -> None:
     mesh, sample = _mesh_and_sample()
     p, _ = reconstruct_pressure(mesh, sample)
     sw, so, sg, _ = reconstruct_saturation(mesh, sample)
-    k, phi, notes = invert_rock_properties(mesh, p, sw, so, sg)
+    k, phi, notes, fluxes = invert_rock_properties(mesh, p, sw, so, sg)
     assert k.shape == mesh.grid.shape
     assert phi.shape == mesh.grid.shape
     assert np.all(k > 0.0)
     assert np.all((phi > 0.0) & (phi < 1.0))
     assert notes
+    assert "flux_x" in fluxes
 
 
 def test_run_time_slice_e2e() -> None:

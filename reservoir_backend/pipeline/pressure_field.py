@@ -18,12 +18,12 @@ def reconstruct_pressure(
     permeability_m2: float | NDArray[np.float64] = 1.0e-13,
     viscosity_pa_s: float = 1.0e-3,
 ) -> tuple[NDArray[np.float64], list[str]]:
-    """Return pressure field shape ``(nz, ny, nx)`` and diagnostic notes.
+    """Step 2: well P + boundary P/flux → full-grid pressure.
 
-    Well pressures are assembled as **true cell Dirichlet** constraints in the
-    TPFA system (not post-hoc pinning). Face boundary pressures use the
-    existing half-cell Dirichlet treatment. A permeability prior (scalar or
-    array) is required to form transmissibility.
+    Well pressures are assembled as true cell Dirichlet constraints.
+    Face Dirichlet pressures and optional Neumann fluxes (m^3/s into domain)
+    use the TPFA boundary treatment. Permeability (scalar or heterogeneous
+    array) forms transmissibility.
     """
     notes: list[str] = [
         "pressure reconstruction uses permeability prior for TPFA transmissibility",
@@ -36,12 +36,17 @@ def reconstruct_pressure(
         for key, value in sample.boundary.pressure.items()
         if key in {"left", "right", "front", "back", "bottom", "top"}
     }
-
+    neumann = {
+        key: float(value)
+        for key, value in sample.boundary.flux.items()
+        if key in {"left", "right", "front", "back", "bottom", "top"}
+    }
     cell_dirichlet = _well_cell_dirichlet(mesh, sample)
     if cell_dirichlet:
         notes.append(f"well cell Dirichlet count={len(cell_dirichlet)}")
+    if neumann:
+        notes.append(f"neumann flux faces={sorted(neumann.keys())}")
 
-    # Prefer structured TPFA when the grid is large enough for the 3D solver.
     if grid.nx > 1 and grid.ny > 1 and grid.nz > 1:
         try:
             result = solve_steady_state_pressure_3d(
@@ -54,9 +59,9 @@ def reconstruct_pressure(
                 wells=None,
                 reference_pressure=float(next(iter(sample.well_pressure.values()), 0.0)),
                 cell_dirichlet=cell_dirichlet or None,
+                neumann_fluxes=neumann or None,
             )
             pressure = result.pressure.values.copy()
-            # Numerical guard: matrix rows should already enforce sensors.
             pressure = _pin_well_pressures(mesh, sample, pressure)
             n_bc = int(result.report.get("cell_dirichlet_count", 0))
             notes.append(
@@ -64,7 +69,7 @@ def reconstruct_pressure(
                 f" (n={n_bc})"
             )
             return pressure, notes
-        except Exception as exc:  # pragma: no cover - fallback path
+        except Exception as exc:  # pragma: no cover
             notes.append(f"TPFA path failed ({exc}); falling back to sparse blending")
 
     pressure = _blend_from_sensors(mesh, sample)
@@ -88,8 +93,6 @@ def _pin_well_pressures(
 ) -> NDArray[np.float64]:
     out = pressure.copy()
     for name, value in sample.well_pressure.items():
-        if name not in mesh.well_cell_id:
-            raise KeyError(f"sensor well {name} is not on the mesh")
         cell = mesh.well_cell_id[name]
         i, j, k = mesh.grid.ijk(cell)
         out[k, j, i] = float(value)
@@ -97,7 +100,6 @@ def _pin_well_pressures(
 
 
 def _blend_from_sensors(mesh: MeshBundle, sample: SensorSample) -> NDArray[np.float64]:
-    """Inverse-distance weighting from well points and optional boundary faces."""
     grid = mesh.grid
     anchors_xyz: list[tuple[float, float, float]] = []
     anchors_p: list[float] = []
@@ -107,7 +109,6 @@ def _blend_from_sensors(mesh: MeshBundle, sample: SensorSample) -> NDArray[np.fl
         anchors_xyz.append((float(mesh.x[cell]), float(mesh.y[cell]), float(mesh.z[cell])))
         anchors_p.append(float(value))
 
-    # Boundary face centers as soft anchors
     bounds = mesh.bounds
     if bounds is not None:
         for side, value in sample.boundary.pressure.items():

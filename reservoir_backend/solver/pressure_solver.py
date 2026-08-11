@@ -231,15 +231,19 @@ def solve_steady_state_pressure_3d(
     wells: list[Well] | None = None,
     reference_pressure: float = 0.0,
     cell_dirichlet: dict[int, float] | None = None,
+    neumann_fluxes: dict[BoundaryName, float] | None = None,
 ) -> PressureSolveResult:
     """Solve 3D steady single-phase Darcy pressure on a Cartesian grid.
 
     `dirichlet_boundaries` may contain `left`, `right`, `front`, `back`,
-    `bottom`, and `top`. Omitted boundaries are treated as no-flow.
+    `bottom`, and `top`. Omitted boundaries are treated as no-flow unless a
+    Neumann flux is prescribed on that face.
 
-    `cell_dirichlet` maps flat cell indices to prescribed pressures (Pa) and
-    is assembled as true Dirichlet rows in the linear system (e.g. well BHP
-    sensors). Rate wells remain source terms on the RHS.
+    `neumann_fluxes` maps face name → **net volumetric rate into the domain**
+    (m^3/s), distributed over face cells by area. If a face appears in both
+    Dirichlet and Neumann maps, Dirichlet wins.
+
+    `cell_dirichlet` maps flat cell indices to prescribed pressures (Pa).
 
     If there are no face/cell Dirichlet constraints, one reference cell is
     fixed to remove the constant nullspace of the pure Neumann system.
@@ -249,6 +253,11 @@ def solve_steady_state_pressure_3d(
 
     validate_viscosity(mu)
     boundaries = _validate_3d_boundaries(dirichlet_boundaries)
+    neumann = _validate_3d_neumann_fluxes(neumann_fluxes)
+    # Dirichlet supersedes Neumann on the same face
+    for side in list(neumann):
+        if side in boundaries:
+            del neumann[side]
     reference_pressure = _validate_pressure(reference_pressure, "reference_pressure")
     kx_values = _permeability_values(grid, kx)
     ky_values = _permeability_values(grid, ky)
@@ -303,6 +312,7 @@ def solve_steady_state_pressure_3d(
         float(mu),
         boundaries,
     )
+    net_neumann = _apply_3d_neumann_fluxes(rhs, grid, neumann)
 
     net_well_rate = 0.0
     for well in wells:
@@ -361,6 +371,7 @@ def solve_steady_state_pressure_3d(
             "net_well_rate_m3_s": float(net_well_rate),
             "pressure_reference_applied": pressure_reference_applied,
             "cell_dirichlet_count": len(cell_bc),
+            "net_neumann_flux_m3_s": float(net_neumann),
             "dimensions": "3d",
         },
     )
@@ -421,6 +432,71 @@ def _validate_3d_boundaries(boundaries: dict[BoundaryName, float] | None) -> dic
             raise ValueError(f"unsupported 3D boundary name: {name}")
         normalized[key] = _validate_pressure(value, f"{key}_pressure")
     return normalized
+
+
+def _validate_3d_neumann_fluxes(fluxes: dict[BoundaryName, float] | None) -> dict[str, float]:
+    if fluxes is None:
+        return {}
+    allowed = {"left", "right", "front", "back", "bottom", "top"}
+    out: dict[str, float] = {}
+    for name, value in fluxes.items():
+        key = name.lower()
+        if key not in allowed:
+            raise ValueError(f"unsupported 3D Neumann face: {name}")
+        rate = float(value)
+        if not np.isfinite(rate):
+            raise InvalidPhysicalValueError(f"neumann flux on {key} must be finite")
+        out[key] = rate
+    return out
+
+
+def _apply_3d_neumann_fluxes(
+    rhs: NDArray[np.float64],
+    grid: Grid3D,
+    fluxes: dict[str, float],
+) -> float:
+    """Distribute face-total volumetric rates (into domain) onto boundary cells."""
+    if not fluxes:
+        return 0.0
+    total_in = 0.0
+    si, sj, sk = grid.spacing_i, grid.spacing_j, grid.spacing_k
+
+    def add_face(cells: list[tuple[int, int, int]], areas: list[float], q_total: float) -> None:
+        nonlocal total_in
+        a = np.asarray(areas, dtype=float)
+        a_sum = float(np.sum(a))
+        if a_sum <= 0.0:
+            return
+        for (i, j, k), area in zip(cells, a):
+            # source term: positive into domain
+            rhs[grid.index(i, j, k)] += q_total * (float(area) / a_sum)
+        total_in += q_total
+
+    if "left" in fluxes:
+        cells = [(0, j, k) for k in range(grid.nz) for j in range(grid.ny)]
+        areas = [float(sj[j] * sk[k]) for k in range(grid.nz) for j in range(grid.ny)]
+        add_face(cells, areas, fluxes["left"])
+    if "right" in fluxes:
+        cells = [(grid.nx - 1, j, k) for k in range(grid.nz) for j in range(grid.ny)]
+        areas = [float(sj[j] * sk[k]) for k in range(grid.nz) for j in range(grid.ny)]
+        add_face(cells, areas, fluxes["right"])
+    if "front" in fluxes:
+        cells = [(i, 0, k) for k in range(grid.nz) for i in range(grid.nx)]
+        areas = [float(si[i] * sk[k]) for k in range(grid.nz) for i in range(grid.nx)]
+        add_face(cells, areas, fluxes["front"])
+    if "back" in fluxes:
+        cells = [(i, grid.ny - 1, k) for k in range(grid.nz) for i in range(grid.nx)]
+        areas = [float(si[i] * sk[k]) for k in range(grid.nz) for i in range(grid.nx)]
+        add_face(cells, areas, fluxes["back"])
+    if "bottom" in fluxes:
+        cells = [(i, j, 0) for j in range(grid.ny) for i in range(grid.nx)]
+        areas = [float(si[i] * sj[j]) for j in range(grid.ny) for i in range(grid.nx)]
+        add_face(cells, areas, fluxes["bottom"])
+    if "top" in fluxes:
+        cells = [(i, j, grid.nz - 1) for j in range(grid.ny) for i in range(grid.nx)]
+        areas = [float(si[i] * sj[j]) for j in range(grid.ny) for i in range(grid.nx)]
+        add_face(cells, areas, fluxes["top"])
+    return total_in
 
 
 def _validate_cell_dirichlet(

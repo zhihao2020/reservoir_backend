@@ -23,18 +23,20 @@ def invert_rock_properties(
     pressure_prev: NDArray[np.float64] | None = None,
     sw_prev: NDArray[np.float64] | None = None,
     dt: float | None = None,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], list[str]]:
-    """Return ``permeability [m^2]`` and ``porosity`` arrays on the mesh.
+) -> tuple[NDArray[np.float64], NDArray[np.float64], list[str], dict[str, NDArray[np.float64]]]:
+    """Step 4: grid p, S, flux → heterogeneous k and φ via Darcy/continuity.
 
-    Upgraded assumptions:
-    - Isotropic k from Darcy scaling using face fluxes formed with the
-      **array (or scalar) permeability prior**, then blended with that prior.
-    - Porosity uses prior; with two saturation snapshots and ``dt``, applies a
-      continuity-style update ``φ ≈ -div(u) / (∂Sw/∂t)`` where |∂Sw/∂t| is
-      significant, otherwise a weak |ΔSw| regularizer around the prior.
+    - Isotropic k from Darcy ``k ~ μ |u| / |∇p|`` using face fluxes formed with
+      the **array (or scalar) permeability prior** (supports non-uniform rock).
+    - Porosity: with two saturation snapshots and ``dt``, continuity proxy
+      ``φ ≈ -div(u)/(∂Sw/∂t)``; else weak |ΔSw| regularizer around prior.
+
+    Returns ``(k, phi, notes, flux_dict)`` where ``flux_dict`` has keys
+    ``flux_x/y/z`` for optional storage on ``FieldBundle``.
     """
     notes: list[str] = [
         "k inversion uses Darcy scaling k ~ mu * |u| / |grad p| with array prior blend",
+        "supports heterogeneous k prior/array (not limited to homogeneous models)",
     ]
     grid = mesh.grid
     k_prior = _as_field(grid.shape, permeability_prior_m2, name="permeability_prior")
@@ -54,7 +56,12 @@ def invert_rock_properties(
         )
     except Exception as exc:  # pragma: no cover
         notes.append(f"flux computation failed ({exc}); returning priors only")
-        return k, phi, notes
+        empty = {
+            "flux_x": np.zeros((*grid.shape[:2], grid.nx + 1), dtype=float),
+            "flux_y": np.zeros((grid.nz, grid.ny + 1, grid.nx), dtype=float),
+            "flux_z": np.zeros((grid.nz + 1, grid.ny, grid.nx), dtype=float),
+        }
+        return k, phi, notes, empty
 
     fx = fluxes.flux_x
     fy = fluxes.flux_y
@@ -162,7 +169,8 @@ def invert_rock_properties(
         notes.append("phi held at prior (need sw_prev and dt>0 for mass-balance update)")
 
     _ = (so, sg)
-    return k, phi, notes
+    flux_dict = {"flux_x": fx, "flux_y": fy, "flux_z": fz}
+    return k, phi, notes, flux_dict
 
 
 def _as_field(

@@ -78,7 +78,11 @@ class SensorSample:
 
 @dataclass
 class FieldBundle:
-    """Four-field state on the mesh at one time."""
+    """Four-field state on the mesh at one time.
+
+    Maps to 软件要求 steps 2–4: pressure, saturations (sw/so/sg), rock (k, φ).
+    Optional face fluxes support step-4 Darcy inversion diagnostics.
+    """
 
     time: float
     pressure: NDArray[np.float64]  # (nz,ny,nx)
@@ -88,3 +92,7 @@ class FieldBundle:
     permeability: NDArray[np.float64]  # m^2
     porosity: NDArray[np.float64]
     notes: list[str] = field(default_factory=list)
+    # optional face volumetric fluxes (m^3/s), shapes (nz,ny,nx+1) etc.
+    flux_x: NDArray[np.float64] | None = None
+    flux_y: NDArray[np.float64] | None = None
+    flux_z: NDArray[np.float64] | None = None

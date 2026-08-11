@@ -72,6 +72,34 @@ def test_3d_mass_balance_source_sink() -> None:
     assert result.report["net_well_rate_m3_s"] == pytest.approx(0.0)
 
 
+def test_3d_neumann_flux_raises_injector_side_pressure() -> None:
+    grid = Grid3D(nx=8, ny=4, nz=3, dx=10.0, dy=10.0, dz=5.0)
+    # left Dirichlet + right Neumann outflow should create a gradient
+    base = solve_steady_state_pressure_3d(
+        grid=grid,
+        kx=100.0e-15,
+        ky=100.0e-15,
+        kz=100.0e-15,
+        mu=1.0e-3,
+        dirichlet_boundaries={"left": 10.0e6},
+        neumann_fluxes={"right": -1.0e-4},  # outflow (negative into domain)
+    )
+    # with extra injection on left face as Neumann on top of Dirichlet-less case:
+    inj = solve_steady_state_pressure_3d(
+        grid=grid,
+        kx=100.0e-15,
+        ky=100.0e-15,
+        kz=100.0e-15,
+        mu=1.0e-3,
+        dirichlet_boundaries={"right": 10.0e6},
+        neumann_fluxes={"left": 1.0e-4},  # inflow
+    )
+    assert base.report["net_neumann_flux_m3_s"] == pytest.approx(-1.0e-4)
+    assert inj.report["net_neumann_flux_m3_s"] == pytest.approx(1.0e-4)
+    # inflow on left should make left cells higher pressure than right Dirichlet face mean
+    assert float(np.mean(inj.pressure.values[:, :, 0])) > float(np.mean(inj.pressure.values[:, :, -1]))
+
+
 def test_3d_cell_dirichlet_wells() -> None:
     grid = Grid3D(nx=6, ny=5, nz=4, dx=20.0, dy=20.0, dz=8.0)
     inj = grid.index(1, 2, 1)

@@ -36,10 +36,14 @@ def run_time_slice(
     dt: float | None = None,
     n_k_iterations: int = 2,
 ) -> FieldBundle:
-    """Run pressure → saturation → property inversion for one sensor sample.
+    """软件要求 steps 2–4 at one time ``t``.
 
-    When ``n_k_iterations > 1``, permeability is fed back into the pressure
-    TPFA solve for a short fixed-point loop (array prior, not scalar only).
+    2. well P + boundary P/flux → pressure field  
+    3. well S + boundary flux cues → sw, so, sg  
+    4. p, S, flux → heterogeneous k, φ (Darcy + continuity)
+
+    When ``n_k_iterations > 1``, k is fed back into the TPFA pressure solve
+    (array prior — suitable for non-uniform rock).
     """
     if previous is not None:
         k_work: float | NDArray[np.float64] = previous.permeability
@@ -51,20 +55,25 @@ def run_time_slice(
     iters = max(1, int(n_k_iterations))
     p_notes: list[str] = []
     r_notes: list[str] = []
+    s_notes: list[str] = []
     pressure = np.zeros(mesh.grid.shape, dtype=float)
     k = np.zeros(mesh.grid.shape, dtype=float)
     phi = np.zeros(mesh.grid.shape, dtype=float)
-
-    sw, so, sg, s_notes = reconstruct_saturation(mesh, sample)
+    sw = so = sg = np.zeros(mesh.grid.shape, dtype=float)
+    flux_dict: dict[str, NDArray[np.float64]] = {}
 
     for it in range(iters):
+        # Step 2
         pressure, p_notes = reconstruct_pressure(
             mesh,
             sample,
             permeability_m2=k_work,
             viscosity_pa_s=viscosity_pa_s,
         )
-        k, phi, r_notes = invert_rock_properties(
+        # Step 3 (use latest pressure for flow-aligned IDW)
+        sw, so, sg, s_notes = reconstruct_saturation(mesh, sample, pressure=pressure)
+        # Step 4
+        k, phi, r_notes, flux_dict = invert_rock_properties(
             mesh,
             pressure,
             sw,
@@ -78,11 +87,16 @@ def run_time_slice(
             dt=dt,
         )
         k_work = k
-        # keep phi prior soft on intermediate iterations
         if it == 0:
             phi_work = phi
 
-    notes = p_notes + s_notes + r_notes + [f"k-pressure fixed-point iterations={iters}"]
+    notes = (
+        ["four-field steps: pressure → saturation → rock (k,phi)"]
+        + p_notes
+        + s_notes
+        + r_notes
+        + [f"k-pressure fixed-point iterations={iters}"]
+    )
     return FieldBundle(
         time=sample.time,
         pressure=pressure,
@@ -92,6 +106,9 @@ def run_time_slice(
         permeability=k,
         porosity=phi,
         notes=notes,
+        flux_x=flux_dict.get("flux_x"),
+        flux_y=flux_dict.get("flux_y"),
+        flux_z=flux_dict.get("flux_z"),
     )
 
 
@@ -119,6 +136,13 @@ def save_fields(mesh: MeshBundle, fields: FieldBundle, output_dir: str | Path) -
         permeability_m2=fields.permeability,
         porosity=fields.porosity,
     )
+    if fields.flux_x is not None:
+        np.savez(
+            out / "fluxes.npz",
+            flux_x=fields.flux_x,
+            flux_y=fields.flux_y,
+            flux_z=fields.flux_z,
+        )
     summary = {
         "time": fields.time,
         "n_cells": mesh.n_cells,
