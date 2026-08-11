@@ -8,15 +8,15 @@
     "layout": "wells_only",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.64238275650928,
-    "delta_sw_dice": 0.224,
+    "sw_rel_l2": 0.6382143499128813,
+    "delta_sw_dice": 0.384,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 0.8303994781754248,
-    "k_mean": 2.0687867565176875e-12,
-    "p_holdout_rmse_pa": 11968606.749064596,
+    "k_channel_over_out": 0.8240620828152404,
+    "k_mean": 2.2726704068901597e-12,
+    "p_holdout_rmse_pa": 13770644.379745403,
     "interp_notes_tail": [
       "auto spatial k,\u03c6 from 2 points (k_method=idw, phi_method=idw)",
       "auto-interp: log-transform on",
@@ -34,20 +34,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.338646196179743,
-    "delta_sw_dice": 0.608,
+    "sw_rel_l2": 0.48567606824237136,
+    "delta_sw_dice": 0.4,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 8.71645391377511,
-    "k_mean": 1.0220864222058544e-11,
-    "p_holdout_rmse_pa": 6245636.468825095,
+    "k_channel_over_out": 7.8806929816973375,
+    "k_mean": 2.071113832775348e-11,
+    "p_holdout_rmse_pa": 9621923.219733225,
     "interp_notes_tail": [
+      "auto spatial k,\u03c6 from 10 points (k_method=idw, phi_method=kriging)",
       "auto-interp: log-transform on",
-      "auto-interp stack weights idw=0.445 krig=0.407",
-      "auto-interp: stack (n=10, loo_idw=1.5, loo_krig=1.567)",
-      "auto-interp: kriging (n=10, loo_idw=0.03867, loo_krig=0.036)"
+      "auto-interp: idw (n=10, loo_idw=1.162, loo_krig=1.262)",
+      "auto-interp: kriging (n=10, loo_idw=0.2167, loo_krig=0.2035)"
     ],
     "probe_names": [
       "P1",
@@ -69,20 +69,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.4078938758583199,
-    "delta_sw_dice": 0.656,
+    "sw_rel_l2": 0.4535271157729572,
+    "delta_sw_dice": 0.544,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 7.089674389938082,
-    "k_mean": 1.7682483232267207e-11,
-    "p_holdout_rmse_pa": 4157707.0397268794,
+    "k_channel_over_out": 9.67697921113783,
+    "k_mean": 3.6341520140473437e-12,
+    "p_holdout_rmse_pa": 5284047.9658901915,
     "interp_notes_tail": [
-      "auto-interp: log-transform on",
-      "auto-interp stack weights idw=0.696 krig=0.637",
-      "auto-interp: stack (n=14, loo_idw=1.198, loo_krig=1.253)",
-      "auto-interp: kriging (n=14, loo_idw=0.07874, loo_krig=0.07232)"
+      "auto-interp stack weights idw=0.534 krig=0.482",
+      "auto-interp: stack (n=14, loo_idw=1.369, loo_krig=1.44)",
+      "auto-interp stack weights idw=419 krig=451",
+      "auto-interp: stack (n=14, loo_idw=0.04885, loo_krig=0.04707)"
     ],
     "probe_names": [
       "P1",
@@ -108,15 +108,15 @@
     "layout": "wells_only",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.7347681145390351,
-    "delta_sw_dice": 0.49382716049382713,
+    "sw_rel_l2": 0.8781951101660869,
+    "delta_sw_dice": 0.4074074074074074,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 7.688999621906341,
-    "k_mean": 3.1824126658654605e-13,
-    "p_holdout_rmse_pa": 8851979.267396968,
+    "k_channel_over_out": 8.044673079650835,
+    "k_mean": 3.3916160663434576e-13,
+    "p_holdout_rmse_pa": 8744295.66382938,
     "interp_notes_tail": [
       "auto spatial k,\u03c6 from 2 points (k_method=idw, phi_method=idw)",
       "auto-interp: log-transform on",
@@ -134,20 +134,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.4863787165691342,
-    "delta_sw_dice": 0.3950617283950617,
+    "sw_rel_l2": 0.502642043070485,
+    "delta_sw_dice": 0.345679012345679,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 8.97799973839888,
-    "k_mean": 7.656865138882542e-13,
-    "p_holdout_rmse_pa": 5193363.493453638,
+    "k_channel_over_out": 7.909796174041968,
+    "k_mean": 1.498083923659599e-13,
+    "p_holdout_rmse_pa": 6265808.165285881,
     "interp_notes_tail": [
+      "auto spatial k,\u03c6 from 10 points (k_method=kriging, phi_method=kriging)",
       "auto-interp: log-transform on",
-      "auto-interp: kriging (n=10, loo_idw=1.392, loo_krig=1.321)",
-      "auto-interp stack weights idw=1.04e+03 krig=975",
-      "auto-interp: stack (n=10, loo_idw=0.03102, loo_krig=0.03202)"
+      "auto-interp: kriging (n=10, loo_idw=1.389, loo_krig=1.318)",
+      "auto-interp: kriging (n=10, loo_idw=0.04355, loo_krig=0.04132)"
     ],
     "probe_names": [
       "P1",
@@ -169,20 +169,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.39722893180521657,
-    "delta_sw_dice": 0.4567901234567901,
+    "sw_rel_l2": 0.5012957682358299,
+    "delta_sw_dice": 0.3333333333333333,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 10.426300473138335,
-    "k_mean": 1.0476200073462719e-11,
-    "p_holdout_rmse_pa": 5266869.675668271,
+    "k_channel_over_out": 14.553788466581318,
+    "k_mean": 1.1312448968530913e-11,
+    "p_holdout_rmse_pa": 6005408.859379232,
     "interp_notes_tail": [
       "auto spatial k,\u03c6 from 14 points (k_method=kriging, phi_method=kriging)",
       "auto-interp: log-transform on",
-      "auto-interp: kriging (n=14, loo_idw=1.202, loo_krig=1.126)",
-      "auto-interp: kriging (n=14, loo_idw=0.1544, loo_krig=0.1457)"
+      "auto-interp: kriging (n=14, loo_idw=1.194, loo_krig=1.12)",
+      "auto-interp: kriging (n=14, loo_idw=0.1575, loo_krig=0.1494)"
     ],
     "probe_names": [
       "P1",

@@ -270,6 +270,52 @@ def interpolate_rock_from_points(
     return k, phi, notes
 
 
+def _distance_weighted_sw_blend(
+    mesh: MeshBundle,
+    sample_s: SensorSample,
+    sw_recon: NDArray[np.float64],
+    sw_transport: NDArray[np.float64],
+    *,
+    n_s_hard: int,
+) -> NDArray[np.float64]:
+    """Near hard S sensors trust recon; far cells trust transport.
+
+    Length scale shrinks as more probes are available so dense S nets
+    do not force a global recon field that fights multiphase dynamics.
+    """
+    recon = np.asarray(sw_recon, dtype=float)
+    trans = np.asarray(sw_transport, dtype=float)
+    if not sample_s.well_saturation:
+        return trans
+    pts = []
+    for name in sample_s.well_saturation:
+        if name not in mesh.well_cell_id:
+            continue
+        c = mesh.well_cell_id[name]
+        pts.append([mesh.x[c], mesh.y[c], mesh.z[c]])
+    if not pts:
+        return trans
+    pts_a = np.asarray(pts, dtype=float)
+    # mean horizontal spacing as base length
+    dxi = float(np.mean(np.asarray(mesh.grid.dx, dtype=float)))
+    dyj = float(np.mean(np.asarray(mesh.grid.dy, dtype=float)))
+    L0 = max(np.sqrt(dxi * dxi + dyj * dyj), 1.0)
+    # denser S net → shorter influence of recon away from probes
+    L = L0 * float(max(1.1, 2.8 - 0.18 * max(n_s_hard, 1)))
+    xyz = np.column_stack([mesh.x, mesh.y, mesh.z])
+    # min distance to any hard S
+    d2 = np.min(
+        np.sum((xyz[:, None, :] - pts_a[None, :, :]) ** 2, axis=2), axis=1
+    )
+    d = np.sqrt(d2)
+    w = np.exp(-d / L)  # 1 at probe, →0 far
+    # floor so transport always contributes a bit off-probe
+    w = 0.15 + 0.85 * w
+    w3 = w.reshape(mesh.grid.shape)
+    # ensure exact hard pins later via phases_from_sw
+    return w3 * recon + (1.0 - w3) * trans
+
+
 def run_point_first_slice(
     mesh: MeshBundle,
     sample: SensorSample,
@@ -340,9 +386,10 @@ def run_point_first_slice(
         ):
             sw_recon = sw.copy()
             n_s_hard = len(sample_s.well_saturation)
-            # more saturation sensors → trust reconstruction more vs pure transport
-            recon_w = float(min(0.90, 0.35 + 0.14 * n_s_hard))
-            sw_init = (0.45 * previous.sw + 0.55 * sw_recon)
+            # more S sensors → start closer to recon, then blend by distance to hard S
+            recon_bias = float(min(0.55, 0.25 + 0.05 * n_s_hard))
+            sw_init = (1.0 - recon_bias) * previous.sw + recon_bias * sw_recon
+            n_sub = int(np.clip(round(float(dt) / 4.0) + n_s_hard, 8, 28))
             sw_t, t_notes = transport_water_saturation(
                 mesh,
                 sw_init,
@@ -352,12 +399,14 @@ def run_point_first_slice(
                 porosity=phi_work,
                 viscosity_pa_s=viscosity_pa_s,
                 dt=float(dt),
-                n_substeps=max(8, min(20, 6 + n_s_hard)),
+                n_substeps=n_sub,
             )
-            sw_blend = recon_w * sw_recon + (1.0 - recon_w) * sw_t
+            sw_blend = _distance_weighted_sw_blend(
+                mesh, sample_s, sw_recon, sw_t, n_s_hard=n_s_hard
+            )
             sw, so, sg = phases_from_sw(sw_blend, sample=sample_s, mesh=mesh)
             t_notes = list(t_notes) + [
-                f"transport blended with sat-recon (recon_w={recon_w:.2f}, n_s={n_s_hard})"
+                f"distance-weighted sat blend n_s={n_s_hard} n_sub={n_sub}"
             ]
 
         # complementary fill is automatic: observer_s cells have p from pressure field;

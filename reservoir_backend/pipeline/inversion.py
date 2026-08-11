@@ -208,13 +208,25 @@ def run_sensor_inversion(
     for h in history:
         h.notes = list(h.notes) + notes[:12]
         h.permeability = np.clip(
-            0.93 * k_mean + 0.07 * np.asarray(h.permeability, dtype=float),
+            0.95 * k_mean + 0.05 * np.asarray(h.permeability, dtype=float),
             1.0e-18,
             1.0e-10,
         )
         h.permeability, _, _ = enforce_k_channel_contrast(
             mesh, h.permeability, theta_mean, min_ratio=2.0
         )
+
+    # --- 5) fixed-k saturation polish (helps dense probe nets) ---
+    if len(history) >= 2:
+        history = _sw_polish_series(
+            mesh,
+            samples,
+            history,
+            k_fixed=k_mean,
+            phi=phi0,
+            viscosity_pa_s=viscosity_pa_s,
+        )
+        notes.append("fixed-k Sw polish pass")
 
     return InversionResult(
         history=history,
@@ -224,6 +236,82 @@ def run_sensor_inversion(
         observation_nrmse=nrmse,
         notes=notes,
     )
+
+
+def _sw_polish_series(
+    mesh: MeshBundle,
+    samples: list[SensorSample],
+    history: list[FieldBundle],
+    *,
+    k_fixed: NDArray[np.float64],
+    phi: float | NDArray[np.float64],
+    viscosity_pa_s: float,
+) -> list[FieldBundle]:
+    """Recompute p/S with fixed parametric k (no further rock IDW damage)."""
+    from reservoir_backend.pipeline.point_workflow import (
+        filter_sample_for_pressure,
+        filter_sample_for_saturation,
+    )
+    from reservoir_backend.pipeline.pressure_field import reconstruct_pressure
+    from reservoir_backend.pipeline.saturation_field import reconstruct_saturation
+    from reservoir_backend.pipeline.transport_saturation import (
+        phases_from_sw,
+        transport_water_saturation,
+    )
+    from reservoir_backend.pipeline.point_workflow import _distance_weighted_sw_blend
+
+    out: list[FieldBundle] = []
+    prev: FieldBundle | None = None
+    for i, sample in enumerate(samples):
+        dt = None if prev is None else float(sample.time - prev.time)
+        if dt is not None and dt <= 0:
+            dt = None
+        sample_p = filter_sample_for_pressure(sample, mesh)
+        sample_s = filter_sample_for_saturation(sample, mesh)
+        p, _ = reconstruct_pressure(
+            mesh, sample_p, permeability_m2=k_fixed, viscosity_pa_s=viscosity_pa_s
+        )
+        sw, so, sg, _ = reconstruct_saturation(mesh, sample_s, pressure=p)
+        if prev is not None and dt is not None and float(dt) > 0.0:
+            n_s = len(sample_s.well_saturation)
+            n_sub = int(np.clip(round(float(dt) / 4.0) + n_s, 8, 28))
+            sw_t, _ = transport_water_saturation(
+                mesh,
+                0.30 * prev.sw + 0.70 * sw,
+                p,
+                k_fixed,
+                sample,
+                porosity=phi,
+                viscosity_pa_s=viscosity_pa_s,
+                dt=float(dt),
+                n_substeps=n_sub,
+            )
+            sw_b = _distance_weighted_sw_blend(
+                mesh, sample_s, sw, sw_t, n_s_hard=n_s
+            )
+            sw, so, sg = phases_from_sw(sw_b, sample=sample_s, mesh=mesh)
+        base = history[i] if i < len(history) else prev
+        notes = list(base.notes if base is not None else []) + ["fixed-k Sw polish"]
+        fb = FieldBundle(
+            time=sample.time,
+            pressure=p,
+            sw=sw,
+            so=so,
+            sg=sg,
+            permeability=np.asarray(k_fixed, dtype=float).copy(),
+            porosity=(
+                np.asarray(base.porosity, dtype=float).copy()
+                if base is not None
+                else np.full(mesh.grid.shape, float(np.mean(np.asarray(phi))))
+            ),
+            notes=notes,
+            flux_x=base.flux_x if base is not None else None,
+            flux_y=base.flux_y if base is not None else None,
+            flux_z=base.flux_z if base is not None else None,
+        )
+        out.append(fb)
+        prev = fb
+    return out
 
 
 def _geometry_from_indicator(
