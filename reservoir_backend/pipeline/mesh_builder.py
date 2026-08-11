@@ -96,6 +96,7 @@ def build_mesh(
                 z_flat[idx] = z[k, j, i]
 
     well_map: dict[str, int] = {}
+    well_role: dict[str, str] = {}
     for well in wells:
         if well.name in well_map:
             raise ValueError(f"duplicate well name: {well.name}")
@@ -108,6 +109,7 @@ def build_mesh(
         except Exception as exc:
             raise ValueError(f"well {well.name} lies outside bounds") from exc
         well_map[well.name] = grid.index(ii, jj, kk)
+        well_role[well.name] = well.role
 
     return MeshBundle(
         grid=grid,
@@ -119,6 +121,7 @@ def build_mesh(
         y=y_flat,
         z=z_flat,
         well_cell_id=well_map,
+        well_role=well_role,
         bounds=bounds,
     )
 

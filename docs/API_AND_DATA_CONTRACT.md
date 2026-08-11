@@ -37,7 +37,17 @@ python -m reservoir_backend.pipeline.run --config config/sensor_series_case.yaml
 
 ### 单时刻 `config/sensor_case.yaml`
 
-- `bounds`, `grid`, `wells`, `sensors`, `priors`
+- `bounds`, `grid`, `wells`（`role`: injector/producer/observer）
+- `observers` / `probes`：只测点（可选，等价于 `role: observer`）
+- `sensors`：
+  - `well_pressure` / `well_saturation`：注采井
+  - `observer_pressure` / `observer_saturation`：测点硬数据
+  - `well_rate`：仅注采井（m³/s，+注 −采）；**测点不得出现**
+  - `boundary_pressure` / `boundary_flux`：区域边界面
+- `priors`
+
+**测点 vs 边界**：测点是网格内已知 p/S 的硬约束（内部 Dirichlet 传感器）；
+`boundary_*` 才是区域六个面的边界条件。
 
 ### 多时刻 `config/sensor_series_case.yaml`
 

@@ -196,10 +196,28 @@ def mesh_from_config(cfg: dict[str, Any]) -> MeshBundle:
         zmin=float(b["zmin"]),
         zmax=float(b["zmax"]),
     )
-    wells = [
-        WellPoint(name=str(w["name"]), x=float(w["x"]), y=float(w["y"]), z=float(w["z"]))
-        for w in cfg.get("wells", [])
-    ]
+    wells: list[WellPoint] = []
+    for w in cfg.get("wells", []):
+        wells.append(
+            WellPoint(
+                name=str(w["name"]),
+                x=float(w["x"]),
+                y=float(w["y"]),
+                z=float(w["z"]),
+                role=str(w.get("role", "observer")),
+            )
+        )
+    # optional dedicated observation probes (same geometry as wells, role=observer)
+    for w in cfg.get("observers", []) + cfg.get("probes", []):
+        wells.append(
+            WellPoint(
+                name=str(w["name"]),
+                x=float(w["x"]),
+                y=float(w["y"]),
+                z=float(w["z"]),
+                role="observer",
+            )
+        )
     g = cfg["grid"]
     return build_mesh(bounds, g["dx"], g["dy"], g["dz"], wells=wells)
 
@@ -208,18 +226,33 @@ def sample_from_config(cfg: dict[str, Any], time: float | None = None) -> Sensor
     sensors = cfg["sensors"]
     t = float(sensors.get("time", 0.0) if time is None else time)
     well_p = {str(k): float(v) for k, v in sensors.get("well_pressure", {}).items()}
+    # merge explicit observer pressure keys if present
+    for name, val in (sensors.get("observer_pressure") or {}).items():
+        well_p[str(name)] = float(val)
     well_s: dict[str, tuple[float, float, float]] = {}
     for name, val in sensors.get("well_saturation", {}).items():
-        if isinstance(val, (list, tuple)) and len(val) == 3:
-            well_s[str(name)] = (float(val[0]), float(val[1]), float(val[2]))
-        else:
-            sw = float(val)
-            well_s[str(name)] = (sw, max(0.0, 1.0 - sw), 0.0)
+        well_s[str(name)] = _parse_sat_triple(val)
+    for name, val in (sensors.get("observer_saturation") or {}).items():
+        well_s[str(name)] = _parse_sat_triple(val)
     boundary = BoundaryConditions(
         pressure={str(k): float(v) for k, v in sensors.get("boundary_pressure", {}).items()},
         flux={str(k): float(v) for k, v in sensors.get("boundary_flux", {}).items()},
     )
-    return SensorSample(time=t, well_pressure=well_p, well_saturation=well_s, boundary=boundary)
+    well_rate = {str(k): float(v) for k, v in (sensors.get("well_rate") or {}).items()}
+    return SensorSample(
+        time=t,
+        well_pressure=well_p,
+        well_saturation=well_s,
+        boundary=boundary,
+        well_rate=well_rate,
+    )
+
+
+def _parse_sat_triple(val: Any) -> tuple[float, float, float]:
+    if isinstance(val, (list, tuple)) and len(val) == 3:
+        return (float(val[0]), float(val[1]), float(val[2]))
+    sw = float(val)
+    return (sw, max(0.0, 1.0 - sw), 0.0)
 
 
 def main(argv: list[str] | None = None) -> int:

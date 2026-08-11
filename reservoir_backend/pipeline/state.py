@@ -29,17 +29,36 @@ class AxisAlignedBounds:
 
 @dataclass(frozen=True)
 class WellPoint:
-    """A named well location in physical coordinates."""
+    """A named location on the mesh (injector / producer / observer probe).
+
+    ``role``:
+    - ``injector`` / ``producer``: may have volumetric rates
+    - ``observer``: measurement-only; pressure/saturation hard data, **no** fluid rate
+      (conceptually interior Dirichlet / hard sensors, not domain-face BC)
+    """
 
     name: str
     x: float
     y: float
     z: float
+    role: str = "observer"  # injector | producer | observer
+
+    def __post_init__(self) -> None:
+        role = str(self.role).lower().strip()
+        if role in ("inj", "injection", "injector"):
+            role = "injector"
+        elif role in ("prod", "production", "producer"):
+            role = "producer"
+        elif role in ("obs", "probe", "sensor", "monitor", "observation", "observer"):
+            role = "observer"
+        else:
+            raise ValueError(f"unsupported well role: {self.role}")
+        object.__setattr__(self, "role", role)
 
 
 @dataclass
 class MeshBundle:
-    """Mesh geometry plus well-to-cell mapping."""
+    """Mesh geometry plus well/probe-to-cell mapping."""
 
     grid: Grid3D
     cell_id: NDArray[np.int64]  # flat index, shape (n,)
@@ -50,11 +69,18 @@ class MeshBundle:
     y: NDArray[np.float64]
     z: NDArray[np.float64]
     well_cell_id: dict[str, int] = field(default_factory=dict)
+    well_role: dict[str, str] = field(default_factory=dict)
     bounds: AxisAlignedBounds | None = None
 
     @property
     def n_cells(self) -> int:
         return int(self.cell_id.size)
+
+    def observer_names(self) -> list[str]:
+        return [n for n, r in self.well_role.items() if r == "observer"]
+
+    def active_well_names(self) -> list[str]:
+        return [n for n, r in self.well_role.items() if r in ("injector", "producer")]
 
 
 @dataclass
@@ -68,14 +94,36 @@ class BoundaryConditions:
 
 @dataclass
 class SensorSample:
-    """Sparse sensor readings at one time stamp."""
+    """Sparse sensor readings at one time stamp.
+
+    Names in ``well_pressure`` / ``well_saturation`` may be:
+
+    - **injectors / producers**: may also appear in ``well_rate``
+    - **observers (测点)**: known p and/or S, **no** rate — treated as hard
+      interior constraints (Dirichlet-like), not domain-face boundaries
+    """
 
     time: float
-    well_pressure: Mapping[str, float]  # well name -> Pa
+    well_pressure: Mapping[str, float]  # name -> Pa (active wells + observers)
     well_saturation: Mapping[str, tuple[float, float, float]]  # name -> (sw, so, sg)
     boundary: BoundaryConditions = field(default_factory=BoundaryConditions)
-    # optional signed volumetric rates (m^3/s): +injection into domain, -production
+    # signed volumetric rates (m^3/s): +injection, -production; observers omit this
     well_rate: Mapping[str, float] = field(default_factory=dict)
+
+    def observation_names(self, mesh: MeshBundle | None = None) -> list[str]:
+        """Names with hard p/S data that are not flowing (no rate)."""
+        rate_names = set(self.well_rate or {})
+        names = set(self.well_pressure) | set(self.well_saturation)
+        if mesh is not None and mesh.well_role:
+            return sorted(
+                n
+                for n in names
+                if mesh.well_role.get(n, "observer") == "observer" or n not in rate_names
+            )
+        return sorted(n for n in names if n not in rate_names)
+
+    def flowing_names(self) -> list[str]:
+        return sorted(self.well_rate or {})
 
 
 @dataclass

@@ -17,13 +17,22 @@ from reservoir_backend.pipeline import (
 
 def _mesh_and_sample():
     bounds = AxisAlignedBounds(0.0, 60.0, 0.0, 40.0, 0.0, 30.0)
-    wells = [WellPoint("INJ", 10.0, 20.0, 15.0), WellPoint("PROD", 50.0, 20.0, 15.0)]
+    wells = [
+        WellPoint("INJ", 10.0, 20.0, 15.0, role="injector"),
+        WellPoint("PROD", 50.0, 20.0, 15.0, role="producer"),
+        WellPoint("OBS1", 30.0, 20.0, 15.0, role="observer"),
+    ]
     mesh = build_mesh(bounds, 10.0, 10.0, 10.0, wells=wells)
     sample = SensorSample(
         time=0.0,
-        well_pressure={"INJ": 12.0e6, "PROD": 10.0e6},
-        well_saturation={"INJ": (0.7, 0.3, 0.0), "PROD": (0.3, 0.7, 0.0)},
+        well_pressure={"INJ": 12.0e6, "PROD": 10.0e6, "OBS1": 11.0e6},
+        well_saturation={
+            "INJ": (0.7, 0.3, 0.0),
+            "PROD": (0.3, 0.7, 0.0),
+            "OBS1": (0.5, 0.5, 0.0),
+        },
         boundary=BoundaryConditions(pressure={"left": 12.0e6, "right": 10.0e6}),
+        well_rate={"INJ": 2.0e-5, "PROD": -2.0e-5},
     )
     return mesh, sample
 
@@ -37,6 +46,18 @@ def test_pressure_matches_well_sensors() -> None:
         i, j, k = mesh.grid.ijk(cell)
         assert abs(p[k, j, i] - value) < 1.0e-6
     assert notes
+    assert "OBS1" in sample.observation_names(mesh)
+    assert mesh.well_role["OBS1"] == "observer"
+    assert any("observer" in n for n in notes)
+
+
+def test_observer_saturation_hard_match() -> None:
+    mesh, sample = _mesh_and_sample()
+    sw, so, sg, _ = reconstruct_saturation(mesh, sample)
+    cell = mesh.well_cell_id["OBS1"]
+    i, j, k = mesh.grid.ijk(cell)
+    assert abs(sw[k, j, i] - 0.5) < 1e-8
+    assert abs((sw + so + sg)[k, j, i] - 1.0) < 1e-8
 
 
 def test_saturation_closure_and_wells() -> None:

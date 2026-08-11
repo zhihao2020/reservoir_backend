@@ -19,15 +19,17 @@ def reconstruct_pressure(
     permeability_m2: float | NDArray[np.float64] = 1.0e-13,
     viscosity_pa_s: float = 1.0e-3,
 ) -> tuple[NDArray[np.float64], list[str]]:
-    """Step 2: well P + boundary P/flux → full-grid pressure.
+    """Step 2: well/observer P + boundary P/flux → full-grid pressure.
 
-    Well pressures are assembled as true cell Dirichlet constraints.
+    Injector/producer **and observer (测点)** pressures are assembled as true
+    cell Dirichlet constraints. Observers do not inject/produce fluid.
+
     Face Dirichlet pressures and optional Neumann fluxes (m^3/s into domain)
-    use the TPFA boundary treatment. Permeability (scalar or heterogeneous
-    array) forms transmissibility.
+    use the TPFA face boundary treatment. Permeability forms transmissibility.
     """
     notes: list[str] = [
         "pressure reconstruction uses permeability prior for TPFA transmissibility",
+        "observer probes: hard p Dirichlet, no fluid rate (interior sensors)",
     ]
     grid = mesh.grid
     validate_viscosity(viscosity_pa_s)
@@ -44,8 +46,11 @@ def reconstruct_pressure(
     }
     cell_dirichlet = _well_cell_dirichlet(mesh, sample)
     rate_wells = _rate_wells_from_sample(mesh, sample)
+    obs_names = sample.observation_names(mesh)
     if cell_dirichlet:
-        notes.append(f"well cell Dirichlet count={len(cell_dirichlet)}")
+        notes.append(f"hard pressure sensors (wells+observers) count={len(cell_dirichlet)}")
+    if obs_names:
+        notes.append(f"observer probes: {obs_names}")
     if rate_wells:
         notes.append(f"well rate sources count={len(rate_wells)}")
     if neumann:
@@ -92,7 +97,7 @@ def _well_cell_dirichlet(mesh: MeshBundle, sample: SensorSample) -> dict[int, fl
 
 
 def _rate_wells_from_sample(mesh: MeshBundle, sample: SensorSample) -> list[Well]:
-    """Build rate wells for cells that have signed well_rate (m^3/s).
+    """Build rate wells only for flowing injectors/producers (never observers).
 
     If the same cell also has Dirichlet BHP, the pressure solver skips the
     rate source on that cell (Dirichlet wins) — rates still feed transport.
@@ -100,6 +105,9 @@ def _rate_wells_from_sample(mesh: MeshBundle, sample: SensorSample) -> list[Well
     wells: list[Well] = []
     for name, q in (sample.well_rate or {}).items():
         if name not in mesh.well_cell_id:
+            continue
+        # never treat observers as rate sources even if mis-specified
+        if mesh.well_role.get(name) == "observer":
             continue
         q = float(q)
         if not np.isfinite(q) or abs(q) < 1.0e-30:
