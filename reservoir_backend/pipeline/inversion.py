@@ -216,8 +216,9 @@ def run_sensor_inversion(
             mesh, h.permeability, theta_mean, min_ratio=2.0
         )
 
-    # --- 5) fixed-k saturation polish (helps dense probe nets) ---
-    if len(history) >= 2:
+    # --- 5) fixed-k Sw polish (sparse S nets; dense recon is already strong) ---
+    n_s_max = max((len(s.well_saturation or {}) for s in samples), default=0)
+    if len(history) >= 2 and n_s_max < 6:
         history = _sw_polish_series(
             mesh,
             samples,
@@ -226,7 +227,9 @@ def run_sensor_inversion(
             phi=phi0,
             viscosity_pa_s=viscosity_pa_s,
         )
-        notes.append("fixed-k Sw polish pass")
+        notes.append("fixed-k Sw polish pass (sparse S net)")
+    elif len(history) >= 2:
+        notes.append("Sw polish skipped (dense S net)")
 
     return InversionResult(
         history=history,
@@ -249,6 +252,7 @@ def _sw_polish_series(
 ) -> list[FieldBundle]:
     """Recompute p/S with fixed parametric k (no further rock IDW damage)."""
     from reservoir_backend.pipeline.point_workflow import (
+        blend_recon_transport_sw,
         filter_sample_for_pressure,
         filter_sample_for_saturation,
     )
@@ -258,7 +262,6 @@ def _sw_polish_series(
         phases_from_sw,
         transport_water_saturation,
     )
-    from reservoir_backend.pipeline.point_workflow import _distance_weighted_sw_blend
 
     out: list[FieldBundle] = []
     prev: FieldBundle | None = None
@@ -274,10 +277,10 @@ def _sw_polish_series(
         sw, so, sg, _ = reconstruct_saturation(mesh, sample_s, pressure=p)
         if prev is not None and dt is not None and float(dt) > 0.0:
             n_s = len(sample_s.well_saturation)
-            n_sub = int(np.clip(round(float(dt) / 5.0) + n_s, 8, 24))
+            n_sub = int(np.clip(round(float(dt) / 4.0) + n_s, 8, 28))
             sw_t, _ = transport_water_saturation(
                 mesh,
-                0.40 * prev.sw + 0.60 * sw,
+                0.45 * prev.sw + 0.55 * sw,
                 p,
                 k_fixed,
                 sample,
@@ -286,9 +289,7 @@ def _sw_polish_series(
                 dt=float(dt),
                 n_substeps=n_sub,
             )
-            sw_b = _distance_weighted_sw_blend(
-                mesh, sample_s, sw, sw_t, n_s_hard=n_s, recon_floor=0.45
-            )
+            sw_b, _rw = blend_recon_transport_sw(sw, sw_t, n_s_hard=n_s)
             sw, so, sg = phases_from_sw(sw_b, sample=sample_s, mesh=mesh)
         base = history[i] if i < len(history) else prev
         notes = list(base.notes if base is not None else []) + ["fixed-k Sw polish"]
@@ -576,28 +577,33 @@ def _hard_series(
     phi_work: float | NDArray[np.float64],
     viscosity_pa_s: float,
     n_k_iterations: int,
+    lock_permeability: bool = True,
 ) -> list[FieldBundle]:
+    """Hard-pin series on fixed (parametric) k for clean multiphase transport.
+
+    ``lock_permeability=True`` (default on inversion path) prevents point-rock
+    IDW from rewriting the velocity field used for Sw.
+    """
     history: list[FieldBundle] = []
     prev: FieldBundle | None = None
-    k = k_work
     phi = phi_work
     for sample in samples:
         dt = None if prev is None else float(sample.time - prev.time)
         if dt is not None and dt <= 0:
             dt = None
-        if prev is not None:
-            k = 0.9 * k_work + 0.1 * prev.permeability
+        if prev is not None and not lock_permeability:
             phi = prev.porosity
         bundle = run_time_slice(
             mesh,
             sample,
-            permeability_prior_m2=k,
+            permeability_prior_m2=k_work,
             porosity_prior=phi,
             viscosity_pa_s=viscosity_pa_s,
             previous=prev,
             dt=dt,
-            n_k_iterations=n_k_iterations,
+            n_k_iterations=n_k_iterations if not lock_permeability else max(1, n_k_iterations),
             mode="point_first",
+            lock_permeability=lock_permeability,
         )
         history.append(bundle)
         prev = bundle

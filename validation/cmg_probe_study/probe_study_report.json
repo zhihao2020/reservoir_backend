@@ -8,20 +8,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.39305038980086787,
-    "delta_sw_dice": 0.528,
+    "sw_rel_l2": 0.3436435495196455,
+    "delta_sw_dice": 0.576,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 7.56406834357316,
-    "k_mean": 2.0955433049582813e-11,
-    "p_holdout_rmse_pa": 9654632.987651082,
+    "k_channel_over_out": 11.1314087970853,
+    "k_mean": 9.940258054709064e-12,
+    "p_holdout_rmse_pa": 9068714.490787072,
     "interp_notes_tail": [
-      "auto spatial k,\u03c6 from 10 points (k_method=idw, phi_method=kriging)",
       "auto-interp: log-transform on",
-      "auto-interp: idw (n=10, loo_idw=1.186, loo_krig=1.279)",
-      "auto-interp: kriging (n=10, loo_idw=0.1004, loo_krig=0.09255)"
+      "auto-interp stack weights idw=0.166 krig=0.157",
+      "auto-interp: stack (n=10, loo_idw=2.456, loo_krig=2.523)",
+      "auto-interp: kriging (n=10, loo_idw=0.2036, loo_krig=0.1865)"
     ],
     "probe_names": [
       "P1",
@@ -43,20 +43,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.42408196463454045,
-    "delta_sw_dice": 0.624,
+    "sw_rel_l2": 0.41308991400819206,
+    "delta_sw_dice": 0.656,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 9.97263784613395,
-    "k_mean": 1.1502274661217985e-11,
-    "p_holdout_rmse_pa": 4966557.751416092,
+    "k_channel_over_out": 6.810194754386827,
+    "k_mean": 1.830301060095811e-11,
+    "p_holdout_rmse_pa": 4924957.630422843,
     "interp_notes_tail": [
+      "auto spatial k,\u03c6 from 14 points (k_method=kriging, phi_method=kriging)",
       "auto-interp: log-transform on",
-      "auto-interp stack weights idw=0.626 krig=0.57",
-      "auto-interp: stack (n=14, loo_idw=1.264, loo_krig=1.324)",
-      "auto-interp: kriging (n=14, loo_idw=0.05749, loo_krig=0.05307)"
+      "auto-interp: kriging (n=14, loo_idw=1.819, loo_krig=1.712)",
+      "auto-interp: kriging (n=14, loo_idw=0.2076, loo_krig=0.1939)"
     ],
     "probe_names": [
       "P1",

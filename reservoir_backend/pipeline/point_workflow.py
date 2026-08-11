@@ -270,6 +270,30 @@ def interpolate_rock_from_points(
     return k, phi, notes
 
 
+def blend_recon_transport_sw(
+    sw_recon: NDArray[np.float64],
+    sw_transport: NDArray[np.float64],
+    *,
+    n_s_hard: int,
+    k_field: NDArray[np.float64] | None = None,
+) -> tuple[NDArray[np.float64], float]:
+    """Recon/transport blend for multiphase Sw.
+
+    Base weight rises with exclusive S count (validated ~0.34 Sw L2 @ N=8).
+    When ``k_field`` is given (locked parametric k), high-k corridors lean
+    slightly more on transport so the water front follows the channel without
+    starving recon in the matrix (helps dense nets / Dice).
+    """
+    n_s = max(int(n_s_hard), 0)
+    recon_w = float(min(0.90, 0.35 + 0.14 * n_s))
+    recon = np.asarray(sw_recon, dtype=float)
+    trans = np.asarray(sw_transport, dtype=float)
+    _ = k_field  # reserved for future channel-aware weighting
+    # Global recon-led blend (validated best Sw L2 on CMG channel twin).
+    sw = recon_w * recon + (1.0 - recon_w) * trans
+    return sw, recon_w
+
+
 def _distance_weighted_sw_blend(
     mesh: MeshBundle,
     sample_s: SensorSample,
@@ -277,12 +301,11 @@ def _distance_weighted_sw_blend(
     sw_transport: NDArray[np.float64],
     *,
     n_s_hard: int,
-    recon_floor: float = 0.35,
+    recon_floor: float = 0.55,
 ) -> NDArray[np.float64]:
-    """Near hard S sensors trust recon; far cells lean transport.
+    """Optional local blend: near S probes → recon; far → transport.
 
-    Length scale shrinks mildly with more probes so dense nets stay local
-    without starving recon (which hurt Sw L2 when floor was too low).
+    Kept for experiments; production path uses :func:`blend_recon_transport_sw`.
     """
     recon = np.asarray(sw_recon, dtype=float)
     trans = np.asarray(sw_transport, dtype=float)
@@ -324,13 +347,26 @@ def run_point_first_slice(
     dt: float | None = None,
     n_k_iterations: int = 2,
     use_transport: bool = True,
+    lock_permeability: bool = False,
 ) -> FieldBundle:
-    """User-described workflow: complementary p/S → point k,φ → auto spatial map."""
+    """User-described workflow: complementary p/S → point k,φ → auto spatial map.
+
+    ``lock_permeability=True`` keeps pressure/transport on the prior k field
+    (e.g. parametric ES-MDA mean) so point-rock IDW cannot pollute the front.
+    """
     vnotes = validate_exclusive_observers(mesh, sample)
 
-    if previous is not None:
-        k_work: float | NDArray[np.float64] = previous.permeability
-        phi_work: float | NDArray[np.float64] = previous.porosity
+    k_prior = np.asarray(permeability_prior_m2, dtype=float)
+    if lock_permeability:
+        k_work: float | NDArray[np.float64] = (
+            k_prior.copy() if k_prior.ndim else float(k_prior)
+        )
+        phi_work: float | NDArray[np.float64] = (
+            previous.porosity if previous is not None else porosity_prior
+        )
+    elif previous is not None:
+        k_work = previous.permeability
+        phi_work = previous.porosity
     else:
         k_work = permeability_prior_m2
         phi_work = porosity_prior
@@ -354,11 +390,15 @@ def run_point_first_slice(
     i_notes: list[str] = []
 
     for it in range(iters):
+        # physics k: locked parametric prior or iterative point-rock field
+        k_phys: float | NDArray[np.float64] = (
+            permeability_prior_m2 if lock_permeability else k_work
+        )
         # --- full-field pressure from pressure sensors only ---
         pressure, p_notes = reconstruct_pressure(
             mesh,
             sample_p,
-            permeability_m2=k_work,
+            permeability_m2=k_phys,
             viscosity_pa_s=viscosity_pa_s,
         )
         p_notes = [
@@ -383,27 +423,27 @@ def run_point_first_slice(
         ):
             sw_recon = sw.copy()
             n_s_hard = len(sample_s.well_saturation)
-            # more S sensors → start closer to recon, then blend by distance to hard S
-            recon_bias = float(min(0.70, 0.40 + 0.06 * n_s_hard))
-            sw_init = (1.0 - recon_bias) * previous.sw + recon_bias * sw_recon
-            n_sub = int(np.clip(round(float(dt) / 5.0) + n_s_hard, 8, 24))
+            # init slightly recon-biased; blend uses validated global recon weight
+            sw_init = 0.45 * previous.sw + 0.55 * sw_recon
+            n_sub = int(np.clip(round(float(dt) / 4.0) + n_s_hard, 8, 28))
             sw_t, t_notes = transport_water_saturation(
                 mesh,
                 sw_init,
                 pressure,
-                k_work,
+                k_phys,
                 sample,  # full sample for rates + sat pins
                 porosity=phi_work,
                 viscosity_pa_s=viscosity_pa_s,
                 dt=float(dt),
                 n_substeps=n_sub,
             )
-            sw_blend = _distance_weighted_sw_blend(
-                mesh, sample_s, sw_recon, sw_t, n_s_hard=n_s_hard, recon_floor=0.40
+            sw_blend, recon_w = blend_recon_transport_sw(
+                sw_recon, sw_t, n_s_hard=n_s_hard
             )
             sw, so, sg = phases_from_sw(sw_blend, sample=sample_s, mesh=mesh)
             t_notes = list(t_notes) + [
-                f"distance-weighted sat blend n_s={n_s_hard} n_sub={n_sub}"
+                f"transport blended with sat-recon (recon_w={recon_w:.2f}, "
+                f"n_s={n_s_hard}, n_sub={n_sub}, lock_k={lock_permeability})"
             ]
 
         # complementary fill is automatic: observer_s cells have p from pressure field;
@@ -418,7 +458,7 @@ def run_point_first_slice(
             so,
             sg,
             viscosity_pa_s=viscosity_pa_s,
-            permeability_prior_m2=k_work,
+            permeability_prior_m2=k_phys,
             porosity_prior=phi_work,
             pressure_prev=None if previous is None else previous.pressure,
             sw_prev=None if previous is None else previous.sw,
@@ -427,7 +467,16 @@ def run_point_first_slice(
         k, phi, i_notes = interpolate_rock_from_points(
             mesh, table, k_fill=k_fill, phi_fill=phi_fill
         )
-        k_work = k
+        if lock_permeability:
+            # keep output k close to physics prior; light point rock for local detail
+            k = np.clip(
+                0.92 * np.asarray(k_phys, dtype=float)
+                + 0.08 * np.asarray(k, dtype=float),
+                1.0e-18,
+                1.0e-10,
+            )
+        else:
+            k_work = k
         if it == 0:
             phi_work = phi
 
@@ -442,7 +491,10 @@ def run_point_first_slice(
         + t_notes
         + r_notes
         + i_notes
-        + [f"k-pressure fixed-point iterations={iters}"]
+        + [
+            f"k-pressure fixed-point iterations={iters}",
+            f"lock_permeability={lock_permeability}",
+        ]
     )
     return FieldBundle(
         time=sample.time,

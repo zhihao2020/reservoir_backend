@@ -34,6 +34,7 @@ def run_time_slice(
     dt: float | None = None,
     n_k_iterations: int = 2,
     mode: str = "point_first",
+    lock_permeability: bool = False,
 ) -> FieldBundle:
     """软件要求 steps 2–4 at one time ``t``.
 
@@ -45,6 +46,7 @@ def run_time_slice(
     4. 空间 IDW 得到全网格 k、φ
 
     ``mode="grid_invert"`` keeps the previous full-grid invert path for comparison.
+    ``lock_permeability`` keeps p/transport on the provided k prior (inversion path).
     """
     mode = str(mode).lower().strip()
     if mode in ("point_first", "point", "default"):
@@ -57,6 +59,7 @@ def run_time_slice(
             previous=previous,
             dt=dt,
             n_k_iterations=n_k_iterations,
+            lock_permeability=lock_permeability,
         )
 
     # ---- legacy full-grid invert ----

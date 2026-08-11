@@ -69,8 +69,9 @@ def reconstruct_saturation(
         notes.append("no well saturation sensors; used default sw=0.2, so=0.8, sg=0")
         return sw, so, sg, notes
 
-    # Prefer auto spatial (IDW / kriging / stack) when enough exclusive hard points;
-    # fall back to anisotropic IDW only when few anchors and pressure is available.
+    # Flow-anisotropic IDW when pressure is available on moderate probe nets
+    # (better channel-front Dice than isotropic auto-kriging). Dense nets
+    # (n_a > 12) still use auto spatial IDW/kriging/stack.
     pts = np.asarray([[a[0], a[1], a[2]] for a in anchors], dtype=float)
     sw_v = np.asarray([a[3] for a in anchors], dtype=float)
     so_v = np.asarray([a[4] for a in anchors], dtype=float)
@@ -79,7 +80,7 @@ def reconstruct_saturation(
     use_aniso = (
         pressure is not None
         and pressure.shape == grid.shape
-        and n_a < 8
+        and n_a <= 14
     )
 
     if not use_aniso:
