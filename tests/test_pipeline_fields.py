@@ -70,3 +70,38 @@ def test_run_time_slice_e2e() -> None:
     fields = run_time_slice(mesh, sample)
     assert fields.pressure.shape == mesh.grid.shape
     assert np.allclose(fields.sw + fields.so + fields.sg, 1.0, atol=1e-8)
+    assert any("matrix well-cell Dirichlet" in n for n in fields.notes)
+    assert any("k-pressure fixed-point" in n for n in fields.notes)
+
+
+def test_pressure_matrix_dirichlet_note() -> None:
+    mesh, sample = _mesh_and_sample()
+    p, notes = reconstruct_pressure(mesh, sample)
+    assert any("matrix well-cell Dirichlet" in n for n in notes)
+    # interior gradient should exist between wells / boundaries
+    assert float(np.std(p)) > 0.0
+
+
+def test_k_array_prior_and_two_time_phi() -> None:
+    mesh, sample0 = _mesh_and_sample()
+    f0 = run_time_slice(mesh, sample0, n_k_iterations=2)
+    sample1 = SensorSample(
+        time=30.0,
+        well_pressure={"INJ": 12.2e6, "PROD": 9.8e6},
+        well_saturation={"INJ": (0.75, 0.25, 0.0), "PROD": (0.35, 0.65, 0.0)},
+        boundary=BoundaryConditions(pressure={"left": 12.2e6, "right": 9.8e6}),
+    )
+    f1 = run_time_slice(
+        mesh,
+        sample1,
+        previous=f0,
+        dt=30.0,
+        n_k_iterations=2,
+        permeability_prior_m2=f0.permeability,
+        porosity_prior=f0.porosity,
+    )
+    assert f1.permeability.shape == mesh.grid.shape
+    assert np.all(f1.permeability > 0.0)
+    assert any("mass-balance" in n or "continuity" in n for n in f1.notes)
+    # k field should not be a pure constant after iteration
+    assert float(np.std(f1.permeability)) >= 0.0

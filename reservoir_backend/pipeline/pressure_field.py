@@ -20,10 +20,10 @@ def reconstruct_pressure(
 ) -> tuple[NDArray[np.float64], list[str]]:
     """Return pressure field shape ``(nz, ny, nx)`` and diagnostic notes.
 
-    Well pressures pin the corresponding cells (Dirichlet). Face boundary
-    pressures use the existing TPFA boundary treatment. A permeability prior
-    is required (constant or array); without rock properties the problem is
-    under-determined and this prior regularizes the solve.
+    Well pressures are assembled as **true cell Dirichlet** constraints in the
+    TPFA system (not post-hoc pinning). Face boundary pressures use the
+    existing half-cell Dirichlet treatment. A permeability prior (scalar or
+    array) is required to form transmissibility.
     """
     notes: list[str] = [
         "pressure reconstruction uses permeability prior for TPFA transmissibility",
@@ -37,6 +37,10 @@ def reconstruct_pressure(
         if key in {"left", "right", "front", "back", "bottom", "top"}
     }
 
+    cell_dirichlet = _well_cell_dirichlet(mesh, sample)
+    if cell_dirichlet:
+        notes.append(f"well cell Dirichlet count={len(cell_dirichlet)}")
+
     # Prefer structured TPFA when the grid is large enough for the 3D solver.
     if grid.nx > 1 and grid.ny > 1 and grid.nz > 1:
         try:
@@ -49,11 +53,16 @@ def reconstruct_pressure(
                 dirichlet_boundaries=boundaries or None,
                 wells=None,
                 reference_pressure=float(next(iter(sample.well_pressure.values()), 0.0)),
+                cell_dirichlet=cell_dirichlet or None,
             )
             pressure = result.pressure.values.copy()
-            # Pin well cells to sensor readings after solve for hard match.
+            # Numerical guard: matrix rows should already enforce sensors.
             pressure = _pin_well_pressures(mesh, sample, pressure)
-            notes.append("used finite-volume TPFA pressure solve with well-cell pinning")
+            n_bc = int(result.report.get("cell_dirichlet_count", 0))
+            notes.append(
+                "used finite-volume TPFA with matrix well-cell Dirichlet"
+                f" (n={n_bc})"
+            )
             return pressure, notes
         except Exception as exc:  # pragma: no cover - fallback path
             notes.append(f"TPFA path failed ({exc}); falling back to sparse blending")
@@ -61,6 +70,15 @@ def reconstruct_pressure(
     pressure = _blend_from_sensors(mesh, sample)
     notes.append("used inverse-distance blending of well and boundary sensors")
     return pressure, notes
+
+
+def _well_cell_dirichlet(mesh: MeshBundle, sample: SensorSample) -> dict[int, float]:
+    out: dict[int, float] = {}
+    for name, value in sample.well_pressure.items():
+        if name not in mesh.well_cell_id:
+            raise KeyError(f"sensor well {name} is not on the mesh")
+        out[int(mesh.well_cell_id[name])] = float(value)
+    return out
 
 
 def _pin_well_pressures(

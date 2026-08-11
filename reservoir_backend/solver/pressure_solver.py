@@ -13,7 +13,12 @@ from numpy.typing import ArrayLike, NDArray
 from scipy.sparse import lil_matrix
 from scipy.sparse.linalg import spsolve
 
-from reservoir_backend.core.exceptions import FieldShapeError, GridMismatchError, InvalidPhysicalValueError
+from reservoir_backend.core.exceptions import (
+    FieldShapeError,
+    GridIndexError,
+    GridMismatchError,
+    InvalidPhysicalValueError,
+)
 from reservoir_backend.core.field import Field3D
 from reservoir_backend.core.grid import Grid3D
 from reservoir_backend.core.wells import Well
@@ -225,13 +230,19 @@ def solve_steady_state_pressure_3d(
     dirichlet_boundaries: dict[BoundaryName, float] | None = None,
     wells: list[Well] | None = None,
     reference_pressure: float = 0.0,
+    cell_dirichlet: dict[int, float] | None = None,
 ) -> PressureSolveResult:
     """Solve 3D steady single-phase Darcy pressure on a Cartesian grid.
 
     `dirichlet_boundaries` may contain `left`, `right`, `front`, `back`,
-    `bottom`, and `top`. Omitted boundaries are treated as no-flow. If all
-    boundaries are no-flow, one reference cell is fixed to remove the constant
-    nullspace of the pure Neumann system.
+    `bottom`, and `top`. Omitted boundaries are treated as no-flow.
+
+    `cell_dirichlet` maps flat cell indices to prescribed pressures (Pa) and
+    is assembled as true Dirichlet rows in the linear system (e.g. well BHP
+    sensors). Rate wells remain source terms on the RHS.
+
+    If there are no face/cell Dirichlet constraints, one reference cell is
+    fixed to remove the constant nullspace of the pure Neumann system.
     """
     if grid.nx <= 1 or grid.ny <= 1 or grid.nz <= 1:
         raise NotImplementedError("solve_steady_state_pressure_3d supports nx>1, ny>1, nz>1")
@@ -243,6 +254,7 @@ def solve_steady_state_pressure_3d(
     ky_values = _permeability_values(grid, ky)
     kz_values = _permeability_values(grid, kz)
     wells = [] if wells is None else list(wells)
+    cell_bc = _validate_cell_dirichlet(grid, cell_dirichlet)
 
     n = grid.total_cells
     matrix = lil_matrix((n, n), dtype=float)
@@ -297,12 +309,17 @@ def solve_steady_state_pressure_3d(
         if well.grid != grid:
             raise GridMismatchError(f"well {well.name} is defined on a different grid")
         assert well.cell_index is not None
+        if well.cell_index in cell_bc:
+            # Dirichlet pressure supersedes rate source on the same cell.
+            continue
         signed_rate = well.signed_rate
         rhs[well.cell_index] += signed_rate
         net_well_rate += signed_rate
 
+    _apply_cell_dirichlet(matrix, rhs, cell_bc)
+
     pressure_reference_applied = False
-    if not boundaries:
+    if not boundaries and not cell_bc:
         matrix.rows[0] = [0]
         matrix.data[0] = [1.0]
         rhs[0] = reference_pressure
@@ -343,6 +360,7 @@ def solve_steady_state_pressure_3d(
             "boundary_outflow_m3_s": float(boundary_outflow),
             "net_well_rate_m3_s": float(net_well_rate),
             "pressure_reference_applied": pressure_reference_applied,
+            "cell_dirichlet_count": len(cell_bc),
             "dimensions": "3d",
         },
     )
@@ -403,6 +421,29 @@ def _validate_3d_boundaries(boundaries: dict[BoundaryName, float] | None) -> dic
             raise ValueError(f"unsupported 3D boundary name: {name}")
         normalized[key] = _validate_pressure(value, f"{key}_pressure")
     return normalized
+
+
+def _validate_cell_dirichlet(
+    grid: Grid3D, cell_dirichlet: dict[int, float] | None
+) -> dict[int, float]:
+    if not cell_dirichlet:
+        return {}
+    out: dict[int, float] = {}
+    n = grid.total_cells
+    for cell, value in cell_dirichlet.items():
+        idx = int(cell)
+        if idx < 0 or idx >= n:
+            raise GridIndexError(f"cell_dirichlet index {idx} out of range [0, {n})")
+        out[idx] = _validate_pressure(value, f"cell_dirichlet[{idx}]")
+    return out
+
+
+def _apply_cell_dirichlet(matrix, rhs: NDArray[np.float64], cell_bc: dict[int, float]) -> None:
+    """Replace selected equations with p_cell = prescribed value."""
+    for cell, value in cell_bc.items():
+        matrix.rows[cell] = [cell]
+        matrix.data[cell] = [1.0]
+        rhs[cell] = value
 
 
 def _add_internal_face(matrix, cell_a: int, cell_b: int, transmissibility: float) -> None:

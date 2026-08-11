@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import yaml
+from numpy.typing import NDArray
 
 from reservoir_backend.pipeline.mesh_builder import build_mesh
 from reservoir_backend.pipeline.pressure_field import reconstruct_pressure
@@ -28,33 +29,60 @@ def run_time_slice(
     mesh: MeshBundle,
     sample: SensorSample,
     *,
-    permeability_prior_m2: float = 1.0e-13,
-    porosity_prior: float = 0.2,
+    permeability_prior_m2: float | NDArray[np.float64] = 1.0e-13,
+    porosity_prior: float | NDArray[np.float64] = 0.2,
     viscosity_pa_s: float = 1.0e-3,
     previous: FieldBundle | None = None,
     dt: float | None = None,
+    n_k_iterations: int = 2,
 ) -> FieldBundle:
-    """Run pressure → saturation → property inversion for one sensor sample."""
-    pressure, p_notes = reconstruct_pressure(
-        mesh,
-        sample,
-        permeability_m2=permeability_prior_m2,
-        viscosity_pa_s=viscosity_pa_s,
-    )
+    """Run pressure → saturation → property inversion for one sensor sample.
+
+    When ``n_k_iterations > 1``, permeability is fed back into the pressure
+    TPFA solve for a short fixed-point loop (array prior, not scalar only).
+    """
+    if previous is not None:
+        k_work: float | NDArray[np.float64] = previous.permeability
+        phi_work: float | NDArray[np.float64] = previous.porosity
+    else:
+        k_work = permeability_prior_m2
+        phi_work = porosity_prior
+
+    iters = max(1, int(n_k_iterations))
+    p_notes: list[str] = []
+    r_notes: list[str] = []
+    pressure = np.zeros(mesh.grid.shape, dtype=float)
+    k = np.zeros(mesh.grid.shape, dtype=float)
+    phi = np.zeros(mesh.grid.shape, dtype=float)
+
     sw, so, sg, s_notes = reconstruct_saturation(mesh, sample)
-    k, phi, r_notes = invert_rock_properties(
-        mesh,
-        pressure,
-        sw,
-        so,
-        sg,
-        viscosity_pa_s=viscosity_pa_s,
-        permeability_prior_m2=permeability_prior_m2,
-        porosity_prior=porosity_prior,
-        pressure_prev=None if previous is None else previous.pressure,
-        sw_prev=None if previous is None else previous.sw,
-        dt=dt,
-    )
+
+    for it in range(iters):
+        pressure, p_notes = reconstruct_pressure(
+            mesh,
+            sample,
+            permeability_m2=k_work,
+            viscosity_pa_s=viscosity_pa_s,
+        )
+        k, phi, r_notes = invert_rock_properties(
+            mesh,
+            pressure,
+            sw,
+            so,
+            sg,
+            viscosity_pa_s=viscosity_pa_s,
+            permeability_prior_m2=k_work,
+            porosity_prior=phi_work,
+            pressure_prev=None if previous is None else previous.pressure,
+            sw_prev=None if previous is None else previous.sw,
+            dt=dt,
+        )
+        k_work = k
+        # keep phi prior soft on intermediate iterations
+        if it == 0:
+            phi_work = phi
+
+    notes = p_notes + s_notes + r_notes + [f"k-pressure fixed-point iterations={iters}"]
     return FieldBundle(
         time=sample.time,
         pressure=pressure,
@@ -63,7 +91,7 @@ def run_time_slice(
         sg=sg,
         permeability=k,
         porosity=phi,
-        notes=p_notes + s_notes + r_notes,
+        notes=notes,
     )
 
 

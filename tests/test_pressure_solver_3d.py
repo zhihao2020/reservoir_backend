@@ -72,6 +72,27 @@ def test_3d_mass_balance_source_sink() -> None:
     assert result.report["net_well_rate_m3_s"] == pytest.approx(0.0)
 
 
+def test_3d_cell_dirichlet_wells() -> None:
+    grid = Grid3D(nx=6, ny=5, nz=4, dx=20.0, dy=20.0, dz=8.0)
+    inj = grid.index(1, 2, 1)
+    prod = grid.index(4, 2, 2)
+    p_inj, p_prod = 12.0e6, 10.0e6
+    result = solve_steady_state_pressure_3d(
+        grid=grid,
+        kx=100.0e-15,
+        ky=100.0e-15,
+        kz=100.0e-15,
+        mu=1.0e-3,
+        dirichlet_boundaries={"left": p_inj, "right": p_prod},
+        cell_dirichlet={inj: p_inj, prod: p_prod},
+    )
+    pressure = result.pressure.values
+    assert pressure[1, 2, 1] == pytest.approx(p_inj, abs=1e-6)
+    assert pressure[2, 2, 4] == pytest.approx(p_prod, abs=1e-6)
+    assert result.report["cell_dirichlet_count"] == 2
+    assert result.report["pressure_reference_applied"] is False
+
+
 def test_3d_dirichlet_boundary_values() -> None:
     grid = Grid3D(nx=12, ny=4, nz=3, dx=10.0, dy=10.0, dz=5.0)
     left_pressure = 10.0e6
