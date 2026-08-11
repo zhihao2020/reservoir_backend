@@ -14,6 +14,17 @@ from reservoir_backend.pipeline import (
 )
 
 
+def test_enhance_permeability_from_indicator() -> None:
+    from reservoir_backend.pipeline.shape_indicator import enhance_permeability_from_indicator
+
+    k = np.full((2, 3, 4), 1.0e-13)
+    ind = np.zeros((2, 3, 4))
+    ind[0, 1, 2] = 1.0
+    k2 = enhance_permeability_from_indicator(k, ind, strength=0.8)
+    assert k2[0, 1, 2] > k[0, 0, 0]
+    assert np.all(k2 > 0.0)
+
+
 def test_run_time_series_sorted_and_shapes() -> None:
     twin = build_channel_twin(nx=8, ny=6, nz=3, n_times=3)
     # shuffle times to ensure sorting

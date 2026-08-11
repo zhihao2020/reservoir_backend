@@ -121,14 +121,17 @@ def run_esmda_permeability(
     if not well_names:
         raise ValueError("no wells on mesh for ES-MDA observations")
 
-    # default localization: ~0.4 of domain diagonal (helps multi-probe updates)
+    # default localization: shrinks as observation count grows (more local updates)
     loc_r = localization_radius_m
     if loc_r is None and auto_localize:
         dx = float(np.ptp(mesh.x)) if mesh.n_cells else 0.0
         dy = float(np.ptp(mesh.y)) if mesh.n_cells else 0.0
         dz = float(np.ptp(mesh.z)) if mesh.n_cells else 0.0
         diag = float(np.sqrt(dx * dx + dy * dy + dz * dz))
-        loc_r = max(diag * 0.40, 1.0)
+        n_obs = max(1, len(well_names))
+        # 2 wells → ~0.45 diag; many probes → ~0.22 diag
+        frac = float(np.clip(0.55 / np.sqrt(float(n_obs)), 0.22, 0.50))
+        loc_r = max(diag * frac, 1.0)
     md_loc = None
     if loc_r is not None and float(loc_r) > 0.0:
         mesh_xyz = np.column_stack([mesh.x, mesh.y, mesh.z])

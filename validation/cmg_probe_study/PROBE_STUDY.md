@@ -4,20 +4,20 @@
 
 | case | layout | N | n_p/n_s | ES-MDA | Sw rel L2 ↓ | ΔSw Dice ↑ | k_ch/k_out | p hold-out RMSE (Pa) |
 |------|--------|---|---------|--------|-------------|------------|------------|----------------------|
-| cmg_undulating_channel | wells_only | 0 | 0/0 | Y | 0.7030 | 0.256 | 1.024 | 1.35e+07 |
-| cmg_undulating_channel | uniform | 4 | 2/2 | Y | 0.5665 | 0.448 | 0.866 | 7.88e+06 |
-| cmg_undulating_channel | adaptive | 4 | 2/2 | Y | 0.6846 | 0.368 | 0.084 | 1.03e+07 |
-| cmg_undulating_channel | uniform | 8 | 4/4 | Y | 0.3571 | 0.608 | 0.553 | 8.23e+06 |
-| cmg_undulating_channel | adaptive | 8 | 4/4 | Y | 0.6380 | 0.560 | 0.722 | 1.11e+07 |
-| cmg_undulating_channel | uniform | 12 | 6/6 | Y | 0.4196 | 0.528 | 0.478 | 4.37e+06 |
-| cmg_undulating_channel | adaptive | 12 | 6/6 | Y | 0.6633 | 0.576 | 0.553 | 5.95e+06 |
-| cmg_faulted_dogleg | wells_only | 0 | 0/0 | Y | 0.6858 | 0.432 | 1.110 | 9.1e+06 |
-| cmg_faulted_dogleg | uniform | 4 | 2/2 | Y | 0.4754 | 0.543 | 0.135 | 8.51e+06 |
-| cmg_faulted_dogleg | adaptive | 4 | 2/2 | Y | 0.6590 | 0.506 | 0.181 | 8.06e+06 |
-| cmg_faulted_dogleg | uniform | 8 | 4/4 | Y | 0.5149 | 0.333 | 1.180 | 5.63e+06 |
-| cmg_faulted_dogleg | adaptive | 8 | 4/4 | Y | 0.6284 | 0.481 | 0.234 | 5.94e+06 |
-| cmg_faulted_dogleg | uniform | 12 | 6/6 | Y | 0.4649 | 0.407 | 0.995 | 5.03e+06 |
-| cmg_faulted_dogleg | adaptive | 12 | 6/6 | Y | 0.7413 | 0.407 | 0.336 | 5.55e+06 |
+| cmg_undulating_channel | wells_only | 0 | 0/0 | Y | 0.6640 | 0.304 | 1.016 | 1.23e+07 |
+| cmg_undulating_channel | uniform | 4 | 2/2 | Y | 0.5891 | 0.464 | 1.462 | 7.41e+06 |
+| cmg_undulating_channel | adaptive | 4 | 2/2 | Y | 0.6961 | 0.464 | 0.445 | 9.79e+06 |
+| cmg_undulating_channel | uniform | 8 | 4/4 | Y | 0.3355 | 0.608 | 0.255 | 6.21e+06 |
+| cmg_undulating_channel | adaptive | 8 | 4/4 | Y | 0.7463 | 0.496 | 0.293 | 9.14e+06 |
+| cmg_undulating_channel | uniform | 12 | 6/6 | Y | 0.4042 | 0.528 | 0.499 | 4.34e+06 |
+| cmg_undulating_channel | adaptive | 12 | 6/6 | Y | 0.7681 | 0.512 | 0.457 | 6.62e+06 |
+| cmg_faulted_dogleg | wells_only | 0 | 0/0 | Y | 0.6950 | 0.481 | 1.087 | 7.97e+06 |
+| cmg_faulted_dogleg | uniform | 4 | 2/2 | Y | 0.5220 | 0.519 | 0.067 | 7.27e+06 |
+| cmg_faulted_dogleg | adaptive | 4 | 2/2 | Y | 0.6101 | 0.593 | 0.529 | 6.27e+06 |
+| cmg_faulted_dogleg | uniform | 8 | 4/4 | Y | 0.4903 | 0.395 | 0.992 | 5.32e+06 |
+| cmg_faulted_dogleg | adaptive | 8 | 4/4 | Y | 0.7123 | 0.519 | 0.497 | 6.36e+06 |
+| cmg_faulted_dogleg | uniform | 12 | 6/6 | Y | 0.4240 | 0.432 | 0.816 | 4.88e+06 |
+| cmg_faulted_dogleg | adaptive | 12 | 6/6 | Y | 0.7634 | 0.543 | 0.386 | 5.4e+06 |
 
 ## 读法
 

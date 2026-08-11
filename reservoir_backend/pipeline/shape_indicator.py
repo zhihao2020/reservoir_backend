@@ -74,6 +74,30 @@ def infer_shape_indicator(
     return indicator, stats
 
 
+def enhance_permeability_from_indicator(
+    permeability: NDArray[np.float64],
+    indicator: NDArray[np.float64],
+    *,
+    strength: float = 0.55,
+    clip: tuple[float, float] = (1.0e-18, 1.0e-10),
+) -> NDArray[np.float64]:
+    """Log-space k boost on high-indicator cells (preferential flow paths).
+
+    Does not use external truth masks — only the multi-time shape indicator
+    built from ΔSw / pressure contrast (and optionally prior k).
+    """
+    k = np.asarray(permeability, dtype=float)
+    ind = np.asarray(indicator, dtype=float)
+    if k.shape != ind.shape:
+        raise ValueError("permeability and indicator shapes must match")
+    mu = float(np.mean(ind))
+    sd = float(np.std(ind)) + 1.0e-12
+    z = np.clip((ind - mu) / sd, -2.5, 2.5)
+    # positive z (active path) → higher k; quiet matrix slightly lower
+    k_new = k * np.exp(float(strength) * 0.40 * z)
+    return np.clip(k_new, float(clip[0]), float(clip[1]))
+
+
 def indicator_to_active_mask(
     indicator: NDArray[np.float64],
     *,

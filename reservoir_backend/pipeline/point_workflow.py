@@ -341,7 +341,7 @@ def run_point_first_slice(
             sw_recon = sw.copy()
             n_s_hard = len(sample_s.well_saturation)
             # more saturation sensors → trust reconstruction more vs pure transport
-            recon_w = float(min(0.70, 0.20 + 0.10 * n_s_hard))
+            recon_w = float(min(0.82, 0.28 + 0.12 * n_s_hard))
             sw_init = (0.45 * previous.sw + 0.55 * sw_recon)
             sw_t, t_notes = transport_water_saturation(
                 mesh,
