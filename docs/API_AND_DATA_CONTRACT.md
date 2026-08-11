@@ -46,8 +46,11 @@ python -m reservoir_backend.pipeline.run --config config/sensor_series_case.yaml
   - `boundary_pressure` / `boundary_flux`：区域边界面
 - `priors`
 
-**测点 vs 边界**：测点是网格内已知 p/S 的硬约束（内部 Dirichlet 传感器）；
-`boundary_*` 才是区域六个面的边界条件。
+**测点 vs 边界**：
+
+- 测点是网格内传感器；**同一测点只测 p 或只测 S**（`observer_p` / `observer_s`）
+- 流程：p 场仅由压力硬点插值/求解 → 饱和度测点被赋 p；S 场仅由饱和度硬点插值 → 压力测点被赋 S → 在各硬点上算点 k,φ → **空间 IDW 到全网格**
+- `boundary_*` 才是区域六个面的边界条件
 
 ### 多时刻 `config/sensor_series_case.yaml`
 

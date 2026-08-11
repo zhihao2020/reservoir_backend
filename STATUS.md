@@ -13,9 +13,10 @@
 | 能力 | 状态 | 入口 | 证据 | 假设/边界 |
 |------|------|------|------|-----------|
 | 1 网格划分 | 已验证 | `pipeline.build_mesh` | `tests/test_pipeline_mesh.py` | 边界+井+dx/dy/dz → 序号/坐标 |
-| 2 压力场 | MVP | `pipeline.reconstruct_pressure` | `tests/test_pipeline_fields.py` / `test_pressure_solver_3d` | 注采井+**测点** p Dirichlet；边界 P/Q；非均质 k |
-| 3 饱和度场 | MVP | `pipeline.reconstruct_saturation` | `tests/test_pipeline_fields.py` | 注采井+**测点** S 硬钉扎；边界流量锚点；IDW/输运 |
-| 测点（observer） | 已验证 | `WellPoint.role=observer` | `tests/test_pipeline_fields.py` | 只知 p/S、无流量；内部硬约束 |
+| 2 压力场 | MVP | 压力硬点插值/TPFA | `tests/test_pipeline_fields.py` | 井+`observer_p` 仅测 p |
+| 3 饱和度场 | MVP | 饱和度硬点插值 | `tests/test_pipeline_fields.py` | 井+`observer_s` 仅测 S |
+| 4 物性 | MVP | 点 k,φ → 空间 IDW | `point_workflow` | 硬点互补 p/S 后算点属性再铺全网 |
+| 测点分工 | 已验证 | `observer_p` / `observer_s` | `tests/test_pipeline_fields.py` | **同一测点不同时测 p 与 S** |
 | 4 物性场 k/φ | MVP | `pipeline.invert_rock_properties` | `tests/test_pipeline_fields.py` | 达西 k；流量场；φ 物质平衡；**非均质数组** |
 | 非均质四场验收 | MVP | `validation/heterogeneous_four_field/` | run_validate.py | **禁止均质**；通道/断层孪生 |
 | 饱和度输运代理 | MVP | `pipeline.transport_water_saturation` | `tests/test_pipeline_fields.py` | **f_w(S)** 迎风 + 井产注量源汇 |

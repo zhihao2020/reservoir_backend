@@ -1,4 +1,6 @@
-# Demo: injectors/producers + observation probes (测点, no fluid rate)
+# Point-first design:
+#   - injectors/producers may have p, S, and rates
+#   - each probe measures ONLY pressure OR ONLY saturation
 
 bounds:
   xmin: 0.0
@@ -25,16 +27,18 @@ wells:
     z: 15.0
     role: producer
 
-# Measurement-only probes (known p and S; do NOT inject/produce)
+# A-type: pressure-only probes  |  B-type: saturation-only probes
 observers:
-  - name: OBS1
+  - name: OBS_P1
     x: 40.0
     y: 40.0
     z: 15.0
-  - name: OBS2
+    measure: pressure          # → role observer_p
+  - name: OBS_S1
     x: 60.0
     y: 50.0
     z: 15.0
+    measure: saturation        # → role observer_s
 
 sensors:
   time: 0.0
@@ -44,16 +48,15 @@ sensors:
   well_saturation:
     INJ: [0.80, 0.20, 0.0]
     PROD: [0.25, 0.75, 0.0]
-  # optional rates (m3/s): +inject -produce; observers must not appear here
   well_rate:
     INJ: 2.0e-5
     PROD: -2.0e-5
+  # pressure-only probes (must NOT appear in saturation maps)
   observer_pressure:
-    OBS1: 1.12e7
-    OBS2: 1.05e7
+    OBS_P1: 1.12e7
+  # saturation-only probes (must NOT appear in pressure maps)
   observer_saturation:
-    OBS1: [0.45, 0.55, 0.0]
-    OBS2: [0.35, 0.65, 0.0]
+    OBS_S1: [0.40, 0.60, 0.0]
   boundary_pressure:
     left: 1.2e7
     right: 1.0e7

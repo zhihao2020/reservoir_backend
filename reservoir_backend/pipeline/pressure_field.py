@@ -107,7 +107,7 @@ def _rate_wells_from_sample(mesh: MeshBundle, sample: SensorSample) -> list[Well
         if name not in mesh.well_cell_id:
             continue
         # never treat observers as rate sources even if mis-specified
-        if mesh.well_role.get(name) == "observer":
+        if mesh.well_role.get(name, "").startswith("observer"):
             continue
         q = float(q)
         if not np.isfinite(q) or abs(q) < 1.0e-30:

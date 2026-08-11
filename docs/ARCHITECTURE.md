@@ -3,18 +3,20 @@
 ## 产品主线
 
 ```text
-软件要求 1–4（每时刻 t）：
+软件要求 1–4（每时刻 t）——**点优先**默认路径：
 
 ```text
-1 build_mesh(边界, 井, dx/dy/dz)
-2 reconstruct_pressure(井压, 边界P/流量, k先验)     → 全网格 p
-3 reconstruct_saturation(井饱和度, 边界流量, p)      → 全网格 sw,so,sg
-4 invert_rock_properties(p, S, 流量)                 → 全网格 k, φ（可非均质）
+1 build_mesh(边界, 井/测点, dx/dy/dz)
+2 仅压力硬点(井压+observer_p) → 全网格 p
+   （observer_s 无测压，从 p 场取值）
+3 仅饱和度硬点(井S+observer_s) → 全网格 sw,so,sg
+   （observer_p 无测 S，从 S 场取值）
+4 在各硬点用互补后的 (p,S) 估算点 k,φ → 空间 IDW → 全网格 k,φ
 ```
 
-端到端：`run_time_slice` / `run_time_series`（k–p 固定点迭代）。
+入口：`run_time_slice` → `run_point_first_slice`（`mode=grid_invert` 为旧全网反演）。
 
-CMG 仅作**非均质**正演对照（起伏通道 / 断层狗腿），不进产品内核。
+CMG 仅作**非均质**正演对照，不进产品内核。
 ```
 
 ## 保留的包

@@ -12,9 +12,7 @@ import yaml
 from numpy.typing import NDArray
 
 from reservoir_backend.pipeline.mesh_builder import build_mesh
-from reservoir_backend.pipeline.pressure_field import reconstruct_pressure
-from reservoir_backend.pipeline.property_field import invert_rock_properties
-from reservoir_backend.pipeline.saturation_field import reconstruct_saturation
+from reservoir_backend.pipeline.point_workflow import run_point_first_slice
 from reservoir_backend.pipeline.state import (
     AxisAlignedBounds,
     BoundaryConditions,
@@ -22,10 +20,6 @@ from reservoir_backend.pipeline.state import (
     MeshBundle,
     SensorSample,
     WellPoint,
-)
-from reservoir_backend.pipeline.transport_saturation import (
-    phases_from_sw,
-    transport_water_saturation,
 )
 
 
@@ -39,16 +33,41 @@ def run_time_slice(
     previous: FieldBundle | None = None,
     dt: float | None = None,
     n_k_iterations: int = 2,
+    mode: str = "point_first",
 ) -> FieldBundle:
     """软件要求 steps 2–4 at one time ``t``.
 
-    2. well P + boundary P/flux → pressure field  
-    3. well S + boundary flux cues → sw, so, sg  
-    4. p, S, flux → heterogeneous k, φ (Darcy + continuity)
+    Default ``mode="point_first"`` (测点设计):
 
-    When ``n_k_iterations > 1``, k is fed back into the TPFA pressure solve
-    (array prior — suitable for non-uniform rock).
+    1. 仅用 **压力测点/井压** 插值/求解全场 p（饱和度测点没有 p，从场上赋值）
+    2. 仅用 **饱和度测点/井饱和度** 插值全场 S（压力测点没有 S，从场上赋值）
+    3. 在各硬点上用互补后的 (p,S) 估算 **点** k、φ
+    4. 空间 IDW 得到全网格 k、φ
+
+    ``mode="grid_invert"`` keeps the previous full-grid invert path for comparison.
     """
+    mode = str(mode).lower().strip()
+    if mode in ("point_first", "point", "default"):
+        return run_point_first_slice(
+            mesh,
+            sample,
+            permeability_prior_m2=permeability_prior_m2,
+            porosity_prior=porosity_prior,
+            viscosity_pa_s=viscosity_pa_s,
+            previous=previous,
+            dt=dt,
+            n_k_iterations=n_k_iterations,
+        )
+
+    # ---- legacy full-grid invert ----
+    from reservoir_backend.pipeline.pressure_field import reconstruct_pressure
+    from reservoir_backend.pipeline.property_field import invert_rock_properties
+    from reservoir_backend.pipeline.saturation_field import reconstruct_saturation
+    from reservoir_backend.pipeline.transport_saturation import (
+        phases_from_sw,
+        transport_water_saturation,
+    )
+
     if previous is not None:
         k_work: float | NDArray[np.float64] = previous.permeability
         phi_work: float | NDArray[np.float64] = previous.porosity
@@ -60,25 +79,19 @@ def run_time_slice(
     p_notes: list[str] = []
     r_notes: list[str] = []
     s_notes: list[str] = []
+    t_notes: list[str] = []
     pressure = np.zeros(mesh.grid.shape, dtype=float)
     k = np.zeros(mesh.grid.shape, dtype=float)
     phi = np.zeros(mesh.grid.shape, dtype=float)
     sw = so = sg = np.zeros(mesh.grid.shape, dtype=float)
     flux_dict: dict[str, NDArray[np.float64]] = {}
 
-    t_notes: list[str] = []
     for it in range(iters):
-        # Step 2
         pressure, p_notes = reconstruct_pressure(
-            mesh,
-            sample,
-            permeability_m2=k_work,
-            viscosity_pa_s=viscosity_pa_s,
+            mesh, sample, permeability_m2=k_work, viscosity_pa_s=viscosity_pa_s
         )
-        # Step 3: sensor IDW (+ optional flux-upwind transport)
         sw, so, sg, s_notes = reconstruct_saturation(mesh, sample, pressure=pressure)
         if previous is not None and dt is not None and float(dt) > 0.0:
-            # warm-start from previous Sw then transport along Darcy fluxes
             sw_init = 0.5 * previous.sw + 0.5 * sw
             sw_t, t_notes = transport_water_saturation(
                 mesh,
@@ -92,7 +105,6 @@ def run_time_slice(
                 n_substeps=8,
             )
             sw, so, sg = phases_from_sw(sw_t, sample=sample, mesh=mesh)
-        # Step 4
         k, phi, r_notes, flux_dict = invert_rock_properties(
             mesh,
             pressure,
@@ -111,7 +123,7 @@ def run_time_slice(
             phi_work = phi
 
     notes = (
-        ["four-field steps: pressure → saturation → rock (k,phi)"]
+        ["four-field steps (grid_invert): pressure → saturation → rock"]
         + p_notes
         + s_notes
         + t_notes
@@ -207,15 +219,19 @@ def mesh_from_config(cfg: dict[str, Any]) -> MeshBundle:
                 role=str(w.get("role", "observer")),
             )
         )
-    # optional dedicated observation probes (same geometry as wells, role=observer)
+    # dedicated probes: default observer_p unless measure: saturation / role set
     for w in cfg.get("observers", []) + cfg.get("probes", []):
+        role = str(w.get("role", ""))
+        if not role:
+            measure = str(w.get("measure", "pressure")).lower()
+            role = "observer_s" if measure in ("s", "sw", "saturation") else "observer_p"
         wells.append(
             WellPoint(
                 name=str(w["name"]),
                 x=float(w["x"]),
                 y=float(w["y"]),
                 z=float(w["z"]),
-                role="observer",
+                role=role,
             )
         )
     g = cfg["grid"]

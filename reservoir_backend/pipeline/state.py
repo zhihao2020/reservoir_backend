@@ -29,19 +29,20 @@ class AxisAlignedBounds:
 
 @dataclass(frozen=True)
 class WellPoint:
-    """A named location on the mesh (injector / producer / observer probe).
+    """A named location on the mesh (injector / producer / single-quantity probe).
 
     ``role``:
-    - ``injector`` / ``producer``: may have volumetric rates
-    - ``observer``: measurement-only; pressure/saturation hard data, **no** fluid rate
-      (conceptually interior Dirichlet / hard sensors, not domain-face BC)
+    - ``injector`` / ``producer``: may measure p and/or S and may have rates
+    - ``observer_p``: **pressure-only** probe (no S, no rate)
+    - ``observer_s``: **saturation-only** probe (no p, no rate)
+    - ``observer``: legacy alias; must still provide only p **or** only S
     """
 
     name: str
     x: float
     y: float
     z: float
-    role: str = "observer"  # injector | producer | observer
+    role: str = "observer_p"
 
     def __post_init__(self) -> None:
         role = str(self.role).lower().strip()
@@ -49,6 +50,23 @@ class WellPoint:
             role = "injector"
         elif role in ("prod", "production", "producer"):
             role = "producer"
+        elif role in (
+            "obs_p",
+            "observer_p",
+            "pressure_probe",
+            "p_probe",
+            "pressure_only",
+        ):
+            role = "observer_p"
+        elif role in (
+            "obs_s",
+            "observer_s",
+            "saturation_probe",
+            "s_probe",
+            "sw_probe",
+            "saturation_only",
+        ):
+            role = "observer_s"
         elif role in ("obs", "probe", "sensor", "monitor", "observation", "observer"):
             role = "observer"
         else:
@@ -77,7 +95,17 @@ class MeshBundle:
         return int(self.cell_id.size)
 
     def observer_names(self) -> list[str]:
-        return [n for n, r in self.well_role.items() if r == "observer"]
+        return [
+            n
+            for n, r in self.well_role.items()
+            if r in ("observer", "observer_p", "observer_s")
+        ]
+
+    def pressure_probe_names(self) -> list[str]:
+        return [n for n, r in self.well_role.items() if r == "observer_p"]
+
+    def saturation_probe_names(self) -> list[str]:
+        return [n for n, r in self.well_role.items() if r == "observer_s"]
 
     def active_well_names(self) -> list[str]:
         return [n for n, r in self.well_role.items() if r in ("injector", "producer")]
@@ -98,27 +126,31 @@ class SensorSample:
 
     Names in ``well_pressure`` / ``well_saturation`` may be:
 
-    - **injectors / producers**: may also appear in ``well_rate``
-    - **observers (测点)**: known p and/or S, **no** rate — treated as hard
-      interior constraints (Dirichlet-like), not domain-face boundaries
+    - **injectors / producers**: may appear in either/both maps and in ``well_rate``
+    - **observer_p**: **only** in ``well_pressure`` (never saturation)
+    - **observer_s**: **only** in ``well_saturation`` (never pressure)
+
+    After field interpolation, every hard location is *assigned* the missing
+    quantity from the field so that point k,φ can be estimated, then IDW to grid.
     """
 
     time: float
-    well_pressure: Mapping[str, float]  # name -> Pa (active wells + observers)
+    well_pressure: Mapping[str, float]  # name -> Pa
     well_saturation: Mapping[str, tuple[float, float, float]]  # name -> (sw, so, sg)
     boundary: BoundaryConditions = field(default_factory=BoundaryConditions)
-    # signed volumetric rates (m^3/s): +injection, -production; observers omit this
+    # signed volumetric rates (m^3/s): +injection, -production; probes omit this
     well_rate: Mapping[str, float] = field(default_factory=dict)
 
     def observation_names(self, mesh: MeshBundle | None = None) -> list[str]:
-        """Names with hard p/S data that are not flowing (no rate)."""
+        """Probe names (no fluid rate)."""
         rate_names = set(self.well_rate or {})
         names = set(self.well_pressure) | set(self.well_saturation)
         if mesh is not None and mesh.well_role:
+            obs_roles = {"observer", "observer_p", "observer_s"}
             return sorted(
                 n
                 for n in names
-                if mesh.well_role.get(n, "observer") == "observer" or n not in rate_names
+                if mesh.well_role.get(n) in obs_roles or n not in rate_names
             )
         return sorted(n for n in names if n not in rate_names)
 
