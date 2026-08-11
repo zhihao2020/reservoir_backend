@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -390,6 +392,12 @@ def write_markdown(results: list[dict], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _job(payload: tuple[str, str, int, str]) -> dict:
+    """Picklable worker for process pool: (case_name, case_dir, n, layout)."""
+    cname, cdir_s, n, layout = payload
+    return run_one(cname, Path(cdir_s), n_total=n, layout=layout)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="CMG virtual probe N-sweep study")
     ap.add_argument("--cases", default="channel,fault", help="channel,fault")
@@ -398,6 +406,12 @@ def main(argv: list[str] | None = None) -> int:
         "--layouts",
         default="uniform,adaptive",
         help="uniform,adaptive",
+    )
+    ap.add_argument(
+        "--jobs",
+        type=int,
+        default=max(1, min(4, (os.cpu_count() or 2) // 2)),
+        help="parallel study jobs (process pool); 1 = serial",
     )
     args = ap.parse_args(argv)
 
@@ -409,17 +423,30 @@ def main(argv: list[str] | None = None) -> int:
     n_list = [int(x) for x in args.n_list.split(",") if x.strip()]
     layouts = [x.strip() for x in args.layouts.split(",") if x.strip()]
 
-    results: list[dict] = []
+    tasks: list[tuple[str, str, int, str]] = []
     for ckey in cases:
         if ckey not in case_map:
             continue
         cname, cdir = case_map[ckey]
         for n in n_list:
             if n == 0:
-                results.append(run_one(cname, cdir, n_total=0, layout="uniform"))
+                tasks.append((cname, str(cdir), 0, "uniform"))
                 continue
             for layout in layouts:
-                results.append(run_one(cname, cdir, n_total=n, layout=layout))
+                tasks.append((cname, str(cdir), n, layout))
+
+    results: list[dict] = []
+    jobs = max(1, int(args.jobs))
+    if jobs == 1 or len(tasks) <= 1:
+        results = [_job(t) for t in tasks]
+    else:
+        # Windows-safe process pool; preserve submission order in output
+        with ProcessPoolExecutor(max_workers=jobs) as pool:
+            futs = {pool.submit(_job, t): i for i, t in enumerate(tasks)}
+            ordered: list[dict | None] = [None] * len(tasks)
+            for fut in as_completed(futs):
+                ordered[futs[fut]] = fut.result()
+            results = [r for r in ordered if r is not None]
 
     out_json = HERE / "probe_study_report.json"
     out_md = HERE / "PROBE_STUDY.md"
@@ -427,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
     write_markdown(results, out_md)
     print(f"wrote {out_json}")
     print(f"wrote {out_md}")
+    print(f"jobs={jobs} tasks={len(tasks)}")
     ok = sum(1 for r in results if r.get("ok"))
     print(f"ok {ok}/{len(results)}")
     return 0 if ok == len(results) else 1

@@ -1,7 +1,7 @@
 """Spatial interpolation of point data onto the mesh.
 
-- IDW always available
-- Ordinary Kriging when point count / geometry allow
+- IDW always available (vectorized)
+- Ordinary Kriging when point count / geometry allow (batch RHS solve)
 - Auto selection by LOO-CV (no user configuration)
 
 Pressure fields stay on TPFA elsewhere; this module is for scalar maps
@@ -44,17 +44,16 @@ def idw_points_to_grid(
     power: float = 2.0,
     fill: float | None = None,
 ) -> NDArray[np.float64]:
-    """Inverse-distance weight scalar samples onto cell centers."""
+    """Inverse-distance weight scalar samples onto cell centers (vectorized)."""
     pts, vals = _validate_points(points_xyz, values)
     if pts.shape[0] == 0:
         if fill is None:
             raise ValueError("no points to interpolate")
         return np.full(mesh.grid.shape, float(fill), dtype=float)
 
-    out = np.zeros(mesh.grid.shape, dtype=float)
-    for n in range(mesh.n_cells):
-        out.flat[n] = _idw_at(pts, vals, mesh.x[n], mesh.y[n], mesh.z[n], power=power)
-    return out
+    targets = np.column_stack([mesh.x, mesh.y, mesh.z])
+    flat = _idw_many(pts, vals, targets, power=float(power))
+    return flat.reshape(mesh.grid.shape)
 
 
 def ordinary_kriging_to_grid(
@@ -64,7 +63,7 @@ def ordinary_kriging_to_grid(
     *,
     fill: float | None = None,
 ) -> NDArray[np.float64]:
-    """Ordinary kriging with a simple exponential covariance (auto range/sill)."""
+    """Ordinary kriging with exponential covariance; batch multi-RHS solve."""
     pts, vals = _validate_points(points_xyz, values)
     n = pts.shape[0]
     if n == 0:
@@ -74,47 +73,9 @@ def ordinary_kriging_to_grid(
     if n == 1:
         return np.full(mesh.grid.shape, float(vals[0]), dtype=float)
 
-    cov_params = _fit_exponential_cov(pts, vals)
-    k_mat = _cov_matrix(pts, cov_params)
-    # [C 1; 1 0]
-    a = np.zeros((n + 1, n + 1), dtype=float)
-    a[:n, :n] = k_mat
-    a[:n, n] = 1.0
-    a[n, :n] = 1.0
-    a[n, n] = 0.0
-
-    try:
-        from scipy.linalg import lu_factor, lu_solve
-
-        lu = lu_factor(a)
-        use_lu = True
-        inv_a = None
-    except Exception:
-        use_lu = False
-        try:
-            inv_a = np.linalg.inv(a)
-        except np.linalg.LinAlgError as exc:
-            raise ValueError("kriging matrix singular") from exc
-
-    out = np.zeros(mesh.grid.shape, dtype=float)
-    rhs = np.ones(n + 1, dtype=float)
-    for idx in range(mesh.n_cells):
-        q = np.array([mesh.x[idx], mesh.y[idx], mesh.z[idx]], dtype=float)
-        # exact hit
-        d2 = np.sum((pts - q) ** 2, axis=1)
-        if np.any(d2 < EPS * EPS):
-            out.flat[idx] = float(vals[int(np.argmin(d2))])
-            continue
-        c0 = _cov_vector(pts, q, cov_params)
-        rhs[:n] = c0
-        rhs[n] = 1.0
-        if use_lu:
-            sol = lu_solve(lu, rhs)
-        else:
-            sol = inv_a @ rhs  # type: ignore[operator]
-        lam = sol[:n]
-        out.flat[idx] = float(np.dot(lam, vals))
-    return out
+    targets = np.column_stack([mesh.x, mesh.y, mesh.z])
+    flat = _krige_many(pts, vals, targets)
+    return flat.reshape(mesh.grid.shape)
 
 
 def leave_one_out_rmse(
@@ -128,23 +89,26 @@ def leave_one_out_rmse(
     n = pts.shape[0]
     if n < 2:
         return 0.0
-    errs = []
-    for i in range(n):
-        mask = np.ones(n, dtype=bool)
-        mask[i] = False
-        train_p, train_v = pts[mask], vals[mask]
-        q = pts[i]
-        if method == "idw":
-            pred = _idw_at(train_p, train_v, q[0], q[1], q[2])
-        elif method == "kriging":
+    if method == "idw":
+        # vectorized LOO: exclude self via infinite self-distance
+        d2 = _pairwise_d2(pts, pts)
+        np.fill_diagonal(d2, np.inf)
+        w = 1.0 / np.power(np.sqrt(d2), 2.0)
+        wsum = np.sum(w, axis=1)
+        pred = (w @ vals) / np.maximum(wsum, EPS)
+        return float(np.sqrt(np.mean((pred - vals) ** 2)))
+    if method == "kriging":
+        errs = []
+        for i in range(n):
+            mask = np.ones(n, dtype=bool)
+            mask[i] = False
             try:
-                pred = _krige_at(train_p, train_v, q)
+                pred = float(_krige_many(pts[mask], vals[mask], pts[i : i + 1])[0])
             except Exception:
                 return float("inf")
-        else:
-            raise ValueError(method)
-        errs.append((pred - vals[i]) ** 2)
-    return float(np.sqrt(np.mean(errs)))
+            errs.append((pred - vals[i]) ** 2)
+        return float(np.sqrt(np.mean(errs)))
+    raise ValueError(method)
 
 
 def points_geometry_ok(points_xyz: NDArray[np.float64]) -> bool:
@@ -153,14 +117,12 @@ def points_geometry_ok(points_xyz: NDArray[np.float64]) -> bool:
     if pts.shape[0] < N_MIN_KRIGING:
         return False
     c = pts - pts.mean(axis=0, keepdims=True)
-    # rank of covariance
     try:
         s = np.linalg.svd(c, compute_uv=False)
     except np.linalg.LinAlgError:
         return False
     if s.size < 2:
         return False
-    # if second singular value tiny → nearly collinear
     if s[0] < EPS:
         return False
     if s[1] / s[0] < 1.0e-4:
@@ -193,7 +155,6 @@ def auto_interpolate_to_grid(
         work = np.log(np.clip(work, 1.0e-30, None))
         notes.append("auto-interp: log-transform on")
 
-    # --- force IDW when too few or geometry bad ---
     if n < N_MIN_KRIGING or not points_geometry_ok(pts):
         field = idw_points_to_grid(mesh, pts, work, fill=fill if not log_transform else None)
         if log_transform:
@@ -203,7 +164,6 @@ def auto_interpolate_to_grid(
         notes.append(f"auto-interp: idw ({reason})")
         return InterpResult(values=field, method="idw", notes=notes, n_points=n)
 
-    # --- LOO CV both methods ---
     rmse_i = leave_one_out_rmse(pts, work, method="idw")
     try:
         rmse_k = leave_one_out_rmse(pts, work, method="kriging")
@@ -244,7 +204,8 @@ def auto_interpolate_to_grid(
         field = np.exp(field)
     field = _clip(field, clip)
     notes.append(
-        f"auto-interp: {method} (n={n}, loo_idw={rmse_i:.4g}, loo_krig={rmse_k if krig_ok else float('nan'):.4g})"
+        f"auto-interp: {method} (n={n}, loo_idw={rmse_i:.4g}, "
+        f"loo_krig={rmse_k if krig_ok else float('nan'):.4g})"
     )
     return InterpResult(
         values=field,
@@ -257,7 +218,7 @@ def auto_interpolate_to_grid(
 
 
 # ---------------------------------------------------------------------------
-# internals
+# vectorized kernels
 # ---------------------------------------------------------------------------
 
 
@@ -275,6 +236,37 @@ def _validate_points(
     return pts, vals
 
 
+def _pairwise_d2(a: NDArray[np.float64], b: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Squared distances between rows of a (na,3) and b (nb,3) → (na, nb)."""
+    # ||a-b||^2 = |a|^2 + |b|^2 - 2 a·b
+    aa = np.sum(a * a, axis=1)[:, None]
+    bb = np.sum(b * b, axis=1)[None, :]
+    return np.maximum(aa + bb - 2.0 * (a @ b.T), 0.0)
+
+
+def _idw_many(
+    pts: NDArray[np.float64],
+    vals: NDArray[np.float64],
+    targets: NDArray[np.float64],
+    *,
+    power: float = 2.0,
+) -> NDArray[np.float64]:
+    d2 = _pairwise_d2(targets, pts)
+    # exact hits
+    hit = d2 < (EPS * EPS)
+    any_hit = np.any(hit, axis=1)
+    out = np.empty(targets.shape[0], dtype=float)
+    if np.any(any_hit):
+        # first matching sample index
+        out[any_hit] = vals[np.argmax(hit[any_hit], axis=1)]
+    rest = ~any_hit
+    if np.any(rest):
+        w = 1.0 / np.power(np.sqrt(d2[rest]), float(power))
+        wsum = np.sum(w, axis=1)
+        out[rest] = np.sum(w * vals[None, :], axis=1) / np.maximum(wsum, EPS)
+    return out
+
+
 def _idw_at(
     pts: NDArray[np.float64],
     vals: NDArray[np.float64],
@@ -284,92 +276,94 @@ def _idw_at(
     *,
     power: float = 2.0,
 ) -> float:
-    q = np.array([x, y, z], dtype=float)
-    d2 = np.sum((pts - q) ** 2, axis=1)
-    if np.any(d2 < EPS * EPS):
-        return float(vals[int(np.argmin(d2))])
-    w = 1.0 / np.power(np.sqrt(d2), float(power))
-    return float(np.dot(w, vals) / np.sum(w))
+    q = np.array([[x, y, z]], dtype=float)
+    return float(_idw_many(pts, vals, q, power=power)[0])
 
 
 def _fit_exponential_cov(
     pts: NDArray[np.float64], vals: NDArray[np.float64]
 ) -> dict[str, float]:
-    """Heuristic exponential covariance parameters from point cloud."""
+    """Heuristic exponential covariance from pairwise cloud (vectorized)."""
     n = pts.shape[0]
-    # pairwise distances
-    dlist = []
-    glist = []
-    mean = float(np.mean(vals))
-    for i in range(n):
-        for j in range(i + 1, n):
-            d = float(np.linalg.norm(pts[i] - pts[j]))
-            if d < EPS:
-                continue
-            g = 0.5 * (vals[i] - vals[j]) ** 2
-            dlist.append(d)
-            glist.append(g)
-    if not dlist:
+    if n < 2:
         sill = float(np.var(vals)) + EPS
         return {"range": 1.0, "sill": sill, "nugget": NUGGET_FRAC * sill}
 
-    darr = np.asarray(dlist, dtype=float)
-    garr = np.asarray(glist, dtype=float)
+    d2 = _pairwise_d2(pts, pts)
+    iu = np.triu_indices(n, k=1)
+    darr = np.sqrt(d2[iu])
+    ok = darr > EPS
+    if not np.any(ok):
+        sill = float(np.var(vals)) + EPS
+        return {"range": 1.0, "sill": sill, "nugget": NUGGET_FRAC * sill}
+    darr = darr[ok]
+    vi = vals[iu[0][ok]]
+    vj = vals[iu[1][ok]]
+    garr = 0.5 * (vi - vj) ** 2
     sill = float(max(float(np.percentile(garr, 75)), float(np.var(vals)), EPS))
-    # range ~ median distance of pairs with gamma < 0.5 * sill, else median d
     mask = garr < 0.5 * sill
     if np.any(mask):
         rang = float(np.median(darr[mask]))
     else:
         rang = float(np.median(darr))
     rang = max(rang, float(np.percentile(darr, 25)), EPS)
-    nugget = NUGGET_FRAC * sill
-    return {"range": rang, "sill": sill, "nugget": nugget}
-
-
-def _cov_exp(h: float, p: dict[str, float]) -> float:
-    # C(h) = sill * exp(-3 h / range)  (practical range)
-    return float(p["sill"]) * float(np.exp(-3.0 * h / max(p["range"], EPS)))
+    return {"range": rang, "sill": sill, "nugget": NUGGET_FRAC * sill}
 
 
 def _cov_matrix(pts: NDArray[np.float64], p: dict[str, float]) -> NDArray[np.float64]:
-    n = pts.shape[0]
-    k = np.zeros((n, n), dtype=float)
-    for i in range(n):
-        for j in range(i, n):
-            h = float(np.linalg.norm(pts[i] - pts[j]))
-            c = _cov_exp(h, p)
-            if i == j:
-                c += p["nugget"]
-            k[i, j] = c
-            k[j, i] = c
+    h = np.sqrt(_pairwise_d2(pts, pts))
+    k = float(p["sill"]) * np.exp(-3.0 * h / max(float(p["range"]), EPS))
+    k = k + float(p["nugget"]) * np.eye(pts.shape[0])
     return k
 
 
-def _cov_vector(pts: NDArray[np.float64], q: NDArray[np.float64], p: dict[str, float]) -> NDArray[np.float64]:
-    n = pts.shape[0]
-    c0 = np.zeros(n, dtype=float)
-    for i in range(n):
-        h = float(np.linalg.norm(pts[i] - q))
-        c0[i] = _cov_exp(h, p)
-    return c0
+def _cov_to_targets(
+    pts: NDArray[np.float64], targets: NDArray[np.float64], p: dict[str, float]
+) -> NDArray[np.float64]:
+    """Covariance pts→targets, shape (n_pts, n_targets)."""
+    h = np.sqrt(_pairwise_d2(pts, targets))
+    return float(p["sill"]) * np.exp(-3.0 * h / max(float(p["range"]), EPS))
 
 
-def _krige_at(pts: NDArray[np.float64], vals: NDArray[np.float64], q: NDArray[np.float64]) -> float:
+def _krige_many(
+    pts: NDArray[np.float64],
+    vals: NDArray[np.float64],
+    targets: NDArray[np.float64],
+) -> NDArray[np.float64]:
     n = pts.shape[0]
+    nt = targets.shape[0]
+    if n == 0:
+        raise ValueError("no points")
     if n == 1:
-        return float(vals[0])
-    p = _fit_exponential_cov(pts, vals)
-    k_mat = _cov_matrix(pts, p)
+        return np.full(nt, float(vals[0]), dtype=float)
+
+    cov_params = _fit_exponential_cov(pts, vals)
+    k_mat = _cov_matrix(pts, cov_params)
     a = np.zeros((n + 1, n + 1), dtype=float)
     a[:n, :n] = k_mat
     a[:n, n] = 1.0
     a[n, :n] = 1.0
-    c0 = _cov_vector(pts, q, p)
-    rhs = np.ones(n + 1, dtype=float)
-    rhs[:n] = c0
-    sol = np.linalg.solve(a, rhs)
-    return float(np.dot(sol[:n], vals))
+
+    c0 = _cov_to_targets(pts, targets, cov_params)  # (n, nt)
+    rhs = np.ones((n + 1, nt), dtype=float)
+    rhs[:n, :] = c0
+
+    try:
+        sol = np.linalg.solve(a, rhs)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("kriging matrix singular") from exc
+
+    lam = sol[:n, :]  # (n, nt)
+    out = vals @ lam  # (nt,)
+
+    # exact sample hits
+    d2 = _pairwise_d2(targets, pts)
+    hit = d2 < (EPS * EPS)
+    any_hit = np.any(hit, axis=1)
+    if np.any(any_hit):
+        out = out.copy()
+        out[any_hit] = vals[np.argmax(hit[any_hit], axis=1)]
+    return out
 
 
 def _clip(field: NDArray[np.float64], clip: tuple[float, float] | None) -> NDArray[np.float64]:

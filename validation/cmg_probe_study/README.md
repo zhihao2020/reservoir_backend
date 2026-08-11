@@ -17,11 +17,22 @@
 ## 运行
 
 ```bash
-# 默认：channel+fault，N=0,4,8,16，uniform+adaptive
+# 默认：channel+fault，N=0,4,8,12，uniform+adaptive；进程并行扫参
 python validation/cmg_probe_study/run_probe_study.py
 
 python validation/cmg_probe_study/run_probe_study.py --cases channel --n-list 0,4,8 --layouts adaptive
+python validation/cmg_probe_study/run_probe_study.py --jobs 4   # 并行任务数
+
+# ES-MDA 集成正演线程数（默认 min(8, CPU)）
+set RESERVOIR_BACKEND_WORKERS=8
 ```
+
+加速手段（精度算法不变）：
+
+- **向量化** IDW / 克里金 / LOO（`spatial_interp`）
+- **线程池** 并行 ES-MDA 各集成成员正演（scipy 稀疏求解）
+- **进程池** 并行扫 N/layout（`--jobs`）
+
 
 输出：
 
