@@ -182,22 +182,160 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", required=True, help="YAML sensor case path")
     parser.add_argument("--output", default="results/sensor_run", help="output directory")
     parser.add_argument("--time", type=float, default=None, help="override sample time")
+    parser.add_argument(
+        "--mode",
+        choices=("slice", "series", "discovery", "esmda"),
+        default="slice",
+        help="slice=single time; series=CSV/multi-time; discovery=shape; esmda=ensemble k",
+    )
+    parser.add_argument("--wells-csv", default=None, help="long-format well sensor CSV")
+    parser.add_argument("--boundary-csv", default=None, help="boundary pressure CSV")
+    parser.add_argument("--ne", type=int, default=None, help="ES-MDA ensemble size")
+    parser.add_argument("--na", type=int, default=None, help="ES-MDA assimilation steps per time")
     args = parser.parse_args(argv)
 
     cfg = load_sensor_config(args.config)
     mesh = mesh_from_config(cfg)
-    sample = sample_from_config(cfg, time=args.time)
     priors = cfg.get("priors", {})
-    fields = run_time_slice(
-        mesh,
-        sample,
-        permeability_prior_m2=float(priors.get("permeability_m2", 1.0e-13)),
-        porosity_prior=float(priors.get("porosity", 0.2)),
-        viscosity_pa_s=float(priors.get("viscosity_pa_s", 1.0e-3)),
-    )
-    out = save_fields(mesh, fields, args.output)
-    print(json.dumps({"success": True, "output": str(out), "time": fields.time}, indent=2))
-    return 0
+    k0 = float(priors.get("permeability_m2", 1.0e-13))
+    phi0 = float(priors.get("porosity", 0.2))
+    mu = float(priors.get("viscosity_pa_s", 1.0e-3))
+    out_root = Path(args.output)
+
+    # Resolve samples for multi-time modes
+    samples = _resolve_samples(cfg, args)
+
+    if args.mode == "slice":
+        if samples:
+            sample = samples[0] if args.time is None else min(samples, key=lambda s: abs(s.time - args.time))
+        else:
+            sample = sample_from_config(cfg, time=args.time)
+        fields = run_time_slice(
+            mesh,
+            sample,
+            permeability_prior_m2=k0,
+            porosity_prior=phi0,
+            viscosity_pa_s=mu,
+        )
+        out = save_fields(mesh, fields, out_root)
+        print(json.dumps({"success": True, "mode": "slice", "output": str(out), "time": fields.time}, indent=2))
+        return 0
+
+    if not samples:
+        raise SystemExit("mode requires multi-time sensors (series in config or --wells-csv)")
+
+    if args.mode == "series":
+        from reservoir_backend.pipeline.time_series import run_time_series
+
+        history = run_time_series(
+            mesh,
+            samples,
+            permeability_prior_m2=k0,
+            porosity_prior=phi0,
+            viscosity_pa_s=mu,
+        )
+        for i, fb in enumerate(history):
+            save_fields(mesh, fb, out_root / f"t_{i:04d}")
+        summary = {
+            "success": True,
+            "mode": "series",
+            "n_times": len(history),
+            "times": [h.time for h in history],
+            "output": str(out_root),
+        }
+        out_root.mkdir(parents=True, exist_ok=True)
+        (out_root / "series_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        print(json.dumps(summary, indent=2))
+        return 0
+
+    if args.mode == "discovery":
+        from reservoir_backend.pipeline.time_series import run_shape_discovery, save_discovery
+
+        result = run_shape_discovery(
+            mesh,
+            samples,
+            permeability_prior_m2=k0,
+            porosity_prior=phi0,
+            viscosity_pa_s=mu,
+        )
+        save_discovery(result, str(out_root))
+        print(
+            json.dumps(
+                {
+                    "success": True,
+                    "mode": "discovery",
+                    "output": str(out_root),
+                    "indicator_stats": result.indicator_stats,
+                    "notes": result.notes,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.mode == "esmda":
+        from reservoir_backend.pipeline.esmda import run_esmda_permeability
+
+        es = cfg.get("esmda", {})
+        ne = int(args.ne if args.ne is not None else es.get("ne", 20))
+        na = int(args.na if args.na is not None else es.get("n_assimilations", 4))
+        result = run_esmda_permeability(
+            mesh,
+            samples,
+            ne=ne,
+            n_assimilations=na,
+            k_mean=float(es.get("k_mean", k0)),
+            logk_std=float(es.get("logk_std", 1.0)),
+            corr_len_cells=float(es.get("corr_len_cells", 3.0)),
+            obs_std_frac=float(es.get("obs_std_frac", 0.02)),
+            porosity_prior=phi0,
+            viscosity_pa_s=mu,
+            seed=int(es.get("seed", 42)),
+        )
+        out_root.mkdir(parents=True, exist_ok=True)
+        np.save(out_root / "k_mean.npy", result.k_mean)
+        np.save(out_root / "k_std.npy", result.k_std)
+        np.save(out_root / "k_ensemble.npy", result.k_ensemble)
+        for i, fb in enumerate(result.history_mean):
+            save_fields(mesh, fb, out_root / "mean_history" / f"t_{i:04d}")
+        report = {
+            "success": True,
+            "mode": "esmda",
+            "output": str(out_root),
+            "ne": ne,
+            "n_assimilations": na,
+            "k_mean_avg": float(np.mean(result.k_mean)),
+            "k_std_avg": float(np.mean(result.k_std)),
+            "observation_rmse": result.observation_rmse,
+            "notes": result.notes,
+        }
+        (out_root / "esmda_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(json.dumps(report, indent=2))
+        return 0
+
+    raise SystemExit(f"unknown mode: {args.mode}")
+
+
+def _resolve_samples(cfg: dict[str, Any], args: argparse.Namespace) -> list[SensorSample]:
+    from reservoir_backend.pipeline.sensor_io import load_sensor_series, samples_from_config_block
+
+    if args.wells_csv:
+        return load_sensor_series(args.wells_csv, args.boundary_csv)
+    loaded = samples_from_config_block(cfg)
+    if loaded is not None:
+        return loaded
+    # inline multi-time list under sensors_series
+    if "sensors_series" in cfg and isinstance(cfg["sensors_series"], list):
+        from copy import deepcopy
+
+        samples = []
+        base = cfg
+        for block in cfg["sensors_series"]:
+            tmp = deepcopy(base)
+            tmp["sensors"] = block
+            samples.append(sample_from_config(tmp))
+        return samples
+    return []
 
 
 if __name__ == "__main__":

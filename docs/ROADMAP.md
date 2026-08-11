@@ -26,9 +26,14 @@
 - k 场 **数组先验 + 固定点迭代**（跨时刻与加密后映射）
 - φ **双时刻连续/物质平衡代理**（`φ ≈ -div(u)/(∂Sw/∂t)`）
 
+## 已完成的数据/集成升级
+
+- CSV 多时刻井/边界传感器（`sensor_io` + CLI `--mode series|discovery`）
+- 轻量 ES-MDA log-k 集成（`run_esmda_permeability` + CLI `--mode esmda`）
+
 ## 后续可选（未排期）
 
-- 传感器 CSV 批量时间序列驱动
-- ES-MDA / EnKF 升级路径
-- CMG .out 解析增强（完整井表 / SR3）
+- EnKF 时序滤波 / 相关局部化加强
+- CMG .out 自动导出 wells CSV
 - 面传导倍率 / 断层进求解器
+- 饱和度观测进入 ES-MDA 数据向量

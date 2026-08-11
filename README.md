@@ -27,7 +27,9 @@ python -m pip install -r requirements.txt
 
 ```bash
 python -m reservoir_backend.pipeline.run --config config/sensor_case.yaml --output results/sensor_run
-pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py tests/test_shape_discovery.py -q
+python -m reservoir_backend.pipeline.run --config config/sensor_series_case.yaml --mode series --output results/series
+python -m reservoir_backend.pipeline.run --config config/sensor_series_case.yaml --mode esmda --output results/esmda
+pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py tests/test_shape_discovery.py tests/test_sensor_io_esmda.py -q
 ```
 
 ```python

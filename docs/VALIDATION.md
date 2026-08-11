@@ -3,7 +3,7 @@
 ## 主测试
 
 ```bash
-pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py tests/test_shape_discovery.py -q
+pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py tests/test_shape_discovery.py tests/test_sensor_io_esmda.py -q
 ```
 
 可选保留的单元测试：`tests/test_core_*.py`、`tests/test_pressure_solver_*.py` 等核心求解器测试。
