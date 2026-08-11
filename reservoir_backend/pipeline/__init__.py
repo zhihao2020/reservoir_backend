@@ -14,6 +14,7 @@ from reservoir_backend.pipeline.probe_design import (
     split_n_probes,
 )
 from reservoir_backend.pipeline.esmda import ESMdaResult, generate_logk_ensemble, run_esmda_permeability
+from reservoir_backend.pipeline.inversion import InversionResult, run_sensor_inversion
 from reservoir_backend.pipeline.mesh_builder import build_mesh
 from reservoir_backend.pipeline.mesh_refine import map_field_to_mesh, refine_mesh_by_indicator
 from reservoir_backend.pipeline.pressure_field import reconstruct_pressure
@@ -74,7 +75,9 @@ __all__ = [
     "normalize_alpha_weights",
     "infer_shape_indicator",
     "invert_rock_properties",
+    "InversionResult",
     "load_sensor_series",
+    "run_sensor_inversion",
     "load_well_series_csv",
     "map_field_to_mesh",
     "mask_overlap",
