@@ -17,7 +17,7 @@ from reservoir_backend.pipeline.state import MeshBundle
 from reservoir_backend.solver.pressure_solver import solve_steady_state_pressure_3d
 
 # Built-in design constants (not sensor-case YAML)
-DEFAULT_HYBRID_ALPHA = 0.6
+DEFAULT_HYBRID_ALPHA = 0.35  # favor space-filling on coarse grids
 DEFAULT_ENSEMBLE_SIZE = 12
 DEFAULT_CORR_LEN_CELLS = 3.0
 EPS = 1.0e-30
@@ -132,6 +132,7 @@ def recommend_probes(
         role = mesh.well_role.get(name, "")
         if role in ("injector", "producer"):
             exclude.add(int(cid))
+            exclude.update(_neighbor_cell_ids(mesh, int(cid)))
 
     # seed anchors: existing well cell centers
     anchors = _anchor_xyz(mesh, exclude_only=False)
@@ -275,6 +276,18 @@ def field_variance_over_time(
 # ---------------------------------------------------------------------------
 # internals
 # ---------------------------------------------------------------------------
+
+
+def _neighbor_cell_ids(mesh: MeshBundle, cid: int) -> set[int]:
+    """Face-adjacent cells (used to keep probes off well blocks)."""
+    out: set[int] = set()
+    i0, j0, k0 = int(mesh.i[cid]), int(mesh.j[cid]), int(mesh.k[cid])
+    nx, ny, nz = mesh.grid.nx, mesh.grid.ny, mesh.grid.nz
+    for di, dj, dk in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+        i, j, k = i0 + di, j0 + dj, k0 + dk
+        if 0 <= i < nx and 0 <= j < ny and 0 <= k < nz:
+            out.add(int(mesh.grid.index(i, j, k)))
+    return out
 
 
 def _spec_from_cell(

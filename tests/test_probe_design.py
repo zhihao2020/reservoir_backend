@@ -71,15 +71,24 @@ def test_hybrid_runs_with_ensemble() -> None:
 
 def test_variance_mode_prefers_high_var_cells() -> None:
     mesh = _mesh()
+    # well cells + face neighbors are excluded by design
+    blocked = set(mesh.well_cell_id.values())
+    for cid in list(mesh.well_cell_id.values()):
+        i0, j0, k0 = int(mesh.i[cid]), int(mesh.j[cid]), int(mesh.k[cid])
+        for di, dj, dk in (
+            (1, 0, 0),
+            (-1, 0, 0),
+            (0, 1, 0),
+            (0, -1, 0),
+            (0, 0, 1),
+            (0, 0, -1),
+        ):
+            i, j, k = i0 + di, j0 + dj, k0 + dk
+            if 0 <= i < mesh.grid.nx and 0 <= j < mesh.grid.ny and 0 <= k < mesh.grid.nz:
+                blocked.add(int(mesh.grid.index(i, j, k)))
+    target = next(c for c in range(mesh.n_cells) if c not in blocked)
     var = np.zeros(mesh.grid.shape, dtype=float)
-    # spike variance at one interior cell
-    target = mesh.n_cells // 2
     var.flat[target] = 10.0
-    # ensure not a well cell
-    while target in set(mesh.well_cell_id.values()):
-        target = (target + 1) % mesh.n_cells
-        var = np.zeros(mesh.grid.shape, dtype=float)
-        var.flat[target] = 10.0
     specs = recommend_probes(
         mesh,
         n_p=1,
