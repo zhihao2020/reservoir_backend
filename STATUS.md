@@ -35,6 +35,8 @@
 | CMG 三维通道验证 | MVP | `validation/cmg_channel_3d/` | IMEX Normal Termination + report | `*VARI`+`*DTOP` 起伏山脊；非水平层 |
 | CMG 断层通道验证 | MVP | `validation/cmg_fault_3d/` | IMEX Normal Termination + report | `*FAULT` throw + `*TRANSI` 封闭/窗；狗腿通道 |
 | 合成断层孪生 | MVP | `pipeline.build_faulted_channel_twin` | `tests/test_shape_discovery.py` | 低渗断层带 + 偏移通道 |
+| 测点推荐 (DOE) | MVP | `pipeline.recommend_probes` / `place_uniform_probes` | `tests/test_probe_design.py` | maximin / variance / hybrid；exclusive p/S；无业务 YAML 开关 |
+| CMG 虚拟测点扫 N | MVP | `validation/cmg_probe_study/` | PROBE_STUDY.md | 从 .out 全场 p/S 虚拟抽样；不改 CMG 井网 |
 
 ## 排除
 

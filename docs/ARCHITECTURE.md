@@ -20,6 +20,8 @@
 
 空间插值规则内置（**无 YAML/CLI method 开关**）：`N_MIN_KRIGING=8`，`CV_MARGIN=0.05`；压力场仍走 TPFA，不走本模块。
 
+测点推荐（可选 API）：`recommend_probes` / `place_uniform_probes`（均匀或自适应 hybrid DOE）；验证见 `validation/cmg_probe_study`（CMG 虚拟测点扫 N，不改 .dat）。
+
 CMG 仅作**非均质**正演对照，不进产品内核。
 ```
 

@@ -6,10 +6,12 @@ and a Markdown report.
 
 Usage (from repo root):
   python validation/cmg_gap_report/run_compare.py
+  python validation/cmg_gap_report/run_compare.py --n-probes 8 --probe-layout adaptive
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -27,8 +29,13 @@ from reservoir_backend.pipeline import (  # noqa: E402
     SensorSample,
     WellPoint,
     build_mesh,
+    place_uniform_probes,
+    recommend_probes,
     run_time_series,
+    split_n_probes,
 )
+from reservoir_backend.pipeline.probe_design import field_variance_over_time  # noqa: E402
+from validation.cmg_io.grid_parse import parse_grid_series  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 CHANNEL = ROOT / "validation" / "cmg_channel_3d"
@@ -123,7 +130,10 @@ def mesh_from_truth(meta: dict):
     wi, wp = wells_meta["INJ"], wells_meta["PROD"]
     ix, iy, iz = center(wi["i"], wi["j"], mid_k(wi))
     px, py, pz = center(wp["i"], wp["j"], mid_k(wp))
-    wells = [WellPoint("INJ", ix, iy, iz), WellPoint("PROD", px, py, pz)]
+    wells = [
+        WellPoint("INJ", ix, iy, iz, role="injector"),
+        WellPoint("PROD", px, py, pz, role="producer"),
+    ]
     return build_mesh(bounds, dx, dy, dk, wells=wells), mid_k(wi), mid_k(wp)
 
 
@@ -166,6 +176,10 @@ def parse_surface_rates_stb_day(out_path: Path) -> dict[float, dict[str, float]]
 def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
     g = meta["grid"]
     sw_series = parse_sw_grids(out_path, nx=g["nx"], ny=g["ny"], nz=g["nz"])
+    p_series = parse_grid_series(
+        out_path, field="pressure", nx=g["nx"], ny=g["ny"], nz=g["nz"]
+    )
+    p_by_t = {float(t): np.asarray(a, dtype=float) * 6894.757293168 for t, a in p_series}
     bhp = parse_bhp(out_path)
     bhp_times = sorted(bhp.keys())
     rates = parse_surface_rates_stb_day(out_path)
@@ -186,6 +200,12 @@ def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
         nt = min(rate_times, key=lambda x: abs(x - t))
         return rates[nt]
 
+    def nearest_p(t):
+        if not p_by_t:
+            return None
+        nt = min(p_by_t.keys(), key=lambda x: abs(x - t))
+        return p_by_t[nt]
+
     wi, wp = meta["wells"]["INJ"], meta["wells"]["PROD"]
     samples = []
     for t, sw in sw_series:
@@ -198,14 +218,31 @@ def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
         bi, bp = nearest_bhp(t)
         p_inj, p_prod = psi_to_pa(bi), psi_to_pa(bp)
         wr = nearest_rate(t)
+        well_pressure = {"INJ": p_inj, "PROD": p_prod}
+        well_sat = {
+            "INJ": (sw_inj, max(0.0, 1.0 - sw_inj), 0.0),
+            "PROD": (sw_prod, max(0.0, 1.0 - sw_prod), 0.0),
+        }
+        pres = nearest_p(t)
+        for name, role in mesh.well_role.items():
+            if role not in ("observer_p", "observer_s"):
+                continue
+            cid = mesh.well_cell_id[name]
+            ii, jj, kk = mesh.grid.ijk(cid)
+            if role == "observer_p" and pres is not None:
+                val = float(pres[kk, jj, ii])
+                if np.isfinite(val):
+                    well_pressure[name] = val
+            elif role == "observer_s":
+                s = float(sw[kk, jj, ii])
+                if not np.isfinite(s):
+                    s = 0.3
+                well_sat[name] = (s, max(0.0, 1.0 - s), 0.0)
         samples.append(
             SensorSample(
                 time=float(t),
-                well_pressure={"INJ": p_inj, "PROD": p_prod},
-                well_saturation={
-                    "INJ": (sw_inj, max(0.0, 1.0 - sw_inj), 0.0),
-                    "PROD": (sw_prod, max(0.0, 1.0 - sw_prod), 0.0),
-                },
+                well_pressure=well_pressure,
+                well_saturation=well_sat,
                 boundary=BoundaryConditions(pressure={"left": p_inj, "right": p_prod}),
                 well_rate={"INJ": float(wr["INJ"]), "PROD": float(wr["PROD"])},
             )
@@ -220,7 +257,13 @@ def rel_l2(a, b) -> float:
     return float(np.linalg.norm((a - b).ravel()) / den)
 
 
-def compare_case(name: str, case_dir: Path) -> dict:
+def compare_case(
+    name: str,
+    case_dir: Path,
+    *,
+    n_probes: int = 0,
+    probe_layout: str = "uniform",
+) -> dict:
     truth_path = case_dir / ("truth_channel.json" if "channel" in name else "truth_fault.json")
     if not truth_path.is_file():
         # channel uses truth_channel, fault uses truth_fault
@@ -234,6 +277,47 @@ def compare_case(name: str, case_dir: Path) -> dict:
 
     meta = json.loads(truth_path.read_text(encoding="utf-8"))
     mesh, ik, pk = mesh_from_truth(meta)
+    n_probes = max(0, int(n_probes))
+    if n_probes > 0:
+        n_p, n_s = split_n_probes(n_probes)
+        g = meta["grid"]
+        if probe_layout == "adaptive":
+            p_series = parse_grid_series(
+                out_path, field="pressure", nx=g["nx"], ny=g["ny"], nz=g["nz"]
+            )
+            sw_series0 = parse_sw_grids(out_path, nx=g["nx"], ny=g["ny"], nz=g["nz"])
+            var_p = field_variance_over_time(
+                [(t, np.asarray(a, dtype=float) * 6894.757293168) for t, a in p_series]
+            )
+            var_s = field_variance_over_time(sw_series0)
+            specs = recommend_probes(
+                mesh, n_p=n_p, n_s=n_s, mode="hybrid", prior_var_p=var_p, prior_var_s=var_s
+            )
+        else:
+            specs = place_uniform_probes(mesh, n_p, n_s)
+        # rebuild mesh with probes
+        extra = [WellPoint(**s.as_well_point_kwargs()) for s in specs]
+        # re-call mesh_from_truth structure with extra wells
+        base_wells = [
+            WellPoint(
+                n,
+                float(mesh.x[mesh.well_cell_id[n]]),
+                float(mesh.y[mesh.well_cell_id[n]]),
+                float(mesh.z[mesh.well_cell_id[n]]),
+                role=mesh.well_role[n],
+            )
+            for n in ("INJ", "PROD")
+            if n in mesh.well_cell_id
+        ]
+        g = meta["grid"]
+        nx, ny, nz = int(g["nx"]), int(g["ny"]), int(g["nz"])
+        di, dj = ft_to_m(g["di_ft"]), ft_to_m(g["dj_ft"])
+        dk = np.array([ft_to_m(v) for v in g["dk_ft"]], dtype=float)
+        lx, ly, lz = nx * di, ny * dj, float(np.sum(dk))
+        bounds = AxisAlignedBounds(0.0, lx, 0.0, ly, 0.0, lz)
+        mesh = build_mesh(
+            bounds, np.full(nx, di), np.full(ny, dj), dk, wells=base_wells + extra
+        )
     samples, sw_series = samples_from_cmg(meta, out_path, mesh, ik, pk)
     if len(samples) < 2:
         return {"case": name, "ok": False, "error": "insufficient CMG time samples"}
@@ -368,20 +452,53 @@ def write_markdown(results: list[dict], path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="CMG vs software gap report")
+    ap.add_argument(
+        "--n-probes",
+        type=int,
+        default=0,
+        help="virtual exclusive probes sampled from CMG grids (default 0 = wells only)",
+    )
+    ap.add_argument(
+        "--probe-layout",
+        choices=("uniform", "adaptive"),
+        default="uniform",
+        help="probe placement when --n-probes > 0",
+    )
+    args = ap.parse_args(argv)
+
     results = []
     if (CHANNEL / "mxspr006_channel.out").is_file():
-        results.append(compare_case("cmg_undulating_channel", CHANNEL))
+        results.append(
+            compare_case(
+                "cmg_undulating_channel",
+                CHANNEL,
+                n_probes=args.n_probes,
+                probe_layout=args.probe_layout,
+            )
+        )
     if (FAULT / "mxspr006_fault.out").is_file():
-        results.append(compare_case("cmg_faulted_dogleg", FAULT))
+        results.append(
+            compare_case(
+                "cmg_faulted_dogleg",
+                FAULT,
+                n_probes=args.n_probes,
+                probe_layout=args.probe_layout,
+            )
+        )
 
-    report = {"results": results}
+    report = {
+        "n_probes": args.n_probes,
+        "probe_layout": args.probe_layout,
+        "results": results,
+    }
     HERE.mkdir(parents=True, exist_ok=True)
     (HERE / "gap_metrics.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     write_markdown(results, HERE / "GAP_REPORT.md")
     print(json.dumps(report, indent=2))
     print(f"\nMarkdown: {HERE / 'GAP_REPORT.md'}")
-    return 0 if all(r.get("ok") for r in results) else 1
+    return 0 if results and all(r.get("ok") for r in results) else 1
 
 
 if __name__ == "__main__":
