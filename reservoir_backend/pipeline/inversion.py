@@ -274,10 +274,10 @@ def _sw_polish_series(
         sw, so, sg, _ = reconstruct_saturation(mesh, sample_s, pressure=p)
         if prev is not None and dt is not None and float(dt) > 0.0:
             n_s = len(sample_s.well_saturation)
-            n_sub = int(np.clip(round(float(dt) / 4.0) + n_s, 8, 28))
+            n_sub = int(np.clip(round(float(dt) / 5.0) + n_s, 8, 24))
             sw_t, _ = transport_water_saturation(
                 mesh,
-                0.30 * prev.sw + 0.70 * sw,
+                0.40 * prev.sw + 0.60 * sw,
                 p,
                 k_fixed,
                 sample,
@@ -287,7 +287,7 @@ def _sw_polish_series(
                 n_substeps=n_sub,
             )
             sw_b = _distance_weighted_sw_blend(
-                mesh, sample_s, sw, sw_t, n_s_hard=n_s
+                mesh, sample_s, sw, sw_t, n_s_hard=n_s, recon_floor=0.45
             )
             sw, so, sg = phases_from_sw(sw_b, sample=sample_s, mesh=mesh)
         base = history[i] if i < len(history) else prev

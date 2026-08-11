@@ -277,11 +277,12 @@ def _distance_weighted_sw_blend(
     sw_transport: NDArray[np.float64],
     *,
     n_s_hard: int,
+    recon_floor: float = 0.35,
 ) -> NDArray[np.float64]:
-    """Near hard S sensors trust recon; far cells trust transport.
+    """Near hard S sensors trust recon; far cells lean transport.
 
-    Length scale shrinks as more probes are available so dense S nets
-    do not force a global recon field that fights multiphase dynamics.
+    Length scale shrinks mildly with more probes so dense nets stay local
+    without starving recon (which hurt Sw L2 when floor was too low).
     """
     recon = np.asarray(sw_recon, dtype=float)
     trans = np.asarray(sw_transport, dtype=float)
@@ -296,23 +297,19 @@ def _distance_weighted_sw_blend(
     if not pts:
         return trans
     pts_a = np.asarray(pts, dtype=float)
-    # mean horizontal spacing as base length
     dxi = float(np.mean(np.asarray(mesh.grid.dx, dtype=float)))
     dyj = float(np.mean(np.asarray(mesh.grid.dy, dtype=float)))
     L0 = max(np.sqrt(dxi * dxi + dyj * dyj), 1.0)
-    # denser S net → shorter influence of recon away from probes
-    L = L0 * float(max(1.1, 2.8 - 0.18 * max(n_s_hard, 1)))
+    L = L0 * float(max(1.4, 3.2 - 0.12 * max(n_s_hard, 1)))
     xyz = np.column_stack([mesh.x, mesh.y, mesh.z])
-    # min distance to any hard S
     d2 = np.min(
         np.sum((xyz[:, None, :] - pts_a[None, :, :]) ** 2, axis=2), axis=1
     )
     d = np.sqrt(d2)
-    w = np.exp(-d / L)  # 1 at probe, →0 far
-    # floor so transport always contributes a bit off-probe
-    w = 0.15 + 0.85 * w
+    w = np.exp(-d / L)
+    floor = float(np.clip(recon_floor, 0.0, 0.85))
+    w = floor + (1.0 - floor) * w
     w3 = w.reshape(mesh.grid.shape)
-    # ensure exact hard pins later via phases_from_sw
     return w3 * recon + (1.0 - w3) * trans
 
 
@@ -387,9 +384,9 @@ def run_point_first_slice(
             sw_recon = sw.copy()
             n_s_hard = len(sample_s.well_saturation)
             # more S sensors → start closer to recon, then blend by distance to hard S
-            recon_bias = float(min(0.55, 0.25 + 0.05 * n_s_hard))
+            recon_bias = float(min(0.70, 0.40 + 0.06 * n_s_hard))
             sw_init = (1.0 - recon_bias) * previous.sw + recon_bias * sw_recon
-            n_sub = int(np.clip(round(float(dt) / 4.0) + n_s_hard, 8, 28))
+            n_sub = int(np.clip(round(float(dt) / 5.0) + n_s_hard, 8, 24))
             sw_t, t_notes = transport_water_saturation(
                 mesh,
                 sw_init,
@@ -402,7 +399,7 @@ def run_point_first_slice(
                 n_substeps=n_sub,
             )
             sw_blend = _distance_weighted_sw_blend(
-                mesh, sample_s, sw_recon, sw_t, n_s_hard=n_s_hard
+                mesh, sample_s, sw_recon, sw_t, n_s_hard=n_s_hard, recon_floor=0.40
             )
             sw, so, sg = phases_from_sw(sw_blend, sample=sample_s, mesh=mesh)
             t_notes = list(t_notes) + [
