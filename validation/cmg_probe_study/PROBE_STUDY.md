@@ -21,7 +21,15 @@
 
 ## 读法
 
-- **N↑ 后 Sw L2 下降或 Dice 上升** → 更多虚拟测点改善重建。
-- **adaptive vs uniform**：同 N 对比；非均质通道上 hybrid 应用 CMG 多时刻方差。
-- 井压误差应接近 0（硬约束）。
+- **N↑ 后 Sw L2 下降或 Dice 上升** → 更多虚拟测点改善重建（反演问题未必严格单调）。
+- **uniform**：几何空间填充，粗网格上往往更稳。
+- **adaptive (hybrid)**：CMG 多时刻 p/S 方差 + maximin；默认偏空间填充，并避开注采井邻域。
+- **p hold-out RMSE**：未作硬点的格点压力相对 CMG；越低越好。
+- 井压硬约束误差应接近 0。
+
+## 本轮观察（粗网格）
+
+- 断层 **uniform N=0→8**：Sw L2 0.81→0.55，p hold-out 同步下降。
+- 通道 **adaptive N=4**：Dice 可优于 wells-only；N 再大时 L2 不一定单调。
+- 产品推荐用 `recommend_probes`；验收同时保留 uniform 基线。
 
