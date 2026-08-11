@@ -101,11 +101,13 @@ def test_esmda_reduces_well_pressure_misfit() -> None:
     assert result.k_ensemble.shape[0] == 12
     assert len(result.history_mean) == 2
     assert result.observation_rmse
-    # final RMSE should be finite and not explode
-    assert result.observation_rmse[-1] < 1.0e7
+    # final RMSE should be finite; with free well cells it is generally > 0
+    assert result.observation_rmse[-1] < 5.0e6
     assert np.all(result.k_std >= 0.0)
     # ensemble mean k should vary spatially after assimilation
-    assert float(np.std(result.k_mean)) >= 0.0
+    assert float(np.std(result.k_mean)) > 0.0
+    # assimilation should not be trivial no-op on misfit series length
+    assert len(result.observation_rmse) == 2 * 3  # n_times * Na
     _ = base
 
 

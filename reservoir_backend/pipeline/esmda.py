@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
-from reservoir_backend.pipeline.pressure_field import reconstruct_pressure
 from reservoir_backend.pipeline.run import run_time_slice
 from reservoir_backend.pipeline.state import FieldBundle, MeshBundle, SensorSample
+from reservoir_backend.solver.pressure_solver import solve_steady_state_pressure_3d
 
 
 @dataclass
@@ -112,10 +112,11 @@ def run_esmda_permeability(
         r_diag = sigma**2
 
         for _ia in range(na):
-            # forecast observations
+            # forecast observations: pressure at well cells WITHOUT hard Dirichlet
+            # so k actually influences predicted well BHP (boundaries only).
             d_sim = np.zeros((ne, n_obs), dtype=float)
             for e in range(ne):
-                p, _ = reconstruct_pressure(
+                p = _forward_pressure_no_well_dirichlet(
                     mesh,
                     sample,
                     permeability_m2=k_ens[e],
@@ -192,6 +193,35 @@ def run_esmda_permeability(
         observation_rmse=rmse_hist,
         notes=notes,
     )
+
+
+def _forward_pressure_no_well_dirichlet(
+    mesh: MeshBundle,
+    sample: SensorSample,
+    *,
+    permeability_m2: float | NDArray[np.float64],
+    viscosity_pa_s: float,
+) -> NDArray[np.float64]:
+    """TPFA pressure using face BC only — well cells remain free unknowns."""
+    grid = mesh.grid
+    boundaries = {
+        key: float(value)
+        for key, value in sample.boundary.pressure.items()
+        if key in {"left", "right", "front", "back", "bottom", "top"}
+    }
+    ref = float(next(iter(sample.well_pressure.values()), 0.0))
+    result = solve_steady_state_pressure_3d(
+        grid=grid,
+        kx=permeability_m2,
+        ky=permeability_m2,
+        kz=permeability_m2,
+        mu=viscosity_pa_s,
+        dirichlet_boundaries=boundaries or None,
+        wells=None,
+        reference_pressure=ref,
+        cell_dirichlet=None,
+    )
+    return result.pressure.values
 
 
 def _ordered_well_names(mesh: MeshBundle, sample: SensorSample) -> list[str]:
