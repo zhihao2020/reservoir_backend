@@ -6,6 +6,7 @@ from reservoir_backend.pipeline.ensemble_math import (
 )
 from reservoir_backend.pipeline.fractional_flow import water_fractional_flow
 from reservoir_backend.pipeline.point_workflow import run_point_first_slice
+from reservoir_backend.pipeline.spatial_interp import InterpResult, auto_interpolate_to_grid
 from reservoir_backend.pipeline.esmda import ESMdaResult, generate_logk_ensemble, run_esmda_permeability
 from reservoir_backend.pipeline.mesh_builder import build_mesh
 from reservoir_backend.pipeline.mesh_refine import map_field_to_mesh, refine_mesh_by_indicator
@@ -50,10 +51,12 @@ __all__ = [
     "DiscoveryResult",
     "ESMdaResult",
     "FieldBundle",
+    "InterpResult",
     "MeshBundle",
     "SensorSample",
     "SyntheticTwin",
     "WellPoint",
+    "auto_interpolate_to_grid",
     "build_channel_twin",
     "build_faulted_channel_twin",
     "build_mesh",

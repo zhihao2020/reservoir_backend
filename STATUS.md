@@ -15,7 +15,8 @@
 | 1 网格划分 | 已验证 | `pipeline.build_mesh` | `tests/test_pipeline_mesh.py` | 边界+井+dx/dy/dz → 序号/坐标 |
 | 2 压力场 | MVP | 压力硬点插值/TPFA | `tests/test_pipeline_fields.py` | 井+`observer_p` 仅测 p |
 | 3 饱和度场 | MVP | 饱和度硬点插值 | `tests/test_pipeline_fields.py` | 井+`observer_s` 仅测 S |
-| 4 物性 | MVP | 点 k,φ → 空间 IDW | `point_workflow` | 硬点互补 p/S 后算点属性再铺全网 |
+| 4 物性 | MVP | 点 k,φ → 自动空间插值 | `point_workflow` + `spatial_interp` | LOO-CV 选 IDW/普通克里金/堆叠；log-k；无用户方法配置 |
+| 空间插值自动选择 | 已验证 | `pipeline.auto_interpolate_to_grid` | `tests/test_spatial_interp.py` | 点数不足或退化几何→IDW；LOO RMSE 差距超 5% 选优，否则 1/RMSE² 堆叠 |
 | 测点分工 | 已验证 | `observer_p` / `observer_s` | `tests/test_pipeline_fields.py` | **同一测点不同时测 p 与 S** |
 | 4 物性场 k/φ | MVP | `pipeline.invert_rock_properties` | `tests/test_pipeline_fields.py` | 达西 k；流量场；φ 物质平衡；**非均质数组** |
 | 非均质四场验收 | MVP | `validation/heterogeneous_four_field/` | run_validate.py | **禁止均质**；通道/断层孪生 |

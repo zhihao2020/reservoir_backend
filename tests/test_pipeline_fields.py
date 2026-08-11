@@ -99,7 +99,7 @@ def test_point_first_assigns_complementary_values() -> None:
     # rock fields finite and positive
     assert np.all(fields.permeability > 0.0)
     assert np.all((fields.porosity > 0.0) & (fields.porosity < 1.0))
-    assert any("spatial IDW" in n for n in fields.notes)
+    assert any("auto spatial" in n or "auto-interp" in n for n in fields.notes)
 
 
 def test_property_inversion_positive() -> None:

@@ -26,7 +26,7 @@ from reservoir_backend.core.field import Field3D
 from reservoir_backend.pipeline.pressure_field import reconstruct_pressure
 from reservoir_backend.pipeline.property_field import invert_rock_properties
 from reservoir_backend.pipeline.saturation_field import reconstruct_saturation
-from reservoir_backend.pipeline.spatial_interp import idw_points_to_grid
+from reservoir_backend.pipeline.spatial_interp import auto_interpolate_to_grid
 from reservoir_backend.pipeline.state import FieldBundle, MeshBundle, SensorSample
 from reservoir_backend.pipeline.transport_saturation import (
     phases_from_sw,
@@ -220,21 +220,40 @@ def interpolate_rock_from_points(
     k_fill: float,
     phi_fill: float,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], list[str]]:
-    """Spatial IDW of point k and φ onto the full grid."""
+    """Auto spatial map of point k and φ onto the full grid.
+
+    Uses LOO-CV among IDW / ordinary kriging / stack (no user method config).
+    Permeability is interpolated in log space; porosity in linear space.
+    """
     if table.xyz.size == 0:
         return (
             np.full(mesh.grid.shape, k_fill, dtype=float),
             np.full(mesh.grid.shape, phi_fill, dtype=float),
             ["no hard points; used prior fill for k and phi"],
         )
-    k = idw_points_to_grid(mesh, table.xyz, table.permeability, fill=k_fill)
-    phi = idw_points_to_grid(mesh, table.xyz, table.porosity, fill=phi_fill)
-    k = np.clip(k, 1.0e-18, 1.0e-10)
-    phi = np.clip(phi, 1.0e-3, 0.5)
+    k_res = auto_interpolate_to_grid(
+        mesh,
+        table.xyz,
+        table.permeability,
+        fill=k_fill,
+        log_transform=True,
+        clip=(1.0e-18, 1.0e-10),
+    )
+    phi_res = auto_interpolate_to_grid(
+        mesh,
+        table.xyz,
+        table.porosity,
+        fill=phi_fill,
+        log_transform=False,
+        clip=(1.0e-3, 0.5),
+    )
     notes = [
-        f"spatial IDW of point k,φ onto grid from {len(table.names)} points",
+        f"auto spatial k,φ from {len(table.names)} points "
+        f"(k_method={k_res.method}, phi_method={phi_res.method})",
+        *k_res.notes,
+        *phi_res.notes,
     ]
-    return k, phi, notes
+    return k_res.values, phi_res.values, notes
 
 
 def run_point_first_slice(
@@ -249,7 +268,7 @@ def run_point_first_slice(
     n_k_iterations: int = 2,
     use_transport: bool = True,
 ) -> FieldBundle:
-    """User-described workflow: complementary p/S fields → point k,φ → IDW grid."""
+    """User-described workflow: complementary p/S → point k,φ → auto spatial map."""
     vnotes = validate_exclusive_observers(mesh, sample)
 
     if previous is not None:
@@ -322,7 +341,7 @@ def run_point_first_slice(
         # complementary fill is automatic: observer_s cells have p from pressure field;
         # observer_p cells have S from saturation field.
 
-        # --- point k,φ then spatial IDW ---
+        # --- point k,φ then auto spatial (IDW / kriging / stack) ---
         table, r_notes, flux_dict = build_point_properties(
             mesh,
             sample,
@@ -346,7 +365,7 @@ def run_point_first_slice(
 
     notes = (
         [
-            "point-first workflow: p-interp → S-interp → point k,φ → IDW rock grid",
+            "point-first workflow: p-interp → S-interp → point k,φ → auto spatial rock grid",
             "observers measure only p OR only S; complementary values from fields",
         ]
         + vnotes

@@ -54,8 +54,8 @@ def build_channel_twin(
     bounds = AxisAlignedBounds(0.0, lx, 0.0, ly, 0.0, lz)
     dx, dy, dz = lx / nx, ly / ny, lz / nz
     wells = [
-        WellPoint("INJ", 0.15 * lx, 0.5 * ly, 0.5 * lz),
-        WellPoint("PROD", 0.85 * lx, 0.5 * ly, 0.5 * lz),
+        WellPoint("INJ", 0.15 * lx, 0.5 * ly, 0.5 * lz, role="injector"),
+        WellPoint("PROD", 0.85 * lx, 0.5 * ly, 0.5 * lz, role="producer"),
     ]
     mesh = build_mesh(bounds, dx, dy, dz, wells=wells)
     grid = mesh.grid
@@ -186,8 +186,8 @@ def build_faulted_channel_twin(
     dx, dy, dz = lx / nx, ly / ny, lz / nz
     fault_x = float(fault_i_frac) * lx
     wells = [
-        WellPoint("INJ", 0.12 * lx, 0.45 * ly, 0.55 * lz),
-        WellPoint("PROD", 0.88 * lx, 0.75 * ly, 0.55 * lz),
+        WellPoint("INJ", 0.12 * lx, 0.45 * ly, 0.55 * lz, role="injector"),
+        WellPoint("PROD", 0.88 * lx, 0.75 * ly, 0.55 * lz, role="producer"),
     ]
     mesh = build_mesh(bounds, dx, dy, dz, wells=wells)
     grid = mesh.grid

@@ -11,10 +11,14 @@
    （observer_s 无测压，从 p 场取值）
 3 仅饱和度硬点(井S+observer_s) → 全网格 sw,so,sg
    （observer_p 无测 S，从 S 场取值）
-4 在各硬点用互补后的 (p,S) 估算点 k,φ → 空间 IDW → 全网格 k,φ
+4 在各硬点用互补后的 (p,S) 估算点 k,φ
+   → 自动空间插值（IDW / 普通克里金 / 堆叠，LOO-CV 选择；log-k）
+   → 全网格 k,φ
 ```
 
 入口：`run_time_slice` → `run_point_first_slice`（`mode=grid_invert` 为旧全网反演）。
+
+空间插值规则内置（**无 YAML/CLI method 开关**）：`N_MIN_KRIGING=8`，`CV_MARGIN=0.05`；压力场仍走 TPFA，不走本模块。
 
 CMG 仅作**非均质**正演对照，不进产品内核。
 ```
