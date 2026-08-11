@@ -93,8 +93,35 @@ def run_sensor_inversion(
         theta0 = None
 
     notes: list[str] = [
-        "greenfield: low-dim k (bg/channel/width/z) + joint multi-time ES-MDA + hard series",
+        "greenfield: warm corridor → param ES-MDA → corridor refit → hard series",
     ]
+
+    # --- 0) warm-start corridor geometry from a cheap draft (prior k) ---
+    if theta0 is None:
+        theta0 = default_k_param_prior(k_mean_scalar).mean.copy()
+    if path_enhance and len(samples) >= 2:
+        k_warm = expand_k_from_params(mesh, theta0)
+        draft0 = _hard_series(
+            mesh,
+            samples,
+            k_work=k_warm,
+            phi_work=phi0,
+            viscosity_pa_s=viscosity_pa_s,
+            n_k_iterations=1,
+        )
+        if len(draft0) >= 2:
+            ind0, st0 = infer_shape_indicator(
+                mesh, draft0, sw_weight=2.0, k_weight=0.02, pressure_weight=0.7
+            )
+            theta0, align0 = fit_corridor_to_indicator(
+                mesh, theta0, ind0, n_amp=9, n_phase=12, n_width=5
+            )
+            theta0 = boost_theta_from_indicator(mesh, theta0, ind0, strength=0.45)
+            notes.append(
+                f"warm corridor-fit align={align0:.3f} "
+                f"meander=({theta0[4]:.2f},{theta0[5]:.2f}) "
+                f"ind_mean={st0.get('indicator_mean', float('nan')):.3f}"
+            )
 
     # --- 1) joint multi-time ES-MDA in parameter space ---
     k_mean, k_std, theta_mean, nrmse, es_notes = run_param_joint_esmda(
@@ -111,49 +138,26 @@ def run_sensor_inversion(
     )
     notes.extend(es_notes)
 
-    # --- 2) path enhance in θ-space (never flips channel/matrix ratio) ---
+    # --- 2) corridor refit on post-ES-MDA draft ---
+    align_post = float("nan")
     if path_enhance and len(samples) >= 2:
-        draft = _hard_series(
+        k_mean, theta_mean, align_post, n2 = _geometry_from_indicator(
             mesh,
             samples,
-            k_work=k_mean,
-            phi_work=phi0,
+            k_mean,
+            theta_mean,
+            phi0=phi0,
             viscosity_pa_s=viscosity_pa_s,
-            n_k_iterations=1,
+            tag="post-ESMDA",
         )
-        if len(draft) >= 2:
-            ind, stats = infer_shape_indicator(
-                mesh, draft, sw_weight=1.8, k_weight=0.05, pressure_weight=0.9
-            )
-            # (a) deform corridor (meander/width) to sit on ΔSw footprint
-            theta_mean, align = fit_corridor_to_indicator(
-                mesh, theta_mean, ind, n_amp=9, n_phase=12, n_width=5
-            )
-            # (b) raise contrast when corridor aligns with indicator
-            theta_mean = boost_theta_from_indicator(
-                mesh, theta_mean, ind, strength=0.70
-            )
-            k_mean = expand_k_from_params(mesh, theta_mean)
-            # (c) light upward cell boost only on high indicator
-            k_mean = enhance_permeability_from_indicator(
-                k_mean, ind, strength=0.30, asymmetric=True
-            )
-            k_mean, theta_mean, ratio = enforce_k_channel_contrast(
-                mesh, k_mean, theta_mean, min_ratio=2.5
-            )
-            notes.append(
-                f"corridor-fit align={align:.3f} meander=({theta_mean[4]:.2f},{theta_mean[5]:.2f}) "
-                f"ind_mean={stats.get('indicator_mean', float('nan')):.3f} "
-                f"k_ch/k_mat≈{ratio:.2f}"
-            )
+        notes.extend(n2)
 
-    # final contrast guard even without path enhance
     k_mean, theta_mean, ratio0 = enforce_k_channel_contrast(
-        mesh, k_mean, theta_mean, min_ratio=2.0
+        mesh, k_mean, theta_mean, min_ratio=2.5
     )
     notes.append(f"k contrast guard ratio≈{ratio0:.2f}")
 
-    # --- 3) hard series (parametric k dominant — no local rock overwrite of contrast) ---
+    # --- 3) hard series ---
     history = _hard_series(
         mesh,
         samples,
@@ -162,11 +166,49 @@ def run_sensor_inversion(
         viscosity_pa_s=viscosity_pa_s,
         n_k_iterations=n_k_iterations,
     )
+
+    # --- 4) one post-series corridor polish if multi-time history improved geometry ---
+    if path_enhance and len(history) >= 2:
+        ind_f, st_f = infer_shape_indicator(
+            mesh, history, sw_weight=2.0, k_weight=0.02, pressure_weight=0.7
+        )
+        th2, align2 = fit_corridor_to_indicator(
+            mesh, theta_mean, ind_f, n_amp=11, n_phase=14, n_width=5
+        )
+        # only re-run if alignment clearly improves
+        if (np.isfinite(align_post) and align2 > float(align_post) + 0.02) or (
+            not np.isfinite(align_post) and align2 > 0.05
+        ):
+            th2 = boost_theta_from_indicator(mesh, th2, ind_f, strength=0.75)
+            k2 = expand_k_from_params(mesh, th2)
+            k2 = enhance_permeability_from_indicator(
+                k2, ind_f, strength=0.25, asymmetric=True
+            )
+            k2, th2, ratio2 = enforce_k_channel_contrast(
+                mesh, k2, th2, min_ratio=2.5
+            )
+            history = _hard_series(
+                mesh,
+                samples,
+                k_work=k2,
+                phi_work=phi0,
+                viscosity_pa_s=viscosity_pa_s,
+                n_k_iterations=n_k_iterations,
+            )
+            k_mean, theta_mean = k2, th2
+            notes.append(
+                f"post-series corridor polish align {align_post:.3f}→{align2:.3f} "
+                f"k_ch/k_mat≈{ratio2:.2f} ind_mean={st_f.get('indicator_mean', float('nan')):.3f}"
+            )
+        else:
+            notes.append(
+                f"post-series polish skipped (align {align_post:.3f} vs {align2:.3f})"
+            )
+
     for h in history:
-        h.notes = list(h.notes) + notes[:10]
-        # keep structure: do not let point-rock IDW destroy channel contrast
+        h.notes = list(h.notes) + notes[:12]
         h.permeability = np.clip(
-            0.92 * k_mean + 0.08 * np.asarray(h.permeability, dtype=float),
+            0.93 * k_mean + 0.07 * np.asarray(h.permeability, dtype=float),
             1.0e-18,
             1.0e-10,
         )
@@ -182,6 +224,51 @@ def run_sensor_inversion(
         observation_nrmse=nrmse,
         notes=notes,
     )
+
+
+def _geometry_from_indicator(
+    mesh: MeshBundle,
+    samples: list[SensorSample],
+    k_mean: NDArray[np.float64],
+    theta_mean: NDArray[np.float64],
+    *,
+    phi0: float,
+    viscosity_pa_s: float,
+    tag: str,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], float, list[str]]:
+    """Fit corridor + contrast from a draft series under current k."""
+    notes: list[str] = []
+    draft = _hard_series(
+        mesh,
+        samples,
+        k_work=k_mean,
+        phi_work=phi0,
+        viscosity_pa_s=viscosity_pa_s,
+        n_k_iterations=1,
+    )
+    if len(draft) < 2:
+        return k_mean, theta_mean, float("nan"), notes
+    ind, stats = infer_shape_indicator(
+        mesh, draft, sw_weight=2.0, k_weight=0.02, pressure_weight=0.7
+    )
+    theta_mean, align = fit_corridor_to_indicator(
+        mesh, theta_mean, ind, n_amp=11, n_phase=14, n_width=5
+    )
+    theta_mean = boost_theta_from_indicator(mesh, theta_mean, ind, strength=0.75)
+    k_mean = expand_k_from_params(mesh, theta_mean)
+    k_mean = enhance_permeability_from_indicator(
+        k_mean, ind, strength=0.28, asymmetric=True
+    )
+    k_mean, theta_mean, ratio = enforce_k_channel_contrast(
+        mesh, k_mean, theta_mean, min_ratio=2.5
+    )
+    notes.append(
+        f"{tag} corridor-fit align={align:.3f} "
+        f"meander=({theta_mean[4]:.2f},{theta_mean[5]:.2f}) "
+        f"ind_mean={stats.get('indicator_mean', float('nan')):.3f} "
+        f"k_ch/k_mat≈{ratio:.2f}"
+    )
+    return k_mean, theta_mean, float(align), notes
 
 
 def run_param_joint_esmda(
