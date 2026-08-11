@@ -410,8 +410,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--jobs",
         type=int,
-        default=max(1, min(4, (os.cpu_count() or 2) // 2)),
-        help="parallel study jobs (process pool); 1 = serial",
+        default=max(1, min(os.cpu_count() or 2, 6)),
+        help="parallel study jobs (process pool); max accuracy path, max wall-clock speed",
     )
     args = ap.parse_args(argv)
 

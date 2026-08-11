@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from scipy.sparse import lil_matrix
+from scipy.sparse import coo_matrix, lil_matrix
 from scipy.sparse.linalg import spsolve
 
 from reservoir_backend.core.exceptions import (
@@ -266,41 +266,13 @@ def solve_steady_state_pressure_3d(
     cell_bc = _validate_cell_dirichlet(grid, cell_dirichlet)
 
     n = grid.total_cells
-    matrix = lil_matrix((n, n), dtype=float)
     rhs = np.zeros(n, dtype=float)
 
     tx = compute_directional_transmissibility(grid, kx_values, mu, "x")
-    for k in range(grid.nz):
-        for j in range(grid.ny):
-            for i in range(grid.nx - 1):
-                _add_internal_face(
-                    matrix,
-                    grid.index(i, j, k),
-                    grid.index(i + 1, j, k),
-                    float(tx[k, j, i]),
-                )
-
     ty = compute_directional_transmissibility(grid, ky_values, mu, "y")
-    for k in range(grid.nz):
-        for j in range(grid.ny - 1):
-            for i in range(grid.nx):
-                _add_internal_face(
-                    matrix,
-                    grid.index(i, j, k),
-                    grid.index(i, j + 1, k),
-                    float(ty[k, j, i]),
-                )
-
     tz = compute_directional_transmissibility(grid, kz_values, mu, "z")
-    for k in range(grid.nz - 1):
-        for j in range(grid.ny):
-            for i in range(grid.nx):
-                _add_internal_face(
-                    matrix,
-                    grid.index(i, j, k),
-                    grid.index(i, j, k + 1),
-                    float(tz[k, j, i]),
-                )
+    # vectorized TPFA interior (COO → LIL once) — same stencil as nested loops
+    matrix = _assemble_3d_internal_tpfa(grid, tx, ty, tz)
 
     _apply_3d_dirichlet_boundaries(
         matrix,
@@ -527,6 +499,64 @@ def _add_internal_face(matrix, cell_a: int, cell_b: int, transmissibility: float
     matrix[cell_b, cell_b] += transmissibility
     matrix[cell_a, cell_b] -= transmissibility
     matrix[cell_b, cell_a] -= transmissibility
+
+
+def _assemble_3d_internal_tpfa(
+    grid: Grid3D,
+    tx: NDArray[np.float64],
+    ty: NDArray[np.float64],
+    tz: NDArray[np.float64],
+):
+    """Build LIL matrix with all internal TPFA connections (vectorized COO)."""
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    n = grid.total_cells
+    row_chunks: list[NDArray[np.int64]] = []
+    col_chunks: list[NDArray[np.int64]] = []
+    data_chunks: list[NDArray[np.float64]] = []
+
+    def _push(a: NDArray[np.int64], b: NDArray[np.int64], t: NDArray[np.float64]) -> None:
+        a = a.ravel()
+        b = b.ravel()
+        t = np.asarray(t, dtype=float).ravel()
+        row_chunks.extend([a, b, a, b])
+        col_chunks.extend([a, b, b, a])
+        data_chunks.extend([t, t, -t, -t])
+
+    if nx > 1:
+        # a = k*ny*nx + j*nx + i, b = a+1, i=0..nx-2
+        kk, jj, ii = np.meshgrid(
+            np.arange(nz, dtype=np.int64),
+            np.arange(ny, dtype=np.int64),
+            np.arange(nx - 1, dtype=np.int64),
+            indexing="ij",
+        )
+        a = kk * (ny * nx) + jj * nx + ii
+        _push(a, a + 1, tx)
+    if ny > 1:
+        kk, jj, ii = np.meshgrid(
+            np.arange(nz, dtype=np.int64),
+            np.arange(ny - 1, dtype=np.int64),
+            np.arange(nx, dtype=np.int64),
+            indexing="ij",
+        )
+        a = kk * (ny * nx) + jj * nx + ii
+        _push(a, a + nx, ty)
+    if nz > 1:
+        kk, jj, ii = np.meshgrid(
+            np.arange(nz - 1, dtype=np.int64),
+            np.arange(ny, dtype=np.int64),
+            np.arange(nx, dtype=np.int64),
+            indexing="ij",
+        )
+        a = kk * (ny * nx) + jj * nx + ii
+        _push(a, a + ny * nx, tz)
+
+    if not row_chunks:
+        return lil_matrix((n, n), dtype=float)
+    rows = np.concatenate(row_chunks)
+    cols = np.concatenate(col_chunks)
+    data = np.concatenate(data_chunks)
+    return coo_matrix((data, (rows, cols)), shape=(n, n)).tolil()
 
 
 def _half_cell_transmissibility(

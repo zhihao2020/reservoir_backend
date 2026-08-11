@@ -4,13 +4,18 @@ Self-contained implementation inspired by Emerick & Reynolds (2013) and
 common open-source practice (normalized alpha, R-preconditioning, optional
 Gaspari–Cohn localization, ensemble inflation). Does **not** import
 ``references/`` upstream packages.
+
+Performance (accuracy-preserving):
+- vectorized TPFA assembly (solver)
+- one process pool for the whole assimilation (amortize Windows spawn)
+- workers map only permeability arrays after initializer loads mesh/samples
 """
 
 from __future__ import annotations
 
 import multiprocessing as mp
 import os
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -27,12 +32,12 @@ from reservoir_backend.pipeline.state import FieldBundle, MeshBundle, SensorSamp
 from reservoir_backend.solver.pressure_solver import solve_steady_state_pressure_3d
 
 
-def _default_workers(*, n_cells: int = 0) -> int:
-    """Parallel workers for ensemble forwards.
+def _default_workers(*, n_forwards: int = 0) -> int:
+    """Workers for ensemble forwards (max accuracy path, max speed).
 
-    Process pools help on **large** grids; on small CMG-like meshes spawn
-    overhead dominates. Nested process pools auto-disable.
-    Override with env ``RESERVOIR_BACKEND_WORKERS``.
+    Always parallelize when the total forward count is large enough to
+    amortize process spawn. Nested pools (probe-study workers) stay serial.
+    Override: ``RESERVOIR_BACKEND_WORKERS``.
     """
     if mp.current_process().name != "MainProcess":
         return 1
@@ -42,57 +47,54 @@ def _default_workers(*, n_cells: int = 0) -> int:
             return max(1, int(env))
         except ValueError:
             pass
-    # small grids: serial is faster on Windows (spawn cost)
-    if int(n_cells) > 0 and int(n_cells) < 2500:
-        return 1
     cpu = os.cpu_count() or 4
-    return max(1, min(6, cpu))
+    # many forwards → use cores; tiny jobs stay serial
+    if int(n_forwards) < 24:
+        return 1
+    return max(1, min(cpu, 8))
 
 
-# Process-pool worker state (initialized once per child)
+# ---- process worker state (one init per pool lifetime) ----
 _WORKER_MESH: MeshBundle | None = None
-_WORKER_SAMPLE: SensorSample | None = None
+_WORKER_SAMPLES: list[SensorSample] | None = None
 _WORKER_NAMES: list[str] | None = None
 _WORKER_MU: float = 1.0e-3
+_WORKER_RATE_WELLS: list | None = None  # per-sample cached wells
 
 
 def _init_forward_worker(
     mesh: MeshBundle,
-    sample: SensorSample,
+    samples: list[SensorSample],
     well_names: list[str],
     viscosity_pa_s: float,
 ) -> None:
-    global _WORKER_MESH, _WORKER_SAMPLE, _WORKER_NAMES, _WORKER_MU
+    global _WORKER_MESH, _WORKER_SAMPLES, _WORKER_NAMES, _WORKER_MU, _WORKER_RATE_WELLS
     _WORKER_MESH = mesh
-    _WORKER_SAMPLE = sample
+    _WORKER_SAMPLES = list(samples)
     _WORKER_NAMES = list(well_names)
     _WORKER_MU = float(viscosity_pa_s)
+    _WORKER_RATE_WELLS = [_rate_wells_from_sample(mesh, s) for s in _WORKER_SAMPLES]
 
 
-def _forward_k_only(k: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Child worker: forward one permeability member (mesh fixed in process)."""
-    assert _WORKER_MESH is not None and _WORKER_SAMPLE is not None and _WORKER_NAMES is not None
-    p = _forward_pressure_no_well_dirichlet(
-        _WORKER_MESH,
-        _WORKER_SAMPLE,
-        permeability_m2=k,
-        viscosity_pa_s=_WORKER_MU,
+def _forward_sample_k(payload: tuple[int, NDArray[np.float64]]) -> NDArray[np.float64]:
+    """Child: (sample_index, k) → observed pressures."""
+    sample_idx, k = payload
+    assert (
+        _WORKER_MESH is not None
+        and _WORKER_SAMPLES is not None
+        and _WORKER_NAMES is not None
+        and _WORKER_RATE_WELLS is not None
     )
-    return _sample_well_pressures(_WORKER_MESH, p, _WORKER_NAMES)
-
-
-def _process_forward_one(
-    payload: tuple,
-) -> NDArray[np.float64]:
-    """Picklable single-member forward (fallback without initializer)."""
-    mesh, sample, k, well_names, viscosity_pa_s = payload
-    p = _forward_pressure_no_well_dirichlet(
-        mesh,
+    sample = _WORKER_SAMPLES[sample_idx]
+    rate_wells = _WORKER_RATE_WELLS[sample_idx]
+    p = _forward_pressure_cached(
+        _WORKER_MESH,
         sample,
         permeability_m2=k,
-        viscosity_pa_s=float(viscosity_pa_s),
+        viscosity_pa_s=_WORKER_MU,
+        rate_wells=rate_wells,
     )
-    return _sample_well_pressures(mesh, p, list(well_names))
+    return _sample_well_pressures(_WORKER_MESH, p, _WORKER_NAMES)
 
 
 @dataclass
@@ -161,9 +163,6 @@ def run_esmda_permeability(
     Forward map: TPFA with face Dirichlet + **rate wells** (no cell Dirichlet on
     sensors), so permeability influences predicted BHP/probe pressures.
     Alpha weights satisfy ``sum 1/alpha_i = 1`` (Emerick & Reynolds).
-
-    Observations include injectors, producers, and ``observer_p`` entries present
-    in ``sample.well_pressure``.
     """
     if not samples:
         raise ValueError("samples must not be empty")
@@ -180,20 +179,21 @@ def run_esmda_permeability(
         corr_len_cells=corr_len_cells,
         seed=seed,
     )
+    n_forwards = len(samples) * na * ne
     workers = (
         int(n_workers)
         if n_workers is not None
-        else _default_workers(n_cells=int(np.prod(mesh.grid.shape)))
+        else _default_workers(n_forwards=n_forwards)
     )
     workers = max(1, min(workers, ne))
-    # process pool only from main process; threads as fallback inside workers
     use_processes = workers > 1 and mp.current_process().name == "MainProcess"
     notes = [
         f"ES-MDA ne={ne} Na={na} alpha={alphas.tolist()}",
         f"prior k_mean={k_mean:.3e} logk_std={logk_std}",
         "forward: boundary Dirichlet + rate wells; soft pressure at sensors",
         f"ensemble forward workers={workers} "
-        f"({'process' if use_processes else 'thread/serial'})",
+        f"({'process-pool-reused' if use_processes else 'serial'}) "
+        f"n_forwards≈{n_forwards}",
         "practice sources: Emerick&Reynolds2013; alpha norm / R-precond / inflation",
     ]
 
@@ -203,7 +203,6 @@ def run_esmda_permeability(
     if not well_names:
         raise ValueError("no wells on mesh for ES-MDA observations")
 
-    # default localization: shrinks as observation count grows (more local updates)
     loc_r = localization_radius_m
     if loc_r is None and auto_localize:
         dx = float(np.ptp(mesh.x)) if mesh.n_cells else 0.0
@@ -211,7 +210,6 @@ def run_esmda_permeability(
         dz = float(np.ptp(mesh.z)) if mesh.n_cells else 0.0
         diag = float(np.sqrt(dx * dx + dy * dy + dz * dz))
         n_obs = max(1, len(well_names))
-        # 2 wells → ~0.45 diag; many probes → ~0.22 diag
         frac = float(np.clip(0.55 / np.sqrt(float(n_obs)), 0.22, 0.50))
         loc_r = max(diag * frac, 1.0)
     md_loc = None
@@ -229,35 +227,55 @@ def run_esmda_permeability(
     shape = mesh.grid.shape
     n_m = int(np.prod(shape))
 
-    for sample in samples:
-        obs = np.array([float(sample.well_pressure[n]) for n in well_names], dtype=float)
-        sigma = np.maximum(np.abs(obs) * float(obs_std_frac), float(obs_std_floor_pa))
-        r_diag = sigma**2
+    # serial cache for rate wells
+    rate_wells_by_t = [_rate_wells_from_sample(mesh, s) for s in samples]
 
-        # one pool per sample time (mesh+sample fixed); map only k arrays
-        proc_pool: ProcessPoolExecutor | None = None
-        if use_processes and workers > 1:
-            try:
-                proc_pool = ProcessPoolExecutor(
-                    max_workers=workers,
-                    initializer=_init_forward_worker,
-                    initargs=(mesh, sample, well_names, viscosity_pa_s),
-                )
-            except Exception:
-                proc_pool = None
-
+    proc_pool: ProcessPoolExecutor | None = None
+    if use_processes:
         try:
+            proc_pool = ProcessPoolExecutor(
+                max_workers=workers,
+                initializer=_init_forward_worker,
+                initargs=(mesh, samples, well_names, viscosity_pa_s),
+            )
+        except Exception:
+            proc_pool = None
+            notes.append("process pool init failed; serial ensemble forwards")
+
+    try:
+        for si, sample in enumerate(samples):
+            obs = np.array(
+                [float(sample.well_pressure[n]) for n in well_names], dtype=float
+            )
+            sigma = np.maximum(
+                np.abs(obs) * float(obs_std_frac), float(obs_std_floor_pa)
+            )
+            r_diag = sigma**2
+
             for alpha in alphas:
-                d_sim = _ensemble_pressure_obs(
-                    mesh,
-                    sample,
-                    k_ens,
-                    well_names=well_names,
-                    viscosity_pa_s=viscosity_pa_s,
-                    n_workers=workers,
-                    use_processes=use_processes and proc_pool is not None,
-                    process_pool=proc_pool,
-                )
+                if proc_pool is not None:
+                    payloads = [(si, k_ens[e]) for e in range(ne)]
+                    try:
+                        rows = list(proc_pool.map(_forward_sample_k, payloads))
+                        d_sim = np.stack(rows, axis=0)
+                    except Exception:
+                        d_sim = _ensemble_serial(
+                            mesh,
+                            sample,
+                            k_ens,
+                            well_names,
+                            viscosity_pa_s,
+                            rate_wells_by_t[si],
+                        )
+                else:
+                    d_sim = _ensemble_serial(
+                        mesh,
+                        sample,
+                        k_ens,
+                        well_names,
+                        viscosity_pa_s,
+                        rate_wells_by_t[si],
+                    )
 
                 m = np.log(np.clip(k_ens, 1.0e-20, None)).reshape(ne, n_m)
                 m = esmda_update_step(
@@ -275,11 +293,11 @@ def run_esmda_permeability(
 
                 rmse = float(np.sqrt(np.mean((np.mean(d_sim, axis=0) - obs) ** 2)))
                 rmse_hist.append(rmse)
-        finally:
-            if proc_pool is not None:
-                proc_pool.shutdown(wait=True)
 
-        notes.append(f"t={sample.time}: final forecast RMSE(Pa)≈{rmse_hist[-1]:.3e}")
+            notes.append(f"t={sample.time}: final forecast RMSE(Pa)≈{rmse_hist[-1]:.3e}")
+    finally:
+        if proc_pool is not None:
+            proc_pool.shutdown(wait=True)
 
     k_mean_f = np.mean(k_ens, axis=0)
     k_std_f = np.std(k_ens, axis=0)
@@ -302,11 +320,17 @@ def run_esmda_permeability(
         )
         bundle.permeability = 0.7 * k_mean_f + 0.3 * bundle.permeability
         bundle.permeability = np.clip(bundle.permeability, 1.0e-18, 1.0e-10)
-        bundle.notes = list(bundle.notes) + ["permeability blended with ES-MDA ensemble mean"]
+        bundle.notes = list(bundle.notes) + [
+            "permeability blended with ES-MDA ensemble mean"
+        ]
         history.append(bundle)
         prev = bundle
 
-    phi_mean = history[-1].porosity if history else np.full(mesh.grid.shape, porosity_prior)
+    phi_mean = (
+        history[-1].porosity
+        if history
+        else np.full(mesh.grid.shape, porosity_prior)
+    )
 
     return ESMdaResult(
         mesh=mesh,
@@ -321,58 +345,35 @@ def run_esmda_permeability(
     )
 
 
-def _ensemble_pressure_obs(
+def _ensemble_serial(
     mesh: MeshBundle,
     sample: SensorSample,
     k_ens: NDArray[np.float64],
-    *,
     well_names: list[str],
     viscosity_pa_s: float,
-    n_workers: int,
-    use_processes: bool = False,
-    process_pool: ProcessPoolExecutor | None = None,
+    rate_wells: list,
 ) -> NDArray[np.float64]:
-    """Parallel forward map: each ensemble member → observed pressures."""
     ne = int(k_ens.shape[0])
-    n_obs = len(well_names)
-    d_sim = np.zeros((ne, n_obs), dtype=float)
-
-    if n_workers <= 1 or ne <= 1:
-        for e in range(ne):
-            d_sim[e, :] = _process_forward_one(
-                (mesh, sample, k_ens[e], well_names, viscosity_pa_s)
-            )
-        return d_sim
-
-    if use_processes and process_pool is not None:
-        try:
-            # only ship k members; mesh/sample live in worker via initializer
-            ks = [k_ens[e] for e in range(ne)]
-            rows = list(process_pool.map(_forward_k_only, ks))
-            for e, row in enumerate(rows):
-                d_sim[e, :] = row
-            return d_sim
-        except Exception:
-            pass
-
-    def _one(e: int) -> tuple[int, NDArray[np.float64]]:
-        row = _process_forward_one(
-            (mesh, sample, k_ens[e], well_names, viscosity_pa_s)
+    d_sim = np.zeros((ne, len(well_names)), dtype=float)
+    for e in range(ne):
+        p = _forward_pressure_cached(
+            mesh,
+            sample,
+            permeability_m2=k_ens[e],
+            viscosity_pa_s=viscosity_pa_s,
+            rate_wells=rate_wells,
         )
-        return e, row
-
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        for e, row in pool.map(_one, range(ne)):
-            d_sim[e, :] = row
+        d_sim[e, :] = _sample_well_pressures(mesh, p, well_names)
     return d_sim
 
 
-def _forward_pressure_no_well_dirichlet(
+def _forward_pressure_cached(
     mesh: MeshBundle,
     sample: SensorSample,
     *,
     permeability_m2: float | NDArray[np.float64],
     viscosity_pa_s: float,
+    rate_wells: list | None = None,
 ) -> NDArray[np.float64]:
     """TPFA pressure: face BC + rate sources; sensor cells free (soft obs)."""
     grid = mesh.grid
@@ -382,7 +383,7 @@ def _forward_pressure_no_well_dirichlet(
         if key in {"left", "right", "front", "back", "bottom", "top"}
     }
     ref = float(next(iter(sample.well_pressure.values()), 0.0))
-    rate_wells = _rate_wells_from_sample(mesh, sample)
+    wells = rate_wells if rate_wells is not None else _rate_wells_from_sample(mesh, sample)
     result = solve_steady_state_pressure_3d(
         grid=grid,
         kx=permeability_m2,
@@ -390,17 +391,33 @@ def _forward_pressure_no_well_dirichlet(
         kz=permeability_m2,
         mu=viscosity_pa_s,
         dirichlet_boundaries=boundaries or None,
-        wells=rate_wells or None,
+        wells=wells or None,
         reference_pressure=ref,
         cell_dirichlet=None,
     )
     return result.pressure.values
 
 
+def _forward_pressure_no_well_dirichlet(
+    mesh: MeshBundle,
+    sample: SensorSample,
+    *,
+    permeability_m2: float | NDArray[np.float64],
+    viscosity_pa_s: float,
+) -> NDArray[np.float64]:
+    return _forward_pressure_cached(
+        mesh,
+        sample,
+        permeability_m2=permeability_m2,
+        viscosity_pa_s=viscosity_pa_s,
+        rate_wells=None,
+    )
+
+
 def _ordered_well_names(mesh: MeshBundle, sample: SensorSample) -> list[str]:
     """Pressure observation names: any hard p on mesh (wells + observer_p)."""
     names = [n for n in sample.well_pressure if n in mesh.well_cell_id]
-    # stable order: injectors/producers first, then probes
+
     def _key(n: str) -> tuple[int, str]:
         r = mesh.well_role.get(n, "")
         if r == "injector":

@@ -92,6 +92,7 @@ def run_time_series(
                 n_k_iterations=1,
                 seed=11,
                 auto_localize=True,
+                # n_workers default: full accuracy, auto process pool by forward count
             )
             k_prior0 = es.k_mean
             esmda_notes = [
