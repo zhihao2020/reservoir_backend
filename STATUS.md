@@ -26,7 +26,7 @@
 | 端到端 + CLI | MVP | `python -m reservoir_backend.pipeline.run` | `tests/test_pipeline_e2e_cli.py` | slice/series/discovery/esmda |
 | CSV 多时刻传感器 | 已验证 | `pipeline.load_sensor_series` | `tests/test_sensor_series_inversion.py` | 注采井+observer_p/s 时序；边界 CSV |
 | 时序点优先反演 | MVP | `run_time_series` | 同上 | 点优先时序；`assimilate_k` 双程 ES-MDA（空间先验）；动态 k；**外层 2 圈**精炼 |
-| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | α 归一化；R 预条件；可选 GC 局部化；膨胀；测点 p 一并同化；**进程池并行集成正演**（`RESERVOIR_BACKEND_WORKERS`） |
+| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | 软观测：**p + Sw + 产水代理 qw**（井/测点，无 CMG）；α 归一化；局部化；进程池正演 |
 | 空间插值性能 | 已验证 | `spatial_interp` 向量化 | `tests/test_spatial_interp.py` | IDW/克里金/LOO 矩阵化；克里金 batch RHS |
 | 饱和度自动空间 | MVP | `reconstruct_saturation` | `tests/test_pipeline_fields.py` | 硬点≥8 走 LOO 自动 IDW/克里金/stack；少点保留各向异性 IDW |
 | 方法学参考库 | 只读 | `references/methods/` | methods/README.md | equinor/pyesmda/dass；**禁止 import** |

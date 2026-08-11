@@ -132,14 +132,64 @@ def test_esmda_reduces_well_pressure_misfit() -> None:
     assert result.k_ensemble.shape[0] == 12
     assert len(result.history_mean) == 2
     assert result.observation_rmse
-    # final RMSE should be finite; with free well cells it is generally > 0
-    assert result.observation_rmse[-1] < 5.0e6
+    # joint soft-obs nRMSE (dimensionless) should be finite
+    assert np.isfinite(result.observation_rmse[-1])
+    assert result.observation_rmse[-1] < 50.0
     assert np.all(result.k_std >= 0.0)
     # ensemble mean k should vary spatially after assimilation
     assert float(np.std(result.k_mean)) > 0.0
     # assimilation should not be trivial no-op on misfit series length
     assert len(result.observation_rmse) == 2 * 3  # n_times * Na
+    assert any("n_sw=" in n for n in result.notes)
     _ = base
+
+
+def test_esmda_uses_saturation_probes() -> None:
+    bounds = AxisAlignedBounds(0.0, 80.0, 0.0, 60.0, 0.0, 30.0)
+    wells = [
+        WellPoint("INJ", 10.0, 30.0, 15.0, role="injector"),
+        WellPoint("PROD", 70.0, 30.0, 15.0, role="producer"),
+        WellPoint("OBS_S", 40.0, 30.0, 15.0, role="observer_s"),
+        WellPoint("OBS_P", 40.0, 45.0, 15.0, role="observer_p"),
+    ]
+    mesh = build_mesh(bounds, 10.0, 10.0, 10.0, wells=wells)
+    samples = [
+        SensorSample(
+            time=0.0,
+            well_pressure={"INJ": 12.0e6, "PROD": 10.0e6, "OBS_P": 11.0e6},
+            well_saturation={
+                "INJ": (0.75, 0.25, 0.0),
+                "PROD": (0.30, 0.70, 0.0),
+                "OBS_S": (0.45, 0.55, 0.0),
+            },
+            boundary=BoundaryConditions(pressure={"left": 12.0e6, "right": 10.0e6}),
+            well_rate={"INJ": 1.0e-5, "PROD": -8.0e-6},
+        ),
+        SensorSample(
+            time=20.0,
+            well_pressure={"INJ": 12.1e6, "PROD": 9.9e6, "OBS_P": 11.05e6},
+            well_saturation={
+                "INJ": (0.78, 0.22, 0.0),
+                "PROD": (0.36, 0.64, 0.0),
+                "OBS_S": (0.50, 0.50, 0.0),
+            },
+            boundary=BoundaryConditions(pressure={"left": 12.1e6, "right": 9.9e6}),
+            well_rate={"INJ": 1.0e-5, "PROD": -8.0e-6},
+        ),
+    ]
+    res = run_esmda_permeability(
+        mesh,
+        samples,
+        ne=10,
+        n_assimilations=2,
+        k_mean=1.0e-13,
+        seed=5,
+        n_k_iterations=1,
+        n_workers=1,
+    )
+    assert any("n_sw=" in n and "n_qw=" in n for n in res.notes)
+    assert np.all(res.k_mean > 0.0)
+    assert float(np.std(res.k_mean)) > 0.0
 
 
 def test_cli_series_and_esmda(tmp_path: Path) -> None:
