@@ -39,8 +39,19 @@ def run_time_series(
     porosity_prior: float | NDArray[np.float64] = 0.2,
     viscosity_pa_s: float = 1.0e-3,
     n_k_iterations: int = 2,
+    mode: str = "point_first",
 ) -> list[FieldBundle]:
-    """Run sequential time slices; carry k/φ arrays as priors between times."""
+    """Sequential multi-time inversion from wells + probes.
+
+    Each ``SensorSample`` is one time stamp of:
+
+    - injectors / producers: p and/or S, optional rates
+    - ``observer_p``: pressure-only probes
+    - ``observer_s``: saturation-only probes
+
+    Default ``point_first`` workflow per time, carrying full-grid k/φ as the
+    prior into the next time (time-series inversion).
+    """
     if not samples:
         raise ValueError("samples must not be empty")
     samples = sorted(samples, key=lambda s: s.time)
@@ -52,12 +63,9 @@ def run_time_series(
             dt = float(sample.time - prev.time)
             if dt <= 0:
                 dt = None
-        # first step uses scalar/array prior; later steps inherit previous fields
-        k_prior: float | NDArray[np.float64]
-        phi_prior: float | NDArray[np.float64]
         if prev is None:
-            k_prior = permeability_prior_m2
-            phi_prior = porosity_prior
+            k_prior: float | NDArray[np.float64] = permeability_prior_m2
+            phi_prior: float | NDArray[np.float64] = porosity_prior
         else:
             k_prior = prev.permeability
             phi_prior = prev.porosity
@@ -70,7 +78,14 @@ def run_time_series(
             previous=prev,
             dt=dt,
             n_k_iterations=n_k_iterations,
+            mode=mode,
         )
+        # stamp multi-time note once
+        if not any(n.startswith("time-series inversion") for n in bundle.notes):
+            bundle.notes = [
+                f"time-series inversion t={sample.time} "
+                f"(n_samples={len(samples)}, mode={mode})"
+            ] + list(bundle.notes)
         history.append(bundle)
         prev = bundle
     return history

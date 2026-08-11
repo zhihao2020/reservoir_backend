@@ -57,15 +57,24 @@ python -m reservoir_backend.pipeline.run --config config/sensor_series_case.yaml
 - `series.wells_csv` / `series.boundary_csv`
 - `esmda`: ne, n_assimilations, k_mean, logk_std, corr_len_cells, obs_std_frac, seed
 
-## CSV 契约
+## CSV 契约（多时刻反演主输入）
 
-### wells（长表）
+### wells / probes 长表
 
-`time,well,pressure_pa,sw,so,sg`
+`time,well,role,pressure_pa,sw,so,sg,rate_m3_s[,x,y,z]`
+
+| role | 填哪些列 |
+|------|----------|
+| injector / producer | p 和/或 S，可选 rate |
+| observer_p | **仅** pressure_pa |
+| observer_s | **仅** sw[,so,sg] |
+
+同一 `time` 下多行 = 该时刻所有注采井 + 测点。  
+时序反演：`run_time_series` 按时间推进，上一时刻的全网 k/φ 作为下一时刻先验。
 
 ### boundary（可选）
 
-`time,side,pressure_pa` — side ∈ left/right/front/back/bottom/top
+`time,side,pressure_pa[,flux_m3_s]` — side ∈ left/right/front/back/bottom/top
 
 ## 假设
 

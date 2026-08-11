@@ -1,4 +1,5 @@
-# Multi-time sensor case (CSV-driven) + ES-MDA options
+# Multi-time inversion from injectors + producers + exclusive probes
+# CSV: each time step has INJ/PROD (+ rates) and OBS_P1 (p only) / OBS_S1 (S only)
 
 bounds:
   xmin: 0.0
@@ -13,17 +14,31 @@ grid:
   dy: 10.0
   dz: 10.0
 
+# Geometry roles (coordinates also present in CSV x,y,z; YAML used as fallback)
 wells:
   - name: INJ
     x: 10.0
     y: 40.0
     z: 15.0
+    role: injector
   - name: PROD
     x: 90.0
     y: 40.0
     z: 15.0
+    role: producer
 
-# Long-format CSVs (paths relative to repo root when running from there)
+observers:
+  - name: OBS_P1
+    x: 40.0
+    y: 40.0
+    z: 15.0
+    measure: pressure
+  - name: OBS_S1
+    x: 60.0
+    y: 50.0
+    z: 15.0
+    measure: saturation
+
 series:
   wells_csv: config/sensor_series_wells.csv
   boundary_csv: config/sensor_series_boundary.csv

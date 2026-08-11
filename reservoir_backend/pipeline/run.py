@@ -216,10 +216,9 @@ def mesh_from_config(cfg: dict[str, Any]) -> MeshBundle:
                 x=float(w["x"]),
                 y=float(w["y"]),
                 z=float(w["z"]),
-                role=str(w.get("role", "observer")),
+                role=str(w.get("role", "injector")),
             )
         )
-    # dedicated probes: default observer_p unless measure: saturation / role set
     for w in cfg.get("observers", []) + cfg.get("probes", []):
         role = str(w.get("role", ""))
         if not role:
@@ -234,6 +233,14 @@ def mesh_from_config(cfg: dict[str, Any]) -> MeshBundle:
                 role=role,
             )
         )
+    # merge roles/locations from multi-time CSV if present
+    series = cfg.get("series") or {}
+    well_csv = cfg.get("sensors_csv") or series.get("wells_csv")
+    if well_csv:
+        from reservoir_backend.pipeline.sensor_io import load_well_series_csv, locations_to_well_points
+
+        _, roles, locations = load_well_series_csv(well_csv)
+        wells = locations_to_well_points(roles, locations, fallback_wells=wells)
     g = cfg["grid"]
     return build_mesh(bounds, g["dx"], g["dy"], g["dz"], wells=wells)
 
@@ -417,18 +424,17 @@ def _resolve_samples(cfg: dict[str, Any], args: argparse.Namespace) -> list[Sens
     from reservoir_backend.pipeline.sensor_io import load_sensor_series, samples_from_config_block
 
     if args.wells_csv:
-        return load_sensor_series(args.wells_csv, args.boundary_csv)
+        samples, _, _ = load_sensor_series(args.wells_csv, args.boundary_csv)
+        return samples
     loaded = samples_from_config_block(cfg)
     if loaded is not None:
         return loaded
-    # inline multi-time list under sensors_series
     if "sensors_series" in cfg and isinstance(cfg["sensors_series"], list):
         from copy import deepcopy
 
         samples = []
-        base = cfg
         for block in cfg["sensors_series"]:
-            tmp = deepcopy(base)
+            tmp = deepcopy(cfg)
             tmp["sensors"] = block
             samples.append(sample_from_config(tmp))
         return samples

@@ -26,7 +26,7 @@ from reservoir_backend.pipeline.run import main
 
 
 def test_load_repo_series_csv() -> None:
-    samples = load_sensor_series(
+    samples, roles, _locs = load_sensor_series(
         "config/sensor_series_wells.csv",
         "config/sensor_series_boundary.csv",
     )
@@ -35,6 +35,8 @@ def test_load_repo_series_csv() -> None:
     assert "INJ" in samples[0].well_pressure
     assert samples[0].boundary.pressure["left"] == 12.0e6
     assert samples[-1].well_saturation["PROD"][0] == 0.40
+    assert roles["OBS_P1"] == "observer_p"
+    assert roles["OBS_S1"] == "observer_s"
 
 
 def test_write_roundtrip(tmp_path: Path) -> None:
@@ -44,20 +46,24 @@ def test_write_roundtrip(tmp_path: Path) -> None:
             well_pressure={"A": 1.0e7, "B": 9.0e6},
             well_saturation={"A": (0.7, 0.3, 0.0), "B": (0.2, 0.8, 0.0)},
             boundary=BoundaryConditions(pressure={"left": 1.0e7, "right": 9.0e6}),
+            well_rate={"A": 1e-5, "B": -1e-5},
         ),
         SensorSample(
             time=10.0,
             well_pressure={"A": 1.1e7, "B": 8.5e6},
             well_saturation={"A": (0.75, 0.25, 0.0), "B": (0.25, 0.75, 0.0)},
             boundary=BoundaryConditions(pressure={"left": 1.1e7, "right": 8.5e6}),
+            well_rate={"A": 1e-5, "B": -1e-5},
         ),
     ]
-    wpath = write_well_series_csv(tmp_path / "w.csv", samples)
+    roles = {"A": "injector", "B": "producer"}
+    wpath = write_well_series_csv(tmp_path / "w.csv", samples, roles=roles)
     bpath = write_boundary_series_csv(tmp_path / "b.csv", samples)
-    loaded = load_sensor_series(wpath, bpath)
+    loaded, loaded_roles, _ = load_sensor_series(wpath, bpath)
     assert len(loaded) == 2
     assert loaded[1].well_pressure["A"] == 1.1e7
     assert loaded[1].boundary.pressure["right"] == 8.5e6
+    assert loaded_roles["A"] == "injector"
 
 
 def test_logk_ensemble_shape_positive() -> None:
@@ -85,7 +91,10 @@ def test_gaspari_cohn_support() -> None:
 
 def test_esmda_reduces_well_pressure_misfit() -> None:
     bounds = AxisAlignedBounds(0.0, 60.0, 0.0, 40.0, 0.0, 30.0)
-    wells = [WellPoint("INJ", 10.0, 20.0, 15.0), WellPoint("PROD", 50.0, 20.0, 15.0)]
+    wells = [
+        WellPoint("INJ", 10.0, 20.0, 15.0, role="injector"),
+        WellPoint("PROD", 50.0, 20.0, 15.0, role="producer"),
+    ]
     mesh = build_mesh(bounds, 10.0, 10.0, 10.0, wells=wells)
     samples = [
         SensorSample(
