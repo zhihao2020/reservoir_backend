@@ -63,6 +63,15 @@ def psi_to_pa(p: float) -> float:
     return float(p) * 6894.757293168
 
 
+def _well_k(meta: dict, well_key: str) -> int:
+    """Representative completion layer (middle of k_perfs, or legacy single k)."""
+    w = meta["wells"][well_key]
+    if "k_perfs" in w and w["k_perfs"]:
+        ks = sorted(int(x) for x in w["k_perfs"])
+        return ks[len(ks) // 2]
+    return int(w["k"])
+
+
 def mesh_from_truth(meta: dict):
     g = meta["grid"]
     nx, ny, nz = int(g["nx"]), int(g["ny"]), int(g["nz"])
@@ -72,12 +81,13 @@ def mesh_from_truth(meta: dict):
         dk = np.full(nz, float(np.sum(dk) / nz))
     lx, ly, lz = nx * di, ny * dj, float(np.sum(dk))
     bounds = AxisAlignedBounds(0.0, lx, 0.0, ly, 0.0, lz)
-    # pass length-nx vectors so build_mesh keeps exact CMG cell counts
+    # Orthogonal discovery mesh: same IJK counts as CMG VARI (DTOP undulation
+    # is carried in truth mask / structure metadata, not in TPFA z-nodes yet).
     dx = np.full(nx, di, dtype=float)
     dy = np.full(ny, dj, dtype=float)
     wells_meta = meta["wells"]
-    # well centers at CMG IJK cell centers
     z_edges = np.concatenate([[0.0], np.cumsum(dk)])
+
     def cell_center(i: int, j: int, k: int) -> tuple[float, float, float]:
         return (
             (i - 0.5) * di,
@@ -85,8 +95,9 @@ def mesh_from_truth(meta: dict):
             0.5 * (z_edges[k - 1] + z_edges[k]),
         )
 
-    ix, iy, iz = cell_center(wells_meta["INJ"]["i"], wells_meta["INJ"]["j"], wells_meta["INJ"]["k"])
-    px, py, pz = cell_center(wells_meta["PROD"]["i"], wells_meta["PROD"]["j"], wells_meta["PROD"]["k"])
+    ik, pk = _well_k(meta, "INJ"), _well_k(meta, "PROD")
+    ix, iy, iz = cell_center(wells_meta["INJ"]["i"], wells_meta["INJ"]["j"], ik)
+    px, py, pz = cell_center(wells_meta["PROD"]["i"], wells_meta["PROD"]["j"], pk)
     wells = [WellPoint("INJ", ix, iy, iz), WellPoint("PROD", px, py, pz)]
     return build_mesh(bounds, dx, dy, dk, wells=wells)
 
@@ -151,14 +162,14 @@ def samples_from_out_or_proxy(meta: dict, out_path: Path | None) -> list[SensorS
     if out_path is not None and out_path.is_file():
         g = meta["grid"]
         sw_series = parse_sw_grids_from_out(
-            out_path, nx=g["nx"], ny=g["ny"], nz=g["nz"]
+            out_path, nx=int(g["nx"]), ny=int(g["ny"]), nz=int(g["nz"])
         )
         bhp_by_t = parse_well_bhp_from_out(out_path)
         if len(sw_series) >= 2:
             samples: list[SensorSample] = []
             wi = meta["wells"]["INJ"]
             wp = meta["wells"]["PROD"]
-            # nearest BHP helper
+            ik, pk = _well_k(meta, "INJ"), _well_k(meta, "PROD")
             bhp_times = sorted(bhp_by_t.keys())
 
             def nearest_bhp(t: float) -> tuple[float, float]:
@@ -168,9 +179,9 @@ def samples_from_out_or_proxy(meta: dict, out_path: Path | None) -> list[SensorS
                 return bhp_by_t[nearest]
 
             for t, sw in sw_series:
-                # CMG IJK 1-based → (k-1, j-1, i-1)
-                sw_inj = float(sw[wi["k"] - 1, wi["j"] - 1, wi["i"] - 1])
-                sw_prod = float(sw[wp["k"] - 1, wp["j"] - 1, wp["i"] - 1])
+                # CMG IJK 1-based → (k-1, j-1, i-1); use mid completion layer
+                sw_inj = float(sw[ik - 1, wi["j"] - 1, wi["i"] - 1])
+                sw_prod = float(sw[pk - 1, wp["j"] - 1, wp["i"] - 1])
                 if not np.isfinite(sw_inj):
                     sw_inj = 0.8
                 if not np.isfinite(sw_prod):
@@ -191,7 +202,6 @@ def samples_from_out_or_proxy(meta: dict, out_path: Path | None) -> list[SensorS
                         ),
                     )
                 )
-            # cache last SW for footprint metric
             samples_from_out_or_proxy._last_sw_series = sw_series  # type: ignore[attr-defined]
             return samples
 
@@ -276,10 +286,14 @@ def validate_on_cmg_geometry() -> dict:
         footprint = dsw >= max(thr, 1.0e-3)
         footprint_metrics = mask_overlap(footprint, truth_mask)
 
+    structure = meta.get("structure") or {}
     report = {
-        "mode": "cmg_geometry",
+        "mode": "cmg_geometry_undulating",
         "n_samples": len(samples),
         "used_out": out_path.is_file(),
+        "grid": meta["grid"],
+        "structure_relief_ft": structure.get("relief_ft"),
+        "structure_type": structure.get("type"),
         "sample_times": [s.time for s in samples],
         "well_sw_last": {
             "INJ": samples[-1].well_saturation["INJ"][0] if samples else None,

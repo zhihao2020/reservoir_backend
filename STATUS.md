@@ -20,7 +20,7 @@
 | 多时刻形态发现 | MVP | `pipeline.run_shape_discovery` | `tests/test_shape_discovery.py` | 指标=ΔSw+k+Δp；非几何先验山体 |
 | 正交指示加密 | MVP | `pipeline.refine_mesh_by_indicator` | 同上 | 高指示区 bbox 全局加密 |
 | 合成通道孪生 | 已验证 | `pipeline.build_channel_twin` | `tests/test_shape_discovery.py` | 已知通道 mask；Dice 软阈值 |
-| CMG 三维通道验证 | MVP | `validation/cmg_channel_3d/` | IMEX Normal Termination + report | 基例 mxspr006 补丁；井点/Sw 回灌 |
+| CMG 三维通道验证 | MVP | `validation/cmg_channel_3d/` | IMEX Normal Termination + report | `*VARI`+`*DTOP` 起伏山脊；非水平层 |
 
 ## 排除
 

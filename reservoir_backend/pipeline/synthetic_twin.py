@@ -59,18 +59,26 @@ def build_channel_twin(
     mesh = build_mesh(bounds, dx, dy, dz, wells=wells)
     grid = mesh.grid
 
-    # mountain / channel: tube + vertical bulge in mid-domain
+    # Mountain / channel: undulating ridge between wells (not a flat layer).
+    # Centerline y and z both vary with along-path coordinate t.
     channel = np.zeros(grid.shape, dtype=bool)
     for n in range(mesh.n_cells):
         x, y, z = mesh.x[n], mesh.y[n], mesh.z[n]
-        # horizontal corridor
         t = (x - 0.15 * lx) / (0.7 * lx)
-        y_c = 0.5 * ly
-        z_c = 0.35 * lz + 0.3 * lz * np.exp(-((t - 0.5) ** 2) / 0.08)  # mountain crest
-        if 0.0 <= t <= 1.0:
-            if abs(y - y_c) < 0.12 * ly and abs(z - z_c) < 0.18 * lz:
-                i, j, k = int(mesh.i[n]), int(mesh.j[n]), int(mesh.k[n])
-                channel[k, j, i] = True
+        if not (0.0 <= t <= 1.0):
+            continue
+        # plan-view meander + structural crest (mountain) + short-wavelength ripple
+        y_c = 0.5 * ly + 0.08 * ly * np.sin(2.0 * np.pi * t)
+        z_c = (
+            0.32 * lz
+            + 0.28 * lz * np.exp(-((t - 0.5) ** 2) / 0.07)
+            + 0.05 * lz * np.sin(4.0 * np.pi * t)
+        )
+        half_w = 0.11 * ly * (1.0 + 0.25 * np.sin(np.pi * t))
+        half_h = 0.16 * lz * (1.0 + 0.35 * np.exp(-((t - 0.5) ** 2) / 0.1))
+        if abs(y - y_c) < half_w and abs(z - z_c) < half_h:
+            i, j, k = int(mesh.i[n]), int(mesh.j[n]), int(mesh.k[n])
+            channel[k, j, i] = True
 
     true_k = np.full(grid.shape, k_background, dtype=float)
     true_k[channel] = k_channel
