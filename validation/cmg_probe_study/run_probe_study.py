@@ -230,9 +230,9 @@ def run_one(
     # base mesh for design (wells only)
     base_mesh, ik, pk = mesh_with_probes(meta, [])
     n_p, n_s = split_n_probes(n_total)
-    max_n = max(0, base_mesh.n_cells // 4)
+    # keep probe budget modest on coarse CMG grids (avoid over-pinning)
+    max_n = max(0, min(12, base_mesh.n_cells // 5))
     if n_p + n_s > max_n:
-        # shrink proportionally
         scale = max_n / max(n_p + n_s, 1)
         n_p = int(n_p * scale)
         n_s = int(n_s * scale)
@@ -267,6 +267,14 @@ def run_one(
 
     k_bg = float(meta.get("background_perm_md", {}).get("kx", 50.0))
     k_prior = k_bg * 9.869233e-16
+    # ES-MDA whenever ≥2 pressure hard sensors (wells and/or observer_p)
+    n_p_obs = sum(
+        1
+        for n, r in mesh.well_role.items()
+        if r in ("injector", "producer", "observer_p")
+        and n in (samples[0].well_pressure or {})
+    )
+    use_esmda = bool(n_p_obs >= 2)
     history = run_time_series(
         mesh,
         samples,
@@ -274,6 +282,10 @@ def run_one(
         porosity_prior=0.3,
         viscosity_pa_s=1.0e-3,
         n_k_iterations=2,
+        assimilate_k=use_esmda,
+        esmda_ne=12,
+        esmda_assimilations=3,
+        esmda_max_times=4,
     )
     last = history[-1]
     t_last, sw_cmg = sw_series[-1]
@@ -328,6 +340,7 @@ def run_one(
         "n_p": n_p,
         "n_s": n_s,
         "layout": layout_used,
+        "assimilate_k": use_esmda,
         "n_times": len(samples),
         "sw_rel_l2": sw_rel,
         "delta_sw_dice": dice,
@@ -346,18 +359,19 @@ def write_markdown(results: list[dict], path: Path) -> None:
         "",
         "从 IMEX `.out` 全场 p/S **虚拟抽样** exclusive 测点（不改 CMG 井网）。",
         "",
-        "| case | layout | N | n_p/n_s | Sw rel L2 ↓ | ΔSw Dice ↑ | k_ch/k_out | p hold-out RMSE (Pa) |",
-        "|------|--------|---|---------|-------------|------------|------------|----------------------|",
+        "| case | layout | N | n_p/n_s | ES-MDA | Sw rel L2 ↓ | ΔSw Dice ↑ | k_ch/k_out | p hold-out RMSE (Pa) |",
+        "|------|--------|---|---------|--------|-------------|------------|------------|----------------------|",
     ]
     for r in results:
         if not r.get("ok"):
             lines.append(
-                f"| {r.get('case')} | — | {r.get('n_total')} | — | ERR: {r.get('error')} | | | |"
+                f"| {r.get('case')} | — | {r.get('n_total')} | — | — | ERR: {r.get('error')} | | | |"
             )
             continue
+        es = "Y" if r.get("assimilate_k") else "N"
         lines.append(
             f"| {r['case']} | {r['layout']} | {r['n_total']} | "
-            f"{r['n_p']}/{r['n_s']} | {r['sw_rel_l2']:.4f} | {r['delta_sw_dice']:.3f} | "
+            f"{r['n_p']}/{r['n_s']} | {es} | {r['sw_rel_l2']:.4f} | {r['delta_sw_dice']:.3f} | "
             f"{r['k_channel_over_out']:.3f} | {r['p_holdout_rmse_pa']:.3g} |"
         )
     lines.extend(
@@ -365,9 +379,11 @@ def write_markdown(results: list[dict], path: Path) -> None:
             "",
             "## 读法",
             "",
-            "- **N↑ 后 Sw L2 下降或 Dice 上升** → 更多虚拟测点改善重建。",
-            "- **adaptive vs uniform**：同 N 对比；非均质通道上 hybrid 应用 CMG 多时刻方差。",
-            "- 井压误差应接近 0（硬约束）。",
+            "- **N↑ 后 Sw L2 下降或 Dice 上升** → 测点改善重建（反演未必严格单调）。",
+            "- **ES-MDA=Y**：先用井+压力测点软同化 log(k)，再点优先时序。",
+            "- **uniform / adaptive**：几何均匀 vs hybrid DOE；粗网格上均匀常更稳。",
+            "- **p hold-out**：未硬约束格点压力相对 CMG；越低越好。",
+            "- 井压硬约束误差应接近 0。",
             "",
         ]
     )
@@ -377,7 +393,7 @@ def write_markdown(results: list[dict], path: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="CMG virtual probe N-sweep study")
     ap.add_argument("--cases", default="channel,fault", help="channel,fault")
-    ap.add_argument("--n-list", default="0,4,8,16", help="comma total exclusive probes")
+    ap.add_argument("--n-list", default="0,4,8,12", help="comma total exclusive probes")
     ap.add_argument(
         "--layouts",
         default="uniform,adaptive",

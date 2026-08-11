@@ -40,6 +40,10 @@ def run_time_series(
     viscosity_pa_s: float = 1.0e-3,
     n_k_iterations: int = 2,
     mode: str = "point_first",
+    assimilate_k: bool = False,
+    esmda_ne: int = 16,
+    esmda_assimilations: int = 3,
+    esmda_max_times: int = 5,
 ) -> list[FieldBundle]:
     """Sequential multi-time inversion from wells + probes.
 
@@ -51,10 +55,47 @@ def run_time_series(
 
     Default ``point_first`` workflow per time, carrying full-grid k/φ as the
     prior into the next time (time-series inversion).
+
+    If ``assimilate_k`` is True, run ES-MDA on log(k) first (using all pressure
+    hard data: wells + observer_p), then point-first series with the ensemble
+    mean as permeability prior. Recommended when ≥ few pressure sensors exist.
     """
     if not samples:
         raise ValueError("samples must not be empty")
     samples = sorted(samples, key=lambda s: s.time)
+
+    k_prior0: float | NDArray[np.float64] = permeability_prior_m2
+    phi_prior0: float | NDArray[np.float64] = porosity_prior
+    esmda_notes: list[str] = []
+    if assimilate_k:
+        from reservoir_backend.pipeline.esmda import run_esmda_permeability
+
+        # subsample times for speed while spanning the series
+        es_samples = _subsample_times(samples, int(esmda_max_times))
+        k_mean = float(np.mean(np.asarray(permeability_prior_m2, dtype=float)))
+        try:
+            es = run_esmda_permeability(
+                mesh,
+                es_samples,
+                ne=int(esmda_ne),
+                n_assimilations=int(esmda_assimilations),
+                k_mean=k_mean,
+                logk_std=1.0,
+                corr_len_cells=3.0,
+                porosity_prior=float(np.mean(np.asarray(porosity_prior, dtype=float))),
+                viscosity_pa_s=viscosity_pa_s,
+                n_k_iterations=1,
+                seed=11,
+            )
+            k_prior0 = es.k_mean
+            esmda_notes = [
+                f"pre-series ES-MDA k assimilate (ne={esmda_ne}, "
+                f"Na={esmda_assimilations}, n_times={len(es_samples)})",
+                *es.notes[-3:],
+            ]
+        except Exception as exc:
+            esmda_notes = [f"ES-MDA skipped ({exc}); plain time series"]
+
     history: list[FieldBundle] = []
     prev: FieldBundle | None = None
     for sample in samples:
@@ -64,8 +105,8 @@ def run_time_series(
             if dt <= 0:
                 dt = None
         if prev is None:
-            k_prior: float | NDArray[np.float64] = permeability_prior_m2
-            phi_prior: float | NDArray[np.float64] = porosity_prior
+            k_prior: float | NDArray[np.float64] = k_prior0
+            phi_prior: float | NDArray[np.float64] = phi_prior0
         else:
             k_prior = prev.permeability
             phi_prior = prev.porosity
@@ -82,13 +123,32 @@ def run_time_series(
         )
         # stamp multi-time note once
         if not any(n.startswith("time-series inversion") for n in bundle.notes):
-            bundle.notes = [
-                f"time-series inversion t={sample.time} "
-                f"(n_samples={len(samples)}, mode={mode})"
-            ] + list(bundle.notes)
+            bundle.notes = (
+                [
+                    f"time-series inversion t={sample.time} "
+                    f"(n_samples={len(samples)}, mode={mode}, "
+                    f"assimilate_k={assimilate_k})"
+                ]
+                + esmda_notes
+                + list(bundle.notes)
+            )
+        # when ES-MDA k available, mildly anchor first slices to ensemble mean
+        if assimilate_k and isinstance(k_prior0, np.ndarray) and prev is None:
+            bundle.permeability = 0.6 * np.asarray(k_prior0, dtype=float) + 0.4 * bundle.permeability
+            bundle.permeability = np.clip(bundle.permeability, 1.0e-18, 1.0e-10)
+            bundle.notes = list(bundle.notes) + ["k blended with ES-MDA prior (t0)"]
         history.append(bundle)
         prev = bundle
     return history
+
+
+def _subsample_times(samples: list[SensorSample], max_times: int) -> list[SensorSample]:
+    n = len(samples)
+    if n <= max_times or max_times < 2:
+        return list(samples)
+    idx = np.linspace(0, n - 1, int(max_times))
+    picked = sorted({int(round(i)) for i in idx})
+    return [samples[i] for i in picked]
 
 
 def run_shape_discovery(

@@ -25,8 +25,9 @@
 | CMG 差距报告 | 已跑 | `validation/cmg_gap_report/` | GAP_REPORT.md | 非均质通道/断层 .out 对照 |
 | 端到端 + CLI | MVP | `python -m reservoir_backend.pipeline.run` | `tests/test_pipeline_e2e_cli.py` | slice/series/discovery/esmda |
 | CSV 多时刻传感器 | 已验证 | `pipeline.load_sensor_series` | `tests/test_sensor_series_inversion.py` | 注采井+observer_p/s 时序；边界 CSV |
-| 时序点优先反演 | MVP | `run_time_series` | 同上 | 每时刻点优先；k/φ 跨时刻传递 |
-| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | α 归一化；R 预条件；可选 GC 局部化；膨胀 |
+| 时序点优先反演 | MVP | `run_time_series` | 同上 | 每时刻点优先；k/φ 跨时刻传递；可选 `assimilate_k` 预跑 ES-MDA |
+| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | α 归一化；R 预条件；可选 GC 局部化；膨胀；测点 p 一并同化 |
+| 饱和度自动空间 | MVP | `reconstruct_saturation` | `tests/test_pipeline_fields.py` | 硬点≥8 走 LOO 自动 IDW/克里金/stack；少点保留各向异性 IDW |
 | 方法学参考库 | 只读 | `references/methods/` | methods/README.md | equinor/pyesmda/dass；**禁止 import** |
 | 多时刻形态发现 | MVP | `pipeline.run_shape_discovery` | `tests/test_shape_discovery.py` | 指标=ΔSw+k+Δp；跨时刻 k/φ 数组传递 |
 | k–p 固定点迭代 | MVP | `pipeline.run_time_slice` | `tests/test_pipeline_fields.py` | 默认 2 次；加密后映射 k 场 |

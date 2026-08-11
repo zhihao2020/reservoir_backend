@@ -69,14 +69,53 @@ def reconstruct_saturation(
         notes.append("no well saturation sensors; used default sw=0.2, so=0.8, sg=0")
         return sw, so, sg, notes
 
-    # optional flow-aligned metric from pressure
-    use_aniso = pressure is not None and pressure.shape == grid.shape
-    if use_aniso:
-        notes.append("IDW distance softly anisotropic along pressure gradient")
+    # Prefer auto spatial (IDW / kriging / stack) when enough exclusive hard points;
+    # fall back to anisotropic IDW only when few anchors and pressure is available.
+    pts = np.asarray([[a[0], a[1], a[2]] for a in anchors], dtype=float)
+    sw_v = np.asarray([a[3] for a in anchors], dtype=float)
+    so_v = np.asarray([a[4] for a in anchors], dtype=float)
+    sg_v = np.asarray([a[5] for a in anchors], dtype=float)
+    n_a = pts.shape[0]
+    use_aniso = (
+        pressure is not None
+        and pressure.shape == grid.shape
+        and n_a < 8
+    )
 
+    if not use_aniso:
+        from reservoir_backend.pipeline.spatial_interp import auto_interpolate_to_grid
+
+        sw_res = auto_interpolate_to_grid(mesh, pts, sw_v, clip=(0.0, 1.0))
+        so_res = auto_interpolate_to_grid(mesh, pts, so_v, clip=(0.0, 1.0))
+        sg_res = auto_interpolate_to_grid(mesh, pts, sg_v, clip=(0.0, 1.0))
+        sw = sw_res.values.copy()
+        so = so_res.values.copy()
+        sg = sg_res.values.copy()
+        # re-pin hard sensor cells exactly
+        for ax, ay, az, asw, aso, asg in anchors:
+            # nearest cell to anchor
+            d2 = (mesh.x - ax) ** 2 + (mesh.y - ay) ** 2 + (mesh.z - az) ** 2
+            cid = int(np.argmin(d2))
+            i, j, k = int(mesh.i[cid]), int(mesh.j[cid]), int(mesh.k[cid])
+            sw_n, so_n, sg_n = _normalize_phases(asw, aso, asg)
+            sw[k, j, i], so[k, j, i], sg[k, j, i] = sw_n, so_n, sg_n
+        # cell-wise renorm
+        for idx in range(mesh.n_cells):
+            i, j, k = int(mesh.i[idx]), int(mesh.j[idx]), int(mesh.k[idx])
+            sw[k, j, i], so[k, j, i], sg[k, j, i] = _normalize_phases(
+                float(sw[k, j, i]), float(so[k, j, i]), float(sg[k, j, i])
+            )
+        notes.append(
+            f"saturation auto-spatial n={n_a} "
+            f"(sw={sw_res.method}, so={so_res.method}, sg={sg_res.method})"
+        )
+        notes.extend(sw_res.notes[-2:])
+        return sw, so, sg, notes
+
+    notes.append("IDW distance softly anisotropic along pressure gradient (few anchors)")
     power = 2.0
     eps = 1.0e-12
-    p = None if not use_aniso else np.asarray(pressure, dtype=float)
+    p = np.asarray(pressure, dtype=float)
 
     for idx in range(mesh.n_cells):
         i = int(mesh.i[idx])
@@ -92,13 +131,10 @@ def reconstruct_saturation(
             dy = py - ay
             dz = pz - az
             dist = np.sqrt(dx * dx + dy * dy + dz * dz)
-            if use_aniso and dist > eps:
-                # stretch distance orthogonal to local grad p (favor flow direction)
+            if dist > eps:
                 gi, gj, gk = _grad_p_components(p, grid, i, j, k)
                 gnorm = np.sqrt(gi * gi + gj * gj + gk * gk) + 1.0e-30
-                # unit gradient
                 ux, uy, uz = gi / gnorm, gj / gnorm, gk / gnorm
-                # parallel and perpendicular components of offset
                 par = dx * ux + dy * uy + dz * uz
                 per2 = max(0.0, dist * dist - par * par)
                 dist = np.sqrt(0.35 * par * par + 1.0 * per2)
@@ -112,14 +148,14 @@ def reconstruct_saturation(
             sos.append(aso)
             sgs.append(asg)
         wsum = float(np.sum(weights))
-        sw_v, so_v, sg_v = _normalize_phases(
+        sw_n, so_n, sg_n = _normalize_phases(
             float(np.dot(weights, sws) / wsum),
             float(np.dot(weights, sos) / wsum),
             float(np.dot(weights, sgs) / wsum),
         )
-        sw[k, j, i] = sw_v
-        so[k, j, i] = so_v
-        sg[k, j, i] = sg_v
+        sw[k, j, i] = sw_n
+        so[k, j, i] = so_n
+        sg[k, j, i] = sg_n
 
     return sw, so, sg, notes
 

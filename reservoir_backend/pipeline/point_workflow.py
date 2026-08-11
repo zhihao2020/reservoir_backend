@@ -247,13 +247,27 @@ def interpolate_rock_from_points(
         log_transform=False,
         clip=(1.0e-3, 0.5),
     )
+    k = k_res.values
+    phi = phi_res.values
+    # mild regularization toward geometric mean of hard points (stabilize extremes)
+    k_pts = np.clip(np.asarray(table.permeability, dtype=float), 1.0e-30, None)
+    k_geo = float(np.exp(np.mean(np.log(k_pts))))
+    k = 0.92 * k + 0.08 * k_geo
+    k = np.clip(k, 1.0e-18, 1.0e-10)
+    # light blend toward prior fill when very few points
+    if len(table.names) < 4:
+        k = 0.85 * k + 0.15 * float(k_fill)
+        k = np.clip(k, 1.0e-18, 1.0e-10)
+        phi = 0.85 * phi + 0.15 * float(phi_fill)
+        phi = np.clip(phi, 1.0e-3, 0.5)
     notes = [
         f"auto spatial k,φ from {len(table.names)} points "
         f"(k_method={k_res.method}, phi_method={phi_res.method})",
         *k_res.notes,
         *phi_res.notes,
+        f"k regularized toward geo-mean={k_geo:.3e}",
     ]
-    return k_res.values, phi_res.values, notes
+    return k, phi, notes
 
 
 def run_point_first_slice(
