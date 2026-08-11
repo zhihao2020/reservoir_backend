@@ -74,6 +74,8 @@ class SensorSample:
     well_pressure: Mapping[str, float]  # well name -> Pa
     well_saturation: Mapping[str, tuple[float, float, float]]  # name -> (sw, so, sg)
     boundary: BoundaryConditions = field(default_factory=BoundaryConditions)
+    # optional signed volumetric rates (m^3/s): +injection into domain, -production
+    well_rate: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass

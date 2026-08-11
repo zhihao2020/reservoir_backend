@@ -133,6 +133,9 @@ def build_channel_twin(
 
         pi, pj, pk = grid.ijk(mesh.well_cell_id["PROD"])
         swp = float(sw[pk, pj, pi])
+        # synthetic rates (m3/s): injection / production for transport sources
+        q_inj = 2.0e-5 * (1.0 + 0.05 * ti)
+        q_prod = -2.0e-5 * (1.0 + 0.05 * ti)
         samples.append(
             SensorSample(
                 time=t,
@@ -142,6 +145,7 @@ def build_channel_twin(
                     "PROD": (swp, 1.0 - swp, 0.0),
                 },
                 boundary=BoundaryConditions(pressure={"left": p_inj, "right": p_prod}),
+                well_rate={"INJ": q_inj, "PROD": q_prod},
             )
         )
 
@@ -260,6 +264,8 @@ def build_faulted_channel_twin(
         ii, jj, kk = grid.ijk(mesh.well_cell_id["INJ"])
         sw[kk, jj, ii] = 0.80
         sw_series.append(sw)
+        q_inj = 2.5e-5
+        q_prod = -2.5e-5
         samples.append(
             SensorSample(
                 time=t,
@@ -269,6 +275,7 @@ def build_faulted_channel_twin(
                     "PROD": (swp, 1.0 - swp, 0.0),
                 },
                 boundary=BoundaryConditions(pressure={"left": p_inj, "right": p_prod}),
+                well_rate={"INJ": q_inj, "PROD": q_prod},
             )
         )
 

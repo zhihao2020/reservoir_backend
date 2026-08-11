@@ -135,17 +135,56 @@ def truth_mask(meta: dict) -> np.ndarray:
     return mask
 
 
+def parse_surface_rates_stb_day(out_path: Path) -> dict[float, dict[str, float]]:
+    """Best-effort water rate parse from CMG well tables (STB/day).
+
+    Returns time -> {INJ: +q, PROD: -q} in m^3/s when found.
+    """
+    text = out_path.read_text(encoding="latin-1", errors="ignore")
+    # Cumulative injection water MSTB and time — fallback to constant ops from case
+    # Prefer instantaneous rates near "Water" "STB/day" lines
+    by_t: dict[float, dict[str, float]] = {}
+    # Pattern from well report: Water STB/day columns for inj/prod
+    for m in re.finditer(
+        r"Time\s*=\s*([0-9.]+).*?Water\s+STB/day\s+\+\s+([0-9.E+-]+)\s+\+\s+([0-9.E+-]+)",
+        text,
+        re.S | re.I,
+    ):
+        t = float(m.group(1))
+        # columns may be inj/prod depending on order — use magnitudes
+        a, b = float(m.group(2)), float(m.group(3))
+        # convert STB/day → m3/s : 1 STB = 0.158987 m3
+        def stbday_to_m3s(x: float) -> float:
+            return x * 0.158987 / 86400.0
+
+        # typically one positive inj one production negative in report signs
+        q1, q2 = stbday_to_m3s(a), stbday_to_m3s(b)
+        by_t[t] = {"INJ": abs(q1), "PROD": -abs(q2) if abs(q2) > 0 else -abs(q1)}
+    return by_t
+
+
 def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
     g = meta["grid"]
     sw_series = parse_sw_grids(out_path, nx=g["nx"], ny=g["ny"], nz=g["nz"])
     bhp = parse_bhp(out_path)
     bhp_times = sorted(bhp.keys())
+    rates = parse_surface_rates_stb_day(out_path)
+    rate_times = sorted(rates.keys())
 
     def nearest_bhp(t):
         if not bhp_times:
             return 4500.0, 2000.0
         nt = min(bhp_times, key=lambda x: abs(x - t))
         return bhp[nt]
+
+    def nearest_rate(t):
+        # default: seawater inject ~5000 STB/d, oil ~2500 STB/d from mxspr006
+        if not rate_times:
+            q_inj = 5000.0 * 0.158987 / 86400.0
+            q_prod = -2500.0 * 0.158987 / 86400.0
+            return {"INJ": q_inj, "PROD": q_prod}
+        nt = min(rate_times, key=lambda x: abs(x - t))
+        return rates[nt]
 
     wi, wp = meta["wells"]["INJ"], meta["wells"]["PROD"]
     samples = []
@@ -158,6 +197,7 @@ def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
             sw_prod = 0.2
         bi, bp = nearest_bhp(t)
         p_inj, p_prod = psi_to_pa(bi), psi_to_pa(bp)
+        wr = nearest_rate(t)
         samples.append(
             SensorSample(
                 time=float(t),
@@ -167,6 +207,7 @@ def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
                     "PROD": (sw_prod, max(0.0, 1.0 - sw_prod), 0.0),
                 },
                 boundary=BoundaryConditions(pressure={"left": p_inj, "right": p_prod}),
+                well_rate={"INJ": float(wr["INJ"]), "PROD": float(wr["PROD"])},
             )
         )
     return samples, sw_series

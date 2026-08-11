@@ -4,6 +4,7 @@ from reservoir_backend.pipeline.ensemble_math import (
     gaspari_cohn,
     normalize_alpha_weights,
 )
+from reservoir_backend.pipeline.fractional_flow import water_fractional_flow
 from reservoir_backend.pipeline.esmda import ESMdaResult, generate_logk_ensemble, run_esmda_permeability
 from reservoir_backend.pipeline.mesh_builder import build_mesh
 from reservoir_backend.pipeline.mesh_refine import map_field_to_mesh, refine_mesh_by_indicator
@@ -57,6 +58,7 @@ __all__ = [
     "build_mesh",
     "gaspari_cohn",
     "generate_logk_ensemble",
+    "water_fractional_flow",
     "indicator_to_active_mask",
     "normalize_alpha_weights",
     "infer_shape_indicator",

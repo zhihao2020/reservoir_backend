@@ -83,10 +83,20 @@ def test_transport_between_times() -> None:
         well_pressure={"INJ": 12.2e6, "PROD": 9.8e6},
         well_saturation={"INJ": (0.8, 0.2, 0.0), "PROD": (0.35, 0.65, 0.0)},
         boundary=BoundaryConditions(pressure={"left": 12.2e6, "right": 9.8e6}),
+        well_rate={"INJ": 2.0e-5, "PROD": -2.0e-5},
     )
     f1 = run_time_slice(mesh, sample1, previous=f0, dt=30.0, n_k_iterations=1)
-    assert any("saturation transport" in n for n in f1.notes)
+    assert any("fractional flow" in n for n in f1.notes)
+    assert any("well rate sources" in n for n in f1.notes)
     assert np.allclose(f1.sw + f1.so + f1.sg, 1.0, atol=1e-8)
+
+
+def test_fractional_flow_bounds() -> None:
+    from reservoir_backend.pipeline.fractional_flow import water_fractional_flow
+
+    assert water_fractional_flow(0.2) < 0.05
+    assert water_fractional_flow(0.9) > 0.8
+    assert 0.0 <= water_fractional_flow(0.5) <= 1.0
 
 
 def test_pressure_matrix_dirichlet_note() -> None:

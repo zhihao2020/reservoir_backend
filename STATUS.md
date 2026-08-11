@@ -17,7 +17,8 @@
 | 3 饱和度场 | MVP | `pipeline.reconstruct_saturation` | `tests/test_pipeline_fields.py` | 井饱和度；边界流量锚点；流线软各向异性 IDW |
 | 4 物性场 k/φ | MVP | `pipeline.invert_rock_properties` | `tests/test_pipeline_fields.py` | 达西 k；流量场；φ 物质平衡；**非均质数组** |
 | 非均质四场验收 | MVP | `validation/heterogeneous_four_field/` | run_validate.py | **禁止均质**；通道/断层孪生 |
-| 饱和度输运代理 | MVP | `pipeline.transport_water_saturation` | `tests/test_pipeline_fields.py` | 达西通量迎风；非全黑油 |
+| 饱和度输运代理 | MVP | `pipeline.transport_water_saturation` | `tests/test_pipeline_fields.py` | **f_w(S)** 迎风 + 井产注量源汇 |
+| 井产注量 | MVP | `SensorSample.well_rate` | 同上 | m³/s，+注 −采 |
 | CMG 差距报告 | 已跑 | `validation/cmg_gap_report/` | GAP_REPORT.md | 非均质通道/断层 .out 对照 |
 | 端到端 + CLI | MVP | `python -m reservoir_backend.pipeline.run` | `tests/test_pipeline_e2e_cli.py` | slice/series/discovery/esmda |
 | CSV 多时刻传感器 | 已验证 | `pipeline.load_sensor_series` | `tests/test_sensor_io_esmda.py` | 长表 wells + boundary CSV |

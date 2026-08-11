@@ -6,6 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from reservoir_backend.core.field import Field3D
+from reservoir_backend.core.wells import Well
 from reservoir_backend.pipeline.state import MeshBundle, SensorSample
 from reservoir_backend.solver.pressure_solver import solve_steady_state_pressure_3d
 from reservoir_backend.solver.transmissibility import validate_viscosity
@@ -42,8 +43,11 @@ def reconstruct_pressure(
         if key in {"left", "right", "front", "back", "bottom", "top"}
     }
     cell_dirichlet = _well_cell_dirichlet(mesh, sample)
+    rate_wells = _rate_wells_from_sample(mesh, sample)
     if cell_dirichlet:
         notes.append(f"well cell Dirichlet count={len(cell_dirichlet)}")
+    if rate_wells:
+        notes.append(f"well rate sources count={len(rate_wells)}")
     if neumann:
         notes.append(f"neumann flux faces={sorted(neumann.keys())}")
 
@@ -56,12 +60,13 @@ def reconstruct_pressure(
                 kz=permeability_m2,
                 mu=viscosity_pa_s,
                 dirichlet_boundaries=boundaries or None,
-                wells=None,
+                wells=rate_wells or None,
                 reference_pressure=float(next(iter(sample.well_pressure.values()), 0.0)),
                 cell_dirichlet=cell_dirichlet or None,
                 neumann_fluxes=neumann or None,
             )
             pressure = result.pressure.values.copy()
+            # Dirichlet wells already fixed in matrix; pin again for numerics
             pressure = _pin_well_pressures(mesh, sample, pressure)
             n_bc = int(result.report.get("cell_dirichlet_count", 0))
             notes.append(
@@ -84,6 +89,37 @@ def _well_cell_dirichlet(mesh: MeshBundle, sample: SensorSample) -> dict[int, fl
             raise KeyError(f"sensor well {name} is not on the mesh")
         out[int(mesh.well_cell_id[name])] = float(value)
     return out
+
+
+def _rate_wells_from_sample(mesh: MeshBundle, sample: SensorSample) -> list[Well]:
+    """Build rate wells for cells that have signed well_rate (m^3/s).
+
+    If the same cell also has Dirichlet BHP, the pressure solver skips the
+    rate source on that cell (Dirichlet wins) — rates still feed transport.
+    """
+    wells: list[Well] = []
+    for name, q in (sample.well_rate or {}).items():
+        if name not in mesh.well_cell_id:
+            continue
+        q = float(q)
+        if not np.isfinite(q) or abs(q) < 1.0e-30:
+            continue
+        cell = int(mesh.well_cell_id[name])
+        i, j, k = mesh.grid.ijk(cell)
+        wtype = "injection" if q > 0.0 else "production"
+        wells.append(
+            Well(
+                name=f"{name}_rate",
+                well_type=wtype,
+                grid=mesh.grid,
+                i=i,
+                j=j,
+                k=k,
+                control="rate",
+                rate=abs(q),
+            )
+        )
+    return wells
 
 
 def _pin_well_pressures(

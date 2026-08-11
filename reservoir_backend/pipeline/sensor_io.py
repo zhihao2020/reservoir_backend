@@ -9,7 +9,8 @@ from typing import Any
 from reservoir_backend.pipeline.state import BoundaryConditions, SensorSample
 
 # Expected long-format well rows:
-#   time,well,pressure_pa,sw,so,sg
+#   time,well,pressure_pa,sw,so,sg[,rate_m3_s]
+# rate_m3_s: signed volumetric rate (+inject, -produce), optional
 # Optional boundary CSV:
 #   time,side,pressure_pa[,flux_m3_s]
 # flux_m3_s: net volumetric rate into domain (optional)
@@ -38,16 +39,20 @@ def load_well_series_csv(path: str | Path) -> list[SensorSample]:
         sw = float(row["sw"]) if row.get("sw") not in (None, "") else 0.3
         so = float(row["so"]) if row.get("so") not in (None, "") else max(0.0, 1.0 - sw)
         sg = float(row["sg"]) if row.get("sg") not in (None, "") else max(0.0, 1.0 - sw - so)
-        by_time.setdefault(t, {})[name] = {
+        entry: dict[str, float] = {
             "pressure": p,
             "sw": sw,
             "so": so,
             "sg": sg,
         }
+        if row.get("rate_m3_s") not in (None, ""):
+            entry["rate"] = float(row["rate_m3_s"])
+        by_time.setdefault(t, {})[name] = entry
 
     samples: list[SensorSample] = []
     for t in sorted(by_time):
         wells = by_time[t]
+        rates = {n: v["rate"] for n, v in wells.items() if "rate" in v}
         samples.append(
             SensorSample(
                 time=t,
@@ -56,6 +61,7 @@ def load_well_series_csv(path: str | Path) -> list[SensorSample]:
                     n: (v["sw"], v["so"], v["sg"]) for n, v in wells.items()
                 },
                 boundary=BoundaryConditions(),
+                well_rate=rates,
             )
         )
     return samples
@@ -143,12 +149,15 @@ def write_well_series_csv(path: str | Path, samples: list[SensorSample]) -> Path
     with path.open("w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(
             fh,
-            fieldnames=["time", "well", "pressure_pa", "sw", "so", "sg"],
+            fieldnames=["time", "well", "pressure_pa", "sw", "so", "sg", "rate_m3_s"],
         )
         w.writeheader()
         for s in sorted(samples, key=lambda x: x.time):
             for name, p in s.well_pressure.items():
                 sw, so, sg = s.well_saturation.get(name, (0.3, 0.7, 0.0))
+                rate = ""
+                if name in (s.well_rate or {}):
+                    rate = s.well_rate[name]
                 w.writerow(
                     {
                         "time": s.time,
@@ -157,6 +166,7 @@ def write_well_series_csv(path: str | Path, samples: list[SensorSample]) -> Path
                         "sw": sw,
                         "so": so,
                         "sg": sg,
+                        "rate_m3_s": rate,
                     }
                 )
     return path
