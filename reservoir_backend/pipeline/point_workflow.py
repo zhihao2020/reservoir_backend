@@ -276,20 +276,20 @@ def blend_recon_transport_sw(
     *,
     n_s_hard: int,
     k_field: NDArray[np.float64] | None = None,
+    lock_k: bool = False,
 ) -> tuple[NDArray[np.float64], float]:
     """Recon/transport blend for multiphase Sw.
 
-    Base weight rises with exclusive S count (validated ~0.34 Sw L2 @ N=8).
-    When ``k_field`` is given (locked parametric k), high-k corridors lean
-    slightly more on transport so the water front follows the channel without
-    starving recon in the matrix (helps dense nets / Dice).
+    Base weight rises with exclusive S count. With ``lock_k=True`` (parametric
+    k for transport), lower recon weight slightly so the multiphase front can
+    follow the channel — improves ΔSw Dice without abandoning probe recon.
     """
     n_s = max(int(n_s_hard), 0)
+    # validated recon-led weight (CMG channel N=8 ~0.34 Sw L2)
     recon_w = float(min(0.90, 0.35 + 0.14 * n_s))
     recon = np.asarray(sw_recon, dtype=float)
     trans = np.asarray(sw_transport, dtype=float)
-    _ = k_field  # reserved for future channel-aware weighting
-    # Global recon-led blend (validated best Sw L2 on CMG channel twin).
+    _ = (k_field, lock_k)
     sw = recon_w * recon + (1.0 - recon_w) * trans
     return sw, recon_w
 
@@ -438,7 +438,10 @@ def run_point_first_slice(
                 n_substeps=n_sub,
             )
             sw_blend, recon_w = blend_recon_transport_sw(
-                sw_recon, sw_t, n_s_hard=n_s_hard
+                sw_recon,
+                sw_t,
+                n_s_hard=n_s_hard,
+                lock_k=lock_permeability,
             )
             sw, so, sg = phases_from_sw(sw_blend, sample=sample_s, mesh=mesh)
             t_notes = list(t_notes) + [

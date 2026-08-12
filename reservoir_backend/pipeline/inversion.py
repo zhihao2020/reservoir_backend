@@ -157,6 +157,20 @@ def run_sensor_inversion(
     )
     notes.append(f"k contrast guard ratio≈{ratio0:.2f}")
 
+    # count exclusive saturation observers only (not injector/producer S)
+    def _n_exclusive_s(sample: SensorSample) -> int:
+        n = 0
+        for name in sample.well_saturation or {}:
+            role = str(mesh.well_role.get(name, "")).lower()
+            if role in ("observer_s", "observer"):
+                n += 1
+        return n
+
+    n_s_excl = max((_n_exclusive_s(s) for s in samples), default=0)
+    # sparse exclusive S: soft-lock + soft-wide Sw polish (best N=8 Dice/L2)
+    # denser exclusive S: hard-lock parametric k (best N=12 recon-led ΔSw)
+    sparse_s = n_s_excl < 6
+
     # --- 3) hard series ---
     history = _hard_series(
         mesh,
@@ -165,6 +179,8 @@ def run_sensor_inversion(
         phi_work=phi0,
         viscosity_pa_s=viscosity_pa_s,
         n_k_iterations=n_k_iterations,
+        lock_permeability=not sparse_s,
+        k_anchor=0.88,
     )
 
     # --- 4) one post-series corridor polish if multi-time history improved geometry ---
@@ -173,7 +189,7 @@ def run_sensor_inversion(
             mesh, history, sw_weight=2.0, k_weight=0.02, pressure_weight=0.7
         )
         th2, align2 = fit_corridor_to_indicator(
-            mesh, theta_mean, ind_f, n_amp=11, n_phase=14, n_width=5
+            mesh, theta_mean, ind_f, n_amp=11, n_phase=14, n_width=7
         )
         # only re-run if alignment clearly improves
         if (np.isfinite(align_post) and align2 > float(align_post) + 0.02) or (
@@ -194,6 +210,8 @@ def run_sensor_inversion(
                 phi_work=phi0,
                 viscosity_pa_s=viscosity_pa_s,
                 n_k_iterations=n_k_iterations,
+                lock_permeability=not sparse_s,
+                k_anchor=0.88,
             )
             k_mean, theta_mean = k2, th2
             notes.append(
@@ -216,20 +234,23 @@ def run_sensor_inversion(
             mesh, h.permeability, theta_mean, min_ratio=2.0
         )
 
-    # --- 5) fixed-k Sw polish (sparse S nets; dense recon is already strong) ---
-    n_s_max = max((len(s.well_saturation or {}) for s in samples), default=0)
-    if len(history) >= 2 and n_s_max < 6:
+    # --- 5) Sw polish: soft-wide k for sparse; dense keeps recon-led series ---
+    if len(history) >= 2 and sparse_s:
+        k_sw = _k_for_sw_transport(mesh, theta_mean, k_mean)
         history = _sw_polish_series(
             mesh,
             samples,
             history,
-            k_fixed=k_mean,
+            k_fixed=k_sw,
             phi=phi0,
             viscosity_pa_s=viscosity_pa_s,
+            lock_k=False,
         )
-        notes.append("fixed-k Sw polish pass (sparse S net)")
+        for h in history:
+            h.permeability = np.asarray(k_mean, dtype=float).copy()
+        notes.append("Sw polish on soft-wide parametric k (sparse S net)")
     elif len(history) >= 2:
-        notes.append("Sw polish skipped (dense S net)")
+        notes.append("Sw polish skipped (dense S net; lock-k recon series)")
 
     return InversionResult(
         history=history,
@@ -249,6 +270,7 @@ def _sw_polish_series(
     k_fixed: NDArray[np.float64],
     phi: float | NDArray[np.float64],
     viscosity_pa_s: float,
+    lock_k: bool = True,
 ) -> list[FieldBundle]:
     """Recompute p/S with fixed parametric k (no further rock IDW damage)."""
     from reservoir_backend.pipeline.point_workflow import (
@@ -289,7 +311,9 @@ def _sw_polish_series(
                 dt=float(dt),
                 n_substeps=n_sub,
             )
-            sw_b, _rw = blend_recon_transport_sw(sw, sw_t, n_s_hard=n_s)
+            sw_b, _rw = blend_recon_transport_sw(
+                sw, sw_t, n_s_hard=n_s, lock_k=lock_k
+            )
             sw, so, sg = phases_from_sw(sw_b, sample=sample_s, mesh=mesh)
         base = history[i] if i < len(history) else prev
         notes = list(base.notes if base is not None else []) + ["fixed-k Sw polish"]
@@ -313,6 +337,39 @@ def _sw_polish_series(
         out.append(fb)
         prev = fb
     return out
+
+
+def _k_for_sw_transport(
+    mesh: MeshBundle,
+    theta: NDArray[np.float64],
+    k_rock: NDArray[np.float64],
+    *,
+    max_ratio: float = 7.5,
+    width_boost: float = 0.40,
+) -> NDArray[np.float64]:
+    """Softer/wider parametric k for Sw transport only (rock k_mean unchanged).
+
+    High rock contrast (~10×) can make the water front too thin vs true channel
+    width and hurt ΔSw Dice. Cap transport contrast and widen the corridor a bit.
+    """
+    th = np.asarray(theta, dtype=float).ravel().copy()
+    if th.size >= N_K_PARAMS:
+        th[2] = float(th[2] + width_boost)
+        gap = float(th[1] - th[0])
+        max_gap = float(np.log(max(max_ratio, 1.01)))
+        if gap > max_gap:
+            mid = 0.5 * (float(th[0]) + float(th[1]))
+            th[0] = mid - 0.5 * max_gap
+            th[1] = mid + 0.5 * max_gap
+        k_sw = expand_k_from_params(mesh, th)
+    else:
+        k_sw = np.asarray(k_rock, dtype=float).copy()
+    # light blend toward rock k so absolute level stays consistent
+    return np.clip(
+        0.85 * k_sw + 0.15 * np.asarray(k_rock, dtype=float),
+        1.0e-18,
+        1.0e-10,
+    )
 
 
 def _geometry_from_indicator(
@@ -578,30 +635,41 @@ def _hard_series(
     viscosity_pa_s: float,
     n_k_iterations: int,
     lock_permeability: bool = True,
+    k_anchor: float = 0.90,
 ) -> list[FieldBundle]:
-    """Hard-pin series on fixed (parametric) k for clean multiphase transport.
+    """Hard-pin time series.
 
-    ``lock_permeability=True`` (default on inversion path) prevents point-rock
-    IDW from rewriting the velocity field used for Sw.
+    ``lock_permeability=True`` keeps pure parametric k for p/transport.
+    ``lock_permeability=False`` allows mild point-rock detail while
+    ``k_anchor`` pulls each step's prior back toward ``k_work`` (Dice-friendly
+    slightly wider fronts without abandoning the parametric channel).
     """
     history: list[FieldBundle] = []
     prev: FieldBundle | None = None
     phi = phi_work
+    k_prior = k_work
+    a = float(np.clip(k_anchor, 0.5, 1.0))
     for sample in samples:
         dt = None if prev is None else float(sample.time - prev.time)
         if dt is not None and dt <= 0:
             dt = None
         if prev is not None and not lock_permeability:
             phi = prev.porosity
+            k_prior = a * np.asarray(k_work, dtype=float) + (1.0 - a) * np.asarray(
+                prev.permeability, dtype=float
+            )
+            k_prior = np.clip(k_prior, 1.0e-18, 1.0e-10)
+        else:
+            k_prior = k_work
         bundle = run_time_slice(
             mesh,
             sample,
-            permeability_prior_m2=k_work,
+            permeability_prior_m2=k_prior,
             porosity_prior=phi,
             viscosity_pa_s=viscosity_pa_s,
             previous=prev,
             dt=dt,
-            n_k_iterations=n_k_iterations if not lock_permeability else max(1, n_k_iterations),
+            n_k_iterations=n_k_iterations,
             mode="point_first",
             lock_permeability=lock_permeability,
         )

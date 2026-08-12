@@ -8,20 +8,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.3436435495196455,
-    "delta_sw_dice": 0.576,
+    "sw_rel_l2": 0.33707675160235584,
+    "delta_sw_dice": 0.608,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 11.1314087970853,
-    "k_mean": 9.940258054709064e-12,
-    "p_holdout_rmse_pa": 9068714.490787072,
+    "k_channel_over_out": 6.929804547570199,
+    "k_mean": 1.626135926173868e-11,
+    "p_holdout_rmse_pa": 8806724.497854851,
     "interp_notes_tail": [
+      "auto spatial k,\u03c6 from 10 points (k_method=idw, phi_method=kriging)",
       "auto-interp: log-transform on",
-      "auto-interp stack weights idw=0.166 krig=0.157",
-      "auto-interp: stack (n=10, loo_idw=2.456, loo_krig=2.523)",
-      "auto-interp: kriging (n=10, loo_idw=0.2036, loo_krig=0.1865)"
+      "auto-interp: idw (n=10, loo_idw=1.17, loo_krig=1.271)",
+      "auto-interp: kriging (n=10, loo_idw=0.07731, loo_krig=0.07106)"
     ],
     "probe_names": [
       "P1",
@@ -43,20 +43,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.41308991400819206,
+    "sw_rel_l2": 0.41606816381664263,
     "delta_sw_dice": 0.656,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 6.810194754386827,
-    "k_mean": 1.830301060095811e-11,
-    "p_holdout_rmse_pa": 4924957.630422843,
+    "k_channel_over_out": 6.300928944435407,
+    "k_mean": 2.0868534027260146e-11,
+    "p_holdout_rmse_pa": 4870903.621235866,
     "interp_notes_tail": [
       "auto spatial k,\u03c6 from 14 points (k_method=kriging, phi_method=kriging)",
       "auto-interp: log-transform on",
-      "auto-interp: kriging (n=14, loo_idw=1.819, loo_krig=1.712)",
-      "auto-interp: kriging (n=14, loo_idw=0.2076, loo_krig=0.1939)"
+      "auto-interp: kriging (n=14, loo_idw=1.863, loo_krig=1.748)",
+      "auto-interp: kriging (n=14, loo_idw=0.2145, loo_krig=0.2004)"
     ],
     "probe_names": [
       "P1",

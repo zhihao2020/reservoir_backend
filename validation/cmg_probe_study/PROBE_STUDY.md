@@ -4,8 +4,8 @@
 
 | case | layout | N | n_p/n_s | ES-MDA | Sw rel L2 ↓ | ΔSw Dice ↑ | k_ch/k_out | p hold-out RMSE (Pa) |
 |------|--------|---|---------|--------|-------------|------------|------------|----------------------|
-| cmg_undulating_channel | uniform | 8 | 4/4 | Y | 0.3436 | 0.576 | 11.131 | 9.07e+06 |
-| cmg_undulating_channel | uniform | 12 | 6/6 | Y | 0.4131 | 0.656 | 6.810 | 4.92e+06 |
+| cmg_undulating_channel | uniform | 8 | 4/4 | Y | 0.3371 | 0.608 | 6.930 | 8.81e+06 |
+| cmg_undulating_channel | uniform | 12 | 6/6 | Y | 0.4161 | 0.656 | 6.301 | 4.87e+06 |
 
 ## 读法
 
