@@ -225,7 +225,7 @@ def run_sensor_inversion(
             mesh, h.permeability, theta_mean, min_ratio=8.0
         )
 
-    # --- 5) Sw polish on the same parametric k (no contrast-killing soft-wide) ---
+    # --- 5) Sw polish on the same parametric k + tongue along corridor ---
     if len(history) >= 2:
         history = _sw_polish_series(
             mesh,
@@ -236,9 +236,23 @@ def run_sensor_inversion(
             viscosity_pa_s=viscosity_pa_s,
             lock_k=True,
         )
+        n_s_excl = 0
+        for s in samples:
+            n = 0
+            for name in s.well_saturation or {}:
+                if str(mesh.well_role.get(name, "")).lower() in (
+                    "observer_s",
+                    "observer",
+                ):
+                    n += 1
+            n_s_excl = max(n_s_excl, n)
+        if n_s_excl < 6:
+            history = _sw_tongue_along_k(mesh, samples, history, k_mean)
+            notes.append("fixed-k Sw polish + k-corridor tongue (sparse S)")
+        else:
+            notes.append("fixed-k Sw polish (dense S; no tongue reshape)")
         for h in history:
             h.permeability = np.asarray(k_mean, dtype=float).copy()
-        notes.append("fixed-k Sw polish (parametric k, lock_k blend)")
 
     return InversionResult(
         history=history,
@@ -368,7 +382,11 @@ def _sw_polish_series(
                 n_substeps=n_sub,
             )
             sw_b, _rw = blend_recon_transport_sw(
-                sw, sw_t, n_s_hard=n_s, lock_k=lock_k
+                sw,
+                sw_t,
+                n_s_hard=n_s,
+                lock_k=lock_k,
+                k_field=k_fixed,
             )
             sw, so, sg = phases_from_sw(sw_b, sample=sample_s, mesh=mesh)
         base = history[i] if i < len(history) else prev
@@ -393,6 +411,45 @@ def _sw_polish_series(
         out.append(fb)
         prev = fb
     return out
+
+
+def _sw_tongue_along_k(
+    mesh: MeshBundle,
+    samples: list[SensorSample],
+    history: list[FieldBundle],
+    k_mean: NDArray[np.float64],
+    *,
+    strength: float = 0.28,
+) -> list[FieldBundle]:
+    """Concentrate multi-time ΔSw into the high-k corridor (Dice / tongue).
+
+    Does not invent water: only reshapes existing advance. Sensors re-pinned.
+    """
+    if len(history) < 2:
+        return history
+    from reservoir_backend.pipeline.transport_saturation import phases_from_sw
+
+    logk = np.log(np.clip(np.asarray(k_mean, dtype=float), 1.0e-30, None))
+    lo = float(np.percentile(logk, 20))
+    hi = float(np.percentile(logk, 80))
+    kn = np.clip((logk - lo) / max(hi - lo, 1.0e-9), 0.0, 1.0)
+    kn0 = kn - float(np.mean(kn))
+    sw0 = np.asarray(history[0].sw, dtype=float)
+    for i in range(1, len(history)):
+        h = history[i]
+        dsw = np.asarray(h.sw, dtype=float) - sw0
+        # boost advance in channel, damp smear in matrix
+        scale = 1.0 + float(strength) * kn0
+        dsw2 = dsw * scale
+        # keep mean advance (L2-friendly)
+        m0 = float(np.mean(np.abs(dsw))) + 1.0e-12
+        m1 = float(np.mean(np.abs(dsw2))) + 1.0e-12
+        dsw2 = dsw2 * (m0 / m1)
+        sw = np.clip(sw0 + dsw2, 0.0, 1.0)
+        sample = samples[i] if i < len(samples) else samples[-1]
+        sw, so, sg = phases_from_sw(sw, sample=sample, mesh=mesh)
+        h.sw, h.so, h.sg = sw, so, sg
+    return history
 
 
 def _k_for_sw_transport(

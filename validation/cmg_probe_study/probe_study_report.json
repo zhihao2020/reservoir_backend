@@ -8,20 +8,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.3263507067385248,
-    "delta_sw_dice": 0.592,
+    "sw_rel_l2": 0.31143439239778675,
+    "delta_sw_dice": 0.656,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 8.549499605603064,
-    "k_mean": 1.1574935277448025e-11,
-    "p_holdout_rmse_pa": 420752.463768566,
+    "k_channel_over_out": 8.671752407914521,
+    "k_mean": 1.1554309757089131e-11,
+    "p_holdout_rmse_pa": 428257.73892959417,
     "interp_notes_tail": [
       "auto-interp: log-transform on",
-      "auto-interp stack weights idw=0.57 krig=0.537",
-      "auto-interp: stack (n=10, loo_idw=1.324, loo_krig=1.364)",
-      "auto-interp: kriging (n=10, loo_idw=0.2219, loo_krig=0.2019)"
+      "auto-interp stack weights idw=0.577 krig=0.54",
+      "auto-interp: stack (n=10, loo_idw=1.317, loo_krig=1.361)",
+      "auto-interp: kriging (n=10, loo_idw=0.2222, loo_krig=0.2022)"
     ],
     "probe_names": [
       "P1",
@@ -43,20 +43,20 @@
     "layout": "uniform",
     "assimilate_k": true,
     "n_times": 10,
-    "sw_rel_l2": 0.4244059071337223,
-    "delta_sw_dice": 0.592,
+    "sw_rel_l2": 0.42118903727137114,
+    "delta_sw_dice": 0.608,
     "well_pressure_abs_err_pa": {
       "INJ": 0.0,
       "PROD": 0.0
     },
-    "k_channel_over_out": 6.864379197294141,
-    "k_mean": 1.4019390235841987e-11,
-    "p_holdout_rmse_pa": 160662.49402785607,
+    "k_channel_over_out": 6.90499970322163,
+    "k_mean": 1.400454507056369e-11,
+    "p_holdout_rmse_pa": 163609.79719982613,
     "interp_notes_tail": [
       "auto spatial k,\u03c6 from 14 points (k_method=kriging, phi_method=kriging)",
       "auto-interp: log-transform on",
-      "auto-interp: kriging (n=14, loo_idw=2.994, loo_krig=2.798)",
-      "auto-interp: kriging (n=14, loo_idw=0.1847, loo_krig=0.1715)"
+      "auto-interp: kriging (n=14, loo_idw=2.992, loo_krig=2.797)",
+      "auto-interp: kriging (n=14, loo_idw=0.185, loo_krig=0.1718)"
     ],
     "probe_names": [
       "P1",
