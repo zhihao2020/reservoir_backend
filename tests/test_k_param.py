@@ -8,6 +8,7 @@ from reservoir_backend.pipeline import AxisAlignedBounds, WellPoint, build_mesh
 from reservoir_backend.pipeline.inversion import run_sensor_inversion
 from reservoir_backend.pipeline.k_param import (
     N_K_PARAMS,
+    corridor_parameterization,
     default_k_param_prior,
     expand_k_from_params,
     project_k_to_params,
@@ -34,6 +35,19 @@ def test_expand_channel_higher_than_background() -> None:
     mid = k[:, :, k.shape[2] // 2]
     edge = k[:, :, 0]
     assert float(np.mean(mid)) > float(np.mean(edge))
+
+
+def test_corridor_t_increases_inj_to_prod() -> None:
+    mesh = _mesh()
+    theta = np.array([np.log(1e-14), np.log(1e-12), 0.0, 0.0, 0.3, 0.4])
+    t, w = corridor_parameterization(mesh, theta)
+    ci = mesh.well_cell_id["INJ"]
+    cp = mesh.well_cell_id["PROD"]
+    ii, ji, ki = mesh.grid.ijk(ci)
+    ip, jp, kp = mesh.grid.ijk(cp)
+    assert float(t[ki, ji, ii]) < float(t[kp, jp, ip])
+    assert float(w[ki, ji, ii]) > 0.3
+    assert float(w[kp, jp, ip]) > 0.3
 
 
 def test_ensemble_shape() -> None:

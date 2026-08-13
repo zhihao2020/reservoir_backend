@@ -285,16 +285,11 @@ def blend_recon_transport_sw(
     follow the channel — improves ΔSw Dice without abandoning probe recon.
     """
     n_s = max(int(n_s_hard), 0)
-    if lock_k:
-        recon_w = float(min(0.72, 0.38 + 0.07 * n_s))
-        if n_s >= 6:
-            recon_w = float(min(0.84, 0.50 + 0.06 * n_s))
-    else:
-        recon_w = float(min(0.90, 0.35 + 0.14 * n_s))
+    # one schedule for every case: more exclusive S → trust recon a bit more
+    recon_w = float(min(0.76, 0.44 + 0.06 * n_s))
     recon = np.asarray(sw_recon, dtype=float)
     trans = np.asarray(sw_transport, dtype=float)
-    # dense S nets: recon already resolves structure; k-aware transport overshoots
-    if k_field is None or n_s >= 6 or np.asarray(k_field).ndim == 0:
+    if k_field is None or np.asarray(k_field).ndim == 0:
         sw = recon_w * recon + (1.0 - recon_w) * trans
         return sw, recon_w
     logk = np.log(np.clip(np.asarray(k_field, dtype=float), 1.0e-30, None))
@@ -304,11 +299,9 @@ def blend_recon_transport_sw(
     lo = float(np.percentile(logk, 20))
     hi = float(np.percentile(logk, 80))
     kn = np.clip((logk - lo) / max(hi - lo, 1.0e-9), 0.0, 1.0)
-    # channel (kn→1): lean transport so the tongue follows inverted k
-    # matrix (kn→0): keep recon so residual water is not smeared
-    pull = 0.50 if n_s < 6 else 0.22
+    pull = float(max(0.18, 0.38 - 0.025 * n_s))
     w = recon_w * (1.0 - pull * kn)
-    w = np.clip(w, 0.28, 0.88)
+    w = np.clip(w, 0.30, 0.88)
     sw = w * recon + (1.0 - w) * trans
     return sw, recon_w
 
@@ -446,7 +439,12 @@ def run_point_first_slice(
             and float(dt) > 0.0
         ):
             sw_recon = sw.copy()
-            n_s_hard = len(sample_s.well_saturation)
+            n_s_hard = sum(
+                1
+                for nm in sample_s.well_saturation
+                if str(mesh.well_role.get(nm, "")).lower()
+                in ("observer_s", "observer")
+            )
             # carry the previous water bank; recon only nudges the init
             sw_init = 0.62 * previous.sw + 0.38 * sw_recon
             n_sub = int(np.clip(round(float(dt) / 4.0) + n_s_hard, 8, 28))

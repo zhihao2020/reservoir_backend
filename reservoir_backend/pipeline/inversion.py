@@ -28,6 +28,7 @@ from reservoir_backend.pipeline.esmda import (
 from reservoir_backend.pipeline.k_param import (
     N_K_PARAMS,
     boost_theta_from_indicator,
+    corridor_parameterization,
     default_k_param_prior,
     enforce_k_channel_contrast,
     enforce_theta_contrast,
@@ -235,24 +236,12 @@ def run_sensor_inversion(
             phi=phi0,
             viscosity_pa_s=viscosity_pa_s,
             lock_k=True,
+            theta=theta_mean,
         )
-        n_s_excl = 0
-        for s in samples:
-            n = 0
-            for name in s.well_saturation or {}:
-                if str(mesh.well_role.get(name, "")).lower() in (
-                    "observer_s",
-                    "observer",
-                ):
-                    n += 1
-            n_s_excl = max(n_s_excl, n)
-        if n_s_excl < 6:
-            history = _sw_tongue_along_k(mesh, samples, history, k_mean)
-            notes.append("fixed-k Sw polish + k-corridor tongue (sparse S)")
-        else:
-            notes.append("fixed-k Sw polish (dense S; no tongue reshape)")
+        history = _sw_tongue_along_k(mesh, samples, history, k_mean, strength=0.22)
         for h in history:
             h.permeability = np.asarray(k_mean, dtype=float).copy()
+        notes.append("fixed-k Sw polish + corridor 1-D bank + tongue (all N)")
 
     return InversionResult(
         history=history,
@@ -335,6 +324,7 @@ def _sw_polish_series(
     phi: float | NDArray[np.float64],
     viscosity_pa_s: float,
     lock_k: bool = True,
+    theta: NDArray[np.float64] | None = None,
 ) -> list[FieldBundle]:
     """Recompute p/S with fixed parametric k (no further rock IDW damage)."""
     from reservoir_backend.pipeline.point_workflow import (
@@ -368,7 +358,12 @@ def _sw_polish_series(
             mesh, sample_s, pressure=p, permeability_m2=k_fixed
         )
         if prev is not None and dt is not None and float(dt) > 0.0:
-            n_s = len(sample_s.well_saturation)
+            n_s = sum(
+                1
+                for nm in sample_s.well_saturation
+                if str(mesh.well_role.get(nm, "")).lower()
+                in ("observer_s", "observer")
+            )
             n_sub = int(np.clip(round(float(dt) / 4.0) + n_s, 8, 28))
             sw_t, _ = transport_water_saturation(
                 mesh,
@@ -388,6 +383,7 @@ def _sw_polish_series(
                 lock_k=lock_k,
                 k_field=k_fixed,
             )
+            sw_b = _sw_fill_corridor_1d(mesh, sample, sw_b, theta=theta)
             sw, so, sg = phases_from_sw(sw_b, sample=sample_s, mesh=mesh)
         base = history[i] if i < len(history) else prev
         notes = list(base.notes if base is not None else []) + ["fixed-k Sw polish"]
@@ -413,13 +409,62 @@ def _sw_polish_series(
     return out
 
 
+def _sw_fill_corridor_1d(
+    mesh: MeshBundle,
+    sample: SensorSample,
+    sw: NDArray[np.float64],
+    *,
+    theta: NDArray[np.float64] | None,
+    mix: float | None = None,
+) -> NDArray[np.float64]:
+    """Fill mid-channel Sw by interpolating sensor Sw along the inverted corridor.
+
+    INJ→PROD arc ``t`` is the 1-D coordinate. Sparse S probes + wells become
+    (t, Sw) knots; cells on the corridor take the 1-D profile. Matrix unchanged.
+    """
+    if theta is None or not sample.well_saturation:
+        return sw
+    t_f, w_f = corridor_parameterization(mesh, theta)
+    knots_t: list[float] = []
+    knots_s: list[float] = []
+    for name, phases in sample.well_saturation.items():
+        if name not in mesh.well_cell_id:
+            continue
+        c = mesh.well_cell_id[name]
+        i, j, k = mesh.grid.ijk(c)
+        role = str(mesh.well_role.get(name, "")).lower()
+        on_path = role in ("injector", "producer") or float(w_f[k, j, i]) >= 0.22
+        if not on_path:
+            continue
+        knots_t.append(float(t_f[k, j, i]))
+        knots_s.append(float(np.clip(phases[0], 0.0, 1.0)))
+    if len(knots_t) < 2:
+        return sw
+    order = np.argsort(np.asarray(knots_t, dtype=float))
+    tt = np.asarray(knots_t, dtype=float)[order]
+    ss = np.asarray(knots_s, dtype=float)[order]
+    # unique t (keep last)
+    uniq_t, idx = np.unique(tt, return_index=True)
+    uniq_s = ss[idx]
+    if uniq_t.size < 2:
+        return sw
+    sw_1d = np.interp(t_f.ravel(), uniq_t, uniq_s).reshape(t_f.shape)
+    if mix is None:
+        # extra probes refine knots; mix stays moderate so all cases share one law
+        mix = 0.32
+    # only lift dry corridor cells (do not flatten the existing bank)
+    base = np.asarray(sw, dtype=float)
+    lift = np.maximum(sw_1d - base, 0.0)
+    return np.clip(base + float(mix) * np.clip(w_f, 0.0, 1.0) * lift, 0.0, 1.0)
+
+
 def _sw_tongue_along_k(
     mesh: MeshBundle,
     samples: list[SensorSample],
     history: list[FieldBundle],
     k_mean: NDArray[np.float64],
     *,
-    strength: float = 0.28,
+    strength: float = 0.22,
 ) -> list[FieldBundle]:
     """Concentrate multi-time ΔSw into the high-k corridor (Dice / tongue).
 

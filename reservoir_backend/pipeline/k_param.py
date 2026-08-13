@@ -271,6 +271,37 @@ def _clip_theta(theta: NDArray[np.float64]) -> NDArray[np.float64]:
     return th
 
 
+def corridor_parameterization(
+    mesh: MeshBundle,
+    theta: NDArray[np.float64] | None = None,
+    *,
+    width_scale: float | None = None,
+    z_bias: float = 0.0,
+    meander_amp: float = 0.0,
+    meander_phase: float = 0.0,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Along-path coordinate ``t∈[0,1]`` (INJ→PROD) and soft corridor weight.
+
+    Used to map sparse Sw sensors onto a 1-D channel front without CMG.
+    """
+    if theta is not None:
+        th = np.asarray(theta, dtype=float).ravel()
+        if th.size >= N_K_PARAMS:
+            width_scale = float(np.exp(th[2]))
+            z_bias = float(th[3])
+            meander_amp = float(th[4])
+            meander_phase = float(th[5])
+    if width_scale is None:
+        width_scale = 1.0
+    return _corridor_t_and_w(
+        mesh,
+        width_scale=float(width_scale),
+        z_bias=float(z_bias),
+        meander_amp=float(meander_amp),
+        meander_phase=float(meander_phase),
+    )
+
+
 def _path_weight(
     mesh: MeshBundle,
     *,
@@ -280,12 +311,32 @@ def _path_weight(
     meander_phase: float = 0.0,
 ) -> NDArray[np.float64]:
     """Soft [0,1] weight along inj–prod path with optional planar meander."""
+    _t, w = _corridor_t_and_w(
+        mesh,
+        width_scale=width_scale,
+        z_bias=z_bias,
+        meander_amp=meander_amp,
+        meander_phase=meander_phase,
+    )
+    return w
+
+
+def _corridor_t_and_w(
+    mesh: MeshBundle,
+    *,
+    width_scale: float,
+    z_bias: float,
+    meander_amp: float = 0.0,
+    meander_phase: float = 0.0,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Vectorized INJ→PROD arc parameter t and corridor weight w."""
     inj = _first_role(mesh, "injector")
     prod = _first_role(mesh, "producer")
     if inj is None or prod is None:
         names = list(mesh.well_cell_id.keys())
         if len(names) < 2:
-            return np.zeros(mesh.grid.shape, dtype=float)
+            z = np.zeros(mesh.grid.shape, dtype=float)
+            return z, z
         c0, c1 = mesh.well_cell_id[names[0]], mesh.well_cell_id[names[1]]
     else:
         c0, c1 = inj, prod
@@ -298,37 +349,39 @@ def _path_weight(
     radius = max(base_r * max(float(width_scale), 0.25), 0.5 * base_r)
 
     vx, vy, vz = x1 - x0, y1 - y0, z1 - z0
-    # planar length for meander amplitude in metres
     Lxy = float(np.sqrt(vx * vx + vy * vy) + 1.0e-30)
-    # unit along-path and left-normal in plan view
-    ux, uy = vx / Lxy, vy / Lxy
-    nx_, ny_ = -uy, ux
-    amp = float(meander_amp) * base_r * 2.5  # scale-free amp → metres
-
-    out = np.zeros(mesh.grid.shape, dtype=float)
+    nx_, ny_ = -vy / Lxy, vx / Lxy
+    amp = float(meander_amp) * base_r * 2.5
     vv = vx * vx + vy * vy + vz * vz + 1.0e-30
     zmin, zmax = float(np.min(mesh.z)), float(np.max(mesh.z))
     zspan = max(zmax - zmin, 1.0e-30)
 
-    for n in range(mesh.n_cells):
-        px, py, pz = float(mesh.x[n]), float(mesh.y[n]), float(mesh.z[n])
-        wx, wy, wz = px - x0, py - y0, pz - z0
-        t = float(np.clip((wx * vx + wy * vy + wz * vz) / vv, 0.0, 1.0))
-        # meander: offset path center in plan-normal direction
-        shift = amp * float(np.sin(2.0 * np.pi * t + float(meander_phase)))
-        cx = x0 + t * vx + shift * nx_
-        cy = y0 + t * vy + shift * ny_
+    px = np.asarray(mesh.x, dtype=float)
+    py = np.asarray(mesh.y, dtype=float)
+    pz = np.asarray(mesh.z, dtype=float)
+    t = np.clip(((px - x0) * vx + (py - y0) * vy + (pz - z0) * vz) / vv, 0.0, 1.0)
+    shift = amp * np.sin(2.0 * np.pi * t + float(meander_phase))
+    cx = x0 + t * vx + shift * nx_
+    cy = y0 + t * vy + shift * ny_
+    hz = getattr(mesh, "horizon_z", None)
+    if hz is not None:
+        cz = np.asarray(hz(cx, cy), dtype=float)
+    else:
         cz = z0 + t * vz
-        dist = float(np.sqrt((px - cx) ** 2 + (py - cy) ** 2 + (pz - cz) ** 2))
-        if dist > radius:
-            continue
-        w = 1.0 - dist / radius
-        zn = (pz - zmin) / zspan
-        w *= float(np.clip(1.0 + float(z_bias) * (zn - 0.5), 0.25, 1.75))
-        w = float(np.clip(w, 0.0, 1.0))
-        i, j, k = int(mesh.i[n]), int(mesh.j[n]), int(mesh.k[n])
-        out[k, j, i] = max(out[k, j, i], w)
-    return out
+    dist = np.sqrt((px - cx) ** 2 + (py - cy) ** 2 + (pz - cz) ** 2)
+    w = np.clip(1.0 - dist / max(radius, 1.0e-12), 0.0, 1.0)
+    zn = (pz - zmin) / zspan
+    w = w * np.clip(1.0 + float(z_bias) * (zn - 0.5), 0.25, 1.75)
+    w = np.clip(w, 0.0, 1.0)
+    shape = mesh.grid.shape
+    t3 = np.zeros(shape, dtype=float)
+    w3 = np.zeros(shape, dtype=float)
+    ii = np.asarray(mesh.i, dtype=int)
+    jj = np.asarray(mesh.j, dtype=int)
+    kk = np.asarray(mesh.k, dtype=int)
+    t3[kk, jj, ii] = t
+    w3[kk, jj, ii] = w
+    return t3, w3
 
 
 def _first_role(mesh: MeshBundle, role: str) -> int | None:
