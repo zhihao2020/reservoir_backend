@@ -22,11 +22,12 @@
 | 非均质四场验收 | MVP | `validation/heterogeneous_four_field/` | run_validate.py | **禁止均质**；通道/断层孪生 |
 | 饱和度输运代理 | MVP | `pipeline.transport_water_saturation` | `tests/test_pipeline_fields.py` | **f_w(S)** 迎风 + 井产注量源汇 |
 | 井产注量 | MVP | `SensorSample.well_rate` | 同上 | m³/s，+注 −采 |
-| CMG 差距报告 | 已跑 | `validation/cmg_gap_report/` | GAP_REPORT.md | 非均质通道/断层 .out 对照 |
+| 黑油 / 页岩拆分 | 已整理 | `black_oil/` `shale_oil/` | 两套软件+论文入口 | IMEX 尺子在 black_oil/validation |
 | 端到端 + CLI | MVP | `python -m reservoir_backend.pipeline.run` | `tests/test_pipeline_e2e_cli.py` | slice/series/discovery/esmda |
 | CSV 多时刻传感器 | 已验证 | `pipeline.load_sensor_series` | `tests/test_sensor_series_inversion.py` | 注采井+observer_p/s 时序；边界 CSV |
-| 高精度反演（绿地） | MVP | `run_sensor_inversion` | `tests/test_k_param.py` | **4 维 k 参数**（背景/通道/宽度/z）+ 多时刻联合 ES-MDA(p+Sw+qw) → 路径增强 → 硬点时序 |
-| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | 软观测：**p + Sw + 产水代理 qw**（井/测点，无 CMG）；α 归一化；局部化；进程池正演 |
+| 高精度反演（绿地） | 可选先验 | `run_sensor_inversion`（`k_prior=channel_tube`） | `tests/test_k_param.py` | **非默认**：6 维井间通道管；跨工况请用点优先或全网格 ES-MDA |
+| 自动反演 | MVP | `run_automatic_inversion` / `assimilate_k=True` | `tests/test_auto_inversion.py` | AutoGluon 式堆叠：点优先 + 通量增强；权重由留出测点决定 |
+| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | 全网格 log-k；软观测 p+Sw+qw；测点 train/val 见 `probe_split` |
 | 空间插值性能 | 已验证 | `spatial_interp` 向量化 | `tests/test_spatial_interp.py` | IDW/克里金/LOO 矩阵化；克里金 batch RHS |
 | 饱和度自动空间 | MVP | `reconstruct_saturation` | `tests/test_pipeline_fields.py` | 硬点≥8 走 LOO 自动 IDW/克里金/stack；少点保留各向异性 IDW |
 | 方法学参考库 | 只读 | `references/methods/` | methods/README.md | equinor/pyesmda/dass；**禁止 import** |
@@ -36,6 +37,8 @@
 | 合成通道孪生 | 已验证 | `pipeline.build_channel_twin` | `tests/test_shape_discovery.py` | 已知通道 mask；Dice 软阈值 |
 | CMG 三维通道验证 | MVP | `validation/cmg_channel_3d/` | IMEX Normal Termination + report | `*VARI`+`*DTOP` 起伏山脊；非水平层 |
 | CMG 断层通道验证 | MVP | `validation/cmg_fault_3d/` | IMEX Normal Termination + report | `*FAULT` throw + `*TRANSI` 封闭/窗；狗腿通道 |
+| 实验室 30 cm 层理孪生 | MVP | `validation/lab_box_30cm/` + `pipeline.lab_horizon` | `tests/test_lab_horizon.py` | 0.30 m 满砂；山=模具层理；平顶；15/30/50 同函数采样 |
+| 页岩油裂缝孪生 | MVP | `build_shale_fracture_twin` / `validation/shale_frac/` | `tests/test_shale_fracture.py` | 水平井多段射孔 + 垂直高渗条带 + 衰竭；同一套自动反演 |
 | 合成断层孪生 | MVP | `pipeline.build_faulted_channel_twin` | `tests/test_shape_discovery.py` | 低渗断层带 + 偏移通道 |
 | 测点推荐 (DOE) | MVP | `pipeline.recommend_probes` / `place_uniform_probes` | `tests/test_probe_design.py` | maximin / variance / hybrid；exclusive p/S；无业务 YAML 开关 |
 | CMG 虚拟测点扫 N | MVP | `validation/cmg_probe_study/` | PROBE_STUDY.md | 从 .out 全场 p/S 虚拟抽样；不改 CMG 井网 |

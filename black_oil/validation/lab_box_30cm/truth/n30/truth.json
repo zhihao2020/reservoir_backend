@@ -1,0 +1,42 @@
+{
+  "box_m": [
+    0.3,
+    0.3,
+    0.3
+  ],
+  "grid": {
+    "nx": 30,
+    "ny": 30,
+    "nz": 30,
+    "dx_m": 0.01,
+    "dy_m": 0.01,
+    "dz_m": 0.01
+  },
+  "horizon": {
+    "z_min_m": 0.09336311853048035,
+    "z_max_m": 0.18934838759257266,
+    "relief_m": 0.09598526906209232,
+    "note": "Flat lid. Mountain is draped k only; no DTOP, no NULL."
+  },
+  "k_m2": {
+    "background": 1e-12,
+    "highk": 1e-11,
+    "fault": 1e-18
+  },
+  "phi": 0.28000000000000014,
+  "include_fault": true,
+  "n_highk": 828,
+  "n_fault": 1200,
+  "wells": {
+    "INJ": {
+      "x": 0.03,
+      "y": 0.03,
+      "z": 0.14585456850754336
+    },
+    "PROD": {
+      "x": 0.27,
+      "y": 0.27,
+      "z": 0.12105063539789479
+    }
+  }
+}

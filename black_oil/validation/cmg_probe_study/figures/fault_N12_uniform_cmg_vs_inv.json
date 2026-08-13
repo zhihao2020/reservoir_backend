@@ -1,0 +1,12 @@
+{
+  "case": "cmg_faulted_dogleg",
+  "n_total": 12,
+  "n_p": 6,
+  "n_s": 6,
+  "layout": "uniform",
+  "sw_rel_l2": 0.37175868543985524,
+  "delta_sw_dice": 0.5555555555555556,
+  "k_channel_over_out": 1.013273598903935,
+  "t_last": 791.0,
+  "figure": "fault_N12_uniform_cmg_vs_inv.png"
+}

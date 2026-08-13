@@ -1,0 +1,12 @@
+{
+  "case": "cmg_undulating_channel",
+  "n_total": 8,
+  "n_p": 4,
+  "n_s": 4,
+  "layout": "uniform",
+  "sw_rel_l2": 0.32701280185562426,
+  "delta_sw_dice": 0.624,
+  "k_channel_over_out": 0.9439215967458546,
+  "t_last": 791.0,
+  "figure": "channel_N8_uniform_cmg_vs_inv.png"
+}

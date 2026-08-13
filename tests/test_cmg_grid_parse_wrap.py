@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from validation.cmg_io.grid_parse import _parse_plane_block
+import sys
+from pathlib import Path
+
+_VAL = Path(__file__).resolve().parents[1] / "black_oil" / "validation"
+if str(_VAL) not in sys.path:
+    sys.path.insert(0, str(_VAL))
+from cmg_io.grid_parse import _parse_plane_block
 
 
 def test_wrapped_i_columns_assign_correct_indices() -> None:

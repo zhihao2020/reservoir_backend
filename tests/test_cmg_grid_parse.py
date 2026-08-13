@@ -7,9 +7,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from validation.cmg_io.grid_parse import parse_grid_series
+import sys
 
-CHANNEL_OUT = Path("validation/cmg_channel_3d/mxspr006_channel.out")
+_VAL = Path(__file__).resolve().parents[1] / "black_oil" / "validation"
+if str(_VAL) not in sys.path:
+    sys.path.insert(0, str(_VAL))
+from cmg_io.grid_parse import parse_grid_series
+
+CHANNEL_OUT = _VAL / "cmg_channel_3d" / "mxspr006_channel.out"
 
 
 @pytest.mark.skipif(not CHANNEL_OUT.is_file(), reason="CMG channel .out not present")

@@ -64,18 +64,14 @@ disc = run_shape_discovery(twin.mesh, twin.samples)
 print(mask_overlap(disc.active_mask, twin.true_channel_mask))
 ```
 
-## CMG 三维验证
+## 两套软件 / 两篇论文
 
-| 算例 | 文档 | 要点 |
-|------|------|------|
-| 起伏山脊通道 | [validation/cmg_channel_3d](validation/cmg_channel_3d/README.md) | `*VARI` + `*DTOP` 起伏 |
-| 断层 + 偏移通道 | [validation/cmg_fault_3d](validation/cmg_fault_3d/README.md) | `*FAULT` throw + `*TRANSI` 封闭/泄漏窗 |
+| 目录 | 内容 |
+|------|------|
+| [black_oil/](black_oil/README.md) | 黑油水驱反演 + 论文 A + IMEX 尺子 |
+| [shale_oil/](shale_oil/README.md) | 页岩油/裂缝反演 + 论文 B（独立主张） |
 
-```bash
-python validation/cmg_channel_3d/run_imex_and_validate.py --synthetic
-python validation/cmg_fault_3d/run_imex_and_validate.py --synthetic
-python validation/cmg_fault_3d/run_imex_and_validate.py --execute   # 需 CMG 许可证
-```
+内核库 `reservoir_backend/` 供黑油主线使用；页岩油将换参数化与正演，不要混用 mxspr006 海水驱当页岩尺子。
 
 ## 文档
 
@@ -86,7 +82,8 @@ python validation/cmg_fault_3d/run_imex_and_validate.py --execute   # 需 CMG �
 | [docs/API_AND_DATA_CONTRACT.md](docs/API_AND_DATA_CONTRACT.md) | 契约 |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | 测试 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 限制与排除项 |
-| [validation/cmg_channel_3d/README.md](validation/cmg_channel_3d/README.md) | CMG 通道孪生 |
+| [black_oil/README.md](black_oil/README.md) | 黑油论文 A 与 IMEX 验证 |
+| [shale_oil/README.md](shale_oil/README.md) | 页岩论文 B 与裂缝孪生 |
 
 ## 合规
 

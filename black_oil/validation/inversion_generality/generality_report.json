@@ -1,0 +1,386 @@
+{
+  "knobs": {
+    "k_prior_m2": 1e-13,
+    "corr_len_cells": 3.0,
+    "val_frac": 0.3,
+    "split_seed": 0,
+    "n": 12,
+    "ne": 8,
+    "na": 2
+  },
+  "note": "Validation scores are hold-out probes. Well p error is train-set hard constraint.",
+  "results": [
+    {
+      "twin": "channel",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 0,
+      "n_cells": 480,
+      "elapsed_s": 7.6,
+      "val_names": [],
+      "train_probe_names": [],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": NaN,
+        "val_sw_rmse": NaN,
+        "n_val_p_obs": 0.0,
+        "n_val_s_obs": 0.0,
+        "n_val_p_probes": 0.0,
+        "n_val_s_probes": 0.0
+      },
+      "k_ch_over_out": 1.0047474922487576,
+      "p_field_rel_l2": 0.01593879577707227,
+      "sw_field_rel_l2": 1.255103922982246,
+      "delta_sw_dice": {
+        "dice": 0.12698412698412698,
+        "precision": 0.07174887892376682,
+        "recall": 0.5517241379310345,
+        "intersection": 16.0
+      },
+      "high_sw_on_true_highk": 0.07623318385650224
+    },
+    {
+      "twin": "channel",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 8,
+      "n_cells": 480,
+      "elapsed_s": 8.7,
+      "val_names": [
+        "P4",
+        "S3"
+      ],
+      "train_probe_names": [
+        "P1",
+        "P2",
+        "P3",
+        "S1",
+        "S2",
+        "S4"
+      ],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": 88775.82945007799,
+        "val_sw_rmse": 0.33427958858491164,
+        "n_val_p_obs": 4.0,
+        "n_val_s_obs": 4.0,
+        "n_val_p_probes": 1.0,
+        "n_val_s_probes": 1.0
+      },
+      "k_ch_over_out": 1.104664554572939,
+      "p_field_rel_l2": 0.024659202740883814,
+      "sw_field_rel_l2": 0.6223481317641144,
+      "delta_sw_dice": {
+        "dice": 0.13333333333333333,
+        "precision": 0.08264462809917356,
+        "recall": 0.3448275862068966,
+        "intersection": 10.0
+      },
+      "high_sw_on_true_highk": 0.08264462809917356
+    },
+    {
+      "twin": "channel",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 16,
+      "n_cells": 480,
+      "elapsed_s": 8.6,
+      "val_names": [
+        "P1",
+        "P7",
+        "S5",
+        "S6"
+      ],
+      "train_probe_names": [
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P8",
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S7",
+        "S8"
+      ],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": 60897.535580593656,
+        "val_sw_rmse": 0.06436370629432635,
+        "n_val_p_obs": 8.0,
+        "n_val_s_obs": 8.0,
+        "n_val_p_probes": 2.0,
+        "n_val_s_probes": 2.0
+      },
+      "k_ch_over_out": 1.0642079574371577,
+      "p_field_rel_l2": 0.017822306183825482,
+      "sw_field_rel_l2": 0.4800339209637703,
+      "delta_sw_dice": {
+        "dice": 0.16363636363636364,
+        "precision": 0.1111111111111111,
+        "recall": 0.3103448275862069,
+        "intersection": 9.0
+      },
+      "high_sw_on_true_highk": 0.09876543209876543
+    },
+    {
+      "twin": "fault",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 0,
+      "n_cells": 480,
+      "elapsed_s": 8.1,
+      "val_names": [],
+      "train_probe_names": [],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": NaN,
+        "val_sw_rmse": NaN,
+        "n_val_p_obs": 0.0,
+        "n_val_s_obs": 0.0,
+        "n_val_p_probes": 0.0,
+        "n_val_s_probes": 0.0
+      },
+      "k_ch_over_out": 0.9901313469131106,
+      "p_field_rel_l2": 0.03120982056984778,
+      "sw_field_rel_l2": 1.1913640556520662,
+      "delta_sw_dice": {
+        "dice": 0.24390243902439024,
+        "precision": 0.15418502202643172,
+        "recall": 0.5833333333333334,
+        "intersection": 35.0
+      },
+      "high_sw_on_true_highk": 0.15859030837004406
+    },
+    {
+      "twin": "fault",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 8,
+      "n_cells": 480,
+      "elapsed_s": 8.5,
+      "val_names": [
+        "P4",
+        "S3"
+      ],
+      "train_probe_names": [
+        "P1",
+        "P2",
+        "P3",
+        "S1",
+        "S2",
+        "S4"
+      ],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": 37543.82672765437,
+        "val_sw_rmse": 0.29882859727354305,
+        "n_val_p_obs": 4.0,
+        "n_val_s_obs": 4.0,
+        "n_val_p_probes": 1.0,
+        "n_val_s_probes": 1.0
+      },
+      "k_ch_over_out": 1.1698412608702977,
+      "p_field_rel_l2": 0.043096393502652416,
+      "sw_field_rel_l2": 0.6392671562282025,
+      "delta_sw_dice": {
+        "dice": 0.27522935779816515,
+        "precision": 0.189873417721519,
+        "recall": 0.5,
+        "intersection": 30.0
+      },
+      "high_sw_on_true_highk": 0.189873417721519
+    },
+    {
+      "twin": "fault",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 16,
+      "n_cells": 480,
+      "elapsed_s": 9.0,
+      "val_names": [
+        "P1",
+        "P7",
+        "S5",
+        "S6"
+      ],
+      "train_probe_names": [
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P8",
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S7",
+        "S8"
+      ],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": 35029.435284709456,
+        "val_sw_rmse": 0.09080254038768322,
+        "n_val_p_obs": 8.0,
+        "n_val_s_obs": 8.0,
+        "n_val_p_probes": 2.0,
+        "n_val_s_probes": 2.0
+      },
+      "k_ch_over_out": 1.3768530860015997,
+      "p_field_rel_l2": 0.025814830943381682,
+      "sw_field_rel_l2": 0.4657712832914173,
+      "delta_sw_dice": {
+        "dice": 0.3373493975903614,
+        "precision": 0.2641509433962264,
+        "recall": 0.4666666666666667,
+        "intersection": 28.0
+      },
+      "high_sw_on_true_highk": 0.27358490566037735
+    },
+    {
+      "twin": "lab_drape",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 0,
+      "n_cells": 1728,
+      "elapsed_s": 28.4,
+      "val_names": [],
+      "train_probe_names": [],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": NaN,
+        "val_sw_rmse": NaN,
+        "n_val_p_obs": 0.0,
+        "n_val_s_obs": 0.0,
+        "n_val_p_probes": 0.0,
+        "n_val_s_probes": 0.0
+      },
+      "k_ch_over_out": 1.002165286073249,
+      "p_field_rel_l2": 0.01748072669111125,
+      "sw_field_rel_l2": 1.4868849801997006,
+      "delta_sw_dice": {
+        "dice": 0.06130268199233716,
+        "precision": 0.03260869565217391,
+        "recall": 0.5106382978723404,
+        "intersection": 24.0
+      },
+      "high_sw_on_true_highk": 0.036684782608695655
+    },
+    {
+      "twin": "lab_drape",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 8,
+      "n_cells": 1728,
+      "elapsed_s": 25.7,
+      "val_names": [
+        "P4",
+        "S3"
+      ],
+      "train_probe_names": [
+        "P1",
+        "P2",
+        "P3",
+        "S1",
+        "S2",
+        "S4"
+      ],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": 40171.05105610718,
+        "val_sw_rmse": 0.33660052995950174,
+        "n_val_p_obs": 4.0,
+        "n_val_s_obs": 4.0,
+        "n_val_p_probes": 1.0,
+        "n_val_s_probes": 1.0
+      },
+      "k_ch_over_out": 1.7712035553261625,
+      "p_field_rel_l2": 0.014701403429627807,
+      "sw_field_rel_l2": 1.0833371834606786,
+      "delta_sw_dice": {
+        "dice": 0.06636155606407322,
+        "precision": 0.03506650544135429,
+        "recall": 0.6170212765957447,
+        "intersection": 29.0
+      },
+      "high_sw_on_true_highk": 0.037484885126964934
+    },
+    {
+      "twin": "lab_drape",
+      "method": "point_first",
+      "n_grid": 12,
+      "n_probes": 16,
+      "n_cells": 1728,
+      "elapsed_s": 27.3,
+      "val_names": [
+        "P1",
+        "P7",
+        "S3",
+        "S6"
+      ],
+      "train_probe_names": [
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P8",
+        "S1",
+        "S2",
+        "S4",
+        "S5",
+        "S7",
+        "S8"
+      ],
+      "well_pressure_abs_err_Pa": {
+        "INJ": 0.0,
+        "PROD": 0.0
+      },
+      "holdout": {
+        "val_p_rmse_Pa": 11709.823498286692,
+        "val_sw_rmse": 0.19791757000332838,
+        "n_val_p_obs": 8.0,
+        "n_val_s_obs": 8.0,
+        "n_val_p_probes": 2.0,
+        "n_val_s_probes": 2.0
+      },
+      "k_ch_over_out": 1.6816464930955488,
+      "p_field_rel_l2": 0.02404602849622827,
+      "sw_field_rel_l2": 0.7589267469685107,
+      "delta_sw_dice": {
+        "dice": 0.06534422403733955,
+        "precision": 0.0345679012345679,
+        "recall": 0.5957446808510638,
+        "intersection": 28.0
+      },
+      "high_sw_on_true_highk": 0.03827160493827161
+    }
+  ]
+}

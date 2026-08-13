@@ -18,6 +18,8 @@
 
 入口：`run_time_slice` → `run_point_first_slice`（`mode=grid_invert` 为旧全网反演）。
 
+多时刻高精度：`run_time_series(assimilate_k=True)` 走**自动堆叠反演**（点优先 / 通量增强等多个物理成员，按留出测点加权）。无通道/层理模板。6 维通道管仅 `k_prior="channel_tube"`。
+
 空间插值规则内置（**无 YAML/CLI method 开关**）：`N_MIN_KRIGING=8`，`CV_MARGIN=0.05`；压力场仍走 TPFA，不走本模块。
 
 测点推荐（可选 API）：`recommend_probes` / `place_uniform_probes`（均匀或自适应 hybrid DOE）；验证见 `validation/cmg_probe_study`（CMG 虚拟测点扫 N，不改 .dat）。

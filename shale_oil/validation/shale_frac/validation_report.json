@@ -1,0 +1,22 @@
+{
+  "case": "shale_horizontal_frac_strips",
+  "n_cells": 600,
+  "n_frac_cells": 80,
+  "n_completions": 6,
+  "truth_k_contrast": 100000.0,
+  "well_pressure_abs_err_Pa": 0.0,
+  "k_ratio_point_first": 0.9919941561846283,
+  "k_ratio_automatic": 0.9472481403675764,
+  "stack_weights": {
+    "point_first": 0.33076413891281653,
+    "flux_mid": 0.33400141670016276,
+    "flux_strong": 0.33523444438702066
+  },
+  "notes": [
+    "automatic inversion: stacked physics members, weights from hold-out probes",
+    "members: point_first, flux_mid, flux_strong; n_times=4",
+    "indicator mean=0.197",
+    "hold-out scores flux_mid=0.124, flux_strong=0.124, point_first=0.125",
+    "stack weights flux_mid=0.33, flux_strong=0.34, point_first=0.33"
+  ]
+}
