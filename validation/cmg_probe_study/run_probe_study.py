@@ -159,7 +159,17 @@ def build_samples(
         if not np.isfinite(sw_prod):
             sw_prod = 0.2
 
-        well_pressure = {"INJ": p_inj, "PROD": p_prod}
+        # pin wells to CMG **grid-block** pressure at the well cell (same
+        # sampling as observer_p). BHP is wellbore, not the field we compare.
+        gi = int(wi["i"]) - 1
+        gj = int(wi["j"]) - 1
+        gk = int(ik) - 1
+        pi = int(wp["i"]) - 1
+        pj = int(wp["j"]) - 1
+        pk_ = int(pk) - 1
+        p_inj_blk = float(pres[gk, gj, gi]) if np.isfinite(pres[gk, gj, gi]) else p_inj
+        p_prod_blk = float(pres[pk_, pj, pi]) if np.isfinite(pres[pk_, pj, pi]) else p_prod
+        well_pressure = {"INJ": p_inj_blk, "PROD": p_prod_blk}
         well_sat = {
             "INJ": (sw_inj, max(0.0, 1.0 - sw_inj), 0.0),
             "PROD": (sw_prod, max(0.0, 1.0 - sw_prod), 0.0),
@@ -195,7 +205,7 @@ def build_samples(
                 time=float(t),
                 well_pressure=well_pressure,
                 well_saturation=well_sat,
-                boundary=BoundaryConditions(pressure={"left": p_inj, "right": p_prod}),
+                boundary=BoundaryConditions(),
                 well_rate={"INJ": float(wr["INJ"]), "PROD": float(wr["PROD"])},
             )
         )

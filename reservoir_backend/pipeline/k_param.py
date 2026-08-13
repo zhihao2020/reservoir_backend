@@ -175,9 +175,11 @@ def boost_theta_from_indicator(
     # positive alignment → raise channel / slightly lower background
     s = float(strength) * max(corr, 0.0)
     gap = max(float(th[1] - th[0]), 0.5)
-    th[1] = th[1] + s * 0.6 * gap
-    th[0] = th[0] - s * 0.15 * gap
-    return enforce_theta_contrast(th, min_log_ratio=1.5)
+    th[1] = th[1] + s * 0.85 * gap
+    th[0] = th[0] - s * 0.18 * gap
+    # aligned ΔSw corridor should support large channel/matrix contrast
+    min_lr = 2.7 if corr > 0.15 else 1.5  # ~15× vs ~4.5×
+    return enforce_theta_contrast(th, min_log_ratio=min_lr)
 
 
 def fit_corridor_to_indicator(

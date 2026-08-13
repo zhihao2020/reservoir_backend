@@ -224,6 +224,13 @@ def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
             "PROD": (sw_prod, max(0.0, 1.0 - sw_prod), 0.0),
         }
         pres = nearest_p(t)
+        if pres is not None:
+            gi, gj, gk = int(wi["i"]) - 1, int(wi["j"]) - 1, int(ik) - 1
+            pi, pj, pk_ = int(wp["i"]) - 1, int(wp["j"]) - 1, int(pk) - 1
+            if np.isfinite(pres[gk, gj, gi]):
+                well_pressure["INJ"] = float(pres[gk, gj, gi])
+            if np.isfinite(pres[pk_, pj, pi]):
+                well_pressure["PROD"] = float(pres[pk_, pj, pi])
         for name, role in mesh.well_role.items():
             if role not in ("observer_p", "observer_s"):
                 continue
@@ -243,7 +250,7 @@ def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
                 time=float(t),
                 well_pressure=well_pressure,
                 well_saturation=well_sat,
-                boundary=BoundaryConditions(pressure={"left": p_inj, "right": p_prod}),
+                boundary=BoundaryConditions(),
                 well_rate={"INJ": float(wr["INJ"]), "PROD": float(wr["PROD"])},
             )
         )

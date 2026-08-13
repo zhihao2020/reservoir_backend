@@ -4,8 +4,8 @@
 
 | figure | case | N | notes |
 |--------|------|---|-------|
-| `channel_N8_uniform_cmg_vs_inv.png` | cmg_undulating_channel | 8 | SwL2=0.337, Dice=0.608, k=6.93 |
-| `channel_N12_uniform_cmg_vs_inv.png` | cmg_undulating_channel | 12 | SwL2=0.416, Dice=0.656, k=6.30 |
+| `channel_N8_uniform_cmg_vs_inv.png` | cmg_undulating_channel | 8 | SwL2=0.326, Dice=0.592, k=8.55 |
+| `channel_N12_uniform_cmg_vs_inv.png` | cmg_undulating_channel | 12 | SwL2=0.424, Dice=0.592, k=6.86 |
 
 ## 读图
 

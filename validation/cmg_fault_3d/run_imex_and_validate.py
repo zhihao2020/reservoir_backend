@@ -173,7 +173,7 @@ def samples_from_out(meta: dict, out_path: Path) -> list[SensorSample]:
                     "INJ": (sw_inj, max(0.0, 1.0 - sw_inj), 0.0),
                     "PROD": (sw_prod, max(0.0, 1.0 - sw_prod), 0.0),
                 },
-                boundary=BoundaryConditions(pressure={"left": p_inj, "right": p_prod}),
+                boundary=BoundaryConditions(),
             )
         )
     return samples

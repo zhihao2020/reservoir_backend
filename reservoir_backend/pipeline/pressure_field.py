@@ -18,6 +18,8 @@ def reconstruct_pressure(
     *,
     permeability_m2: float | NDArray[np.float64] = 1.0e-13,
     viscosity_pa_s: float = 1.0e-3,
+    oil_viscosity_pa_s: float = 5.0e-3,
+    saturation: NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.float64], list[str]]:
     """Step 2: well/observer P + boundary P/flux → full-grid pressure.
 
@@ -26,6 +28,9 @@ def reconstruct_pressure(
 
     Face Dirichlet pressures and optional Neumann fluxes (m^3/s into domain)
     use the TPFA face boundary treatment. Permeability forms transmissibility.
+
+    When ``saturation`` is given, transmissibility uses two-phase total
+    mobility ``λ_t(Sw)`` (k_eff = k · λ_t · μ_w) instead of single-phase μ.
     """
     notes: list[str] = [
         "pressure reconstruction uses permeability prior for TPFA transmissibility",
@@ -56,13 +61,29 @@ def reconstruct_pressure(
     if neumann:
         notes.append(f"neumann flux faces={sorted(neumann.keys())}")
 
+    k_use: float | NDArray[np.float64] = permeability_m2
+    if saturation is not None:
+        from reservoir_backend.pipeline.fractional_flow import total_mobility
+
+        sw = np.asarray(saturation, dtype=float)
+        if sw.shape == grid.shape:
+            lam = total_mobility(
+                sw, mu_w=viscosity_pa_s, mu_o=oil_viscosity_pa_s
+            )
+            k_arr = np.asarray(permeability_m2, dtype=float)
+            if k_arr.ndim == 0:
+                k_arr = np.full(grid.shape, float(k_arr))
+            # T ~ k/μ_w → T ~ (k λ_t μ_w)/μ_w = k λ_t
+            k_use = np.clip(k_arr * lam * float(viscosity_pa_s), 1.0e-22, 1.0e-8)
+            notes.append("TPFA uses two-phase total mobility λ_t(Sw)")
+
     if grid.nx > 1 and grid.ny > 1 and grid.nz > 1:
         try:
             result = solve_steady_state_pressure_3d(
                 grid=grid,
-                kx=permeability_m2,
-                ky=permeability_m2,
-                kz=permeability_m2,
+                kx=k_use,
+                ky=k_use,
+                kz=k_use,
                 mu=viscosity_pa_s,
                 dirichlet_boundaries=boundaries or None,
                 wells=rate_wells or None,

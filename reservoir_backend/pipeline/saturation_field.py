@@ -13,6 +13,7 @@ def reconstruct_saturation(
     sample: SensorSample,
     *,
     pressure: NDArray[np.float64] | None = None,
+    permeability_m2: float | NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], list[str]]:
     """Step 3: well saturations (+ boundary flux cues) → full-grid sw, so, sg.
 
@@ -23,6 +24,8 @@ def reconstruct_saturation(
     - Producing face flux (negative / outflow) adds a low-sw boundary anchor.
     - If ``pressure`` is provided, along-gradient distance soft-anisotropy
       improves interpolation toward flow paths (still sensor-driven, not full transport).
+    - If ``permeability_m2`` is a field, high-k corridors shrink interpolation
+      distance (water prefers the inverted channel).
     """
     notes = [
         "saturation reconstruction uses IDW from well sensors (+ optional flux anchors)",
@@ -117,6 +120,15 @@ def reconstruct_saturation(
     power = 2.0
     eps = 1.0e-12
     p = np.asarray(pressure, dtype=float)
+    k_arr = None
+    if permeability_m2 is not None:
+        k_try = np.asarray(permeability_m2, dtype=float)
+        if k_try.shape == grid.shape:
+            logk = np.log(np.clip(k_try, 1.0e-30, None))
+            lo = float(np.percentile(logk, 20))
+            hi = float(np.percentile(logk, 80))
+            k_arr = np.clip((logk - lo) / max(hi - lo, 1.0e-9), 0.0, 1.0)
+            notes.append("IDW also shrinks distance in high-k corridor")
 
     for idx in range(mesh.n_cells):
         i = int(mesh.i[idx])
@@ -138,7 +150,11 @@ def reconstruct_saturation(
                 ux, uy, uz = gi / gnorm, gj / gnorm, gk / gnorm
                 par = dx * ux + dy * uy + dz * uz
                 per2 = max(0.0, dist * dist - par * par)
-                dist = np.sqrt(0.35 * par * par + 1.0 * per2)
+                # flow-aligned + high-k shortcut
+                kfac = 1.0
+                if k_arr is not None:
+                    kfac = 1.0 - 0.55 * float(k_arr[k, j, i])
+                dist = kfac * np.sqrt(0.28 * par * par + 1.15 * per2)
             if dist < eps:
                 weights = [1.0]
                 sws, sos, sgs = [asw], [aso], [asg]

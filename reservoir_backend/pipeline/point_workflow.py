@@ -285,11 +285,15 @@ def blend_recon_transport_sw(
     follow the channel — improves ΔSw Dice without abandoning probe recon.
     """
     n_s = max(int(n_s_hard), 0)
-    # validated recon-led weight (CMG channel N=8 ~0.34 Sw L2)
-    recon_w = float(min(0.90, 0.35 + 0.14 * n_s))
+    if lock_k:
+        # closed-box p is now physical; keep recon majority so sparse
+        # probes still set the Sw level, transport only shapes the tongue
+        recon_w = float(min(0.78, 0.42 + 0.08 * n_s))
+    else:
+        recon_w = float(min(0.90, 0.35 + 0.14 * n_s))
     recon = np.asarray(sw_recon, dtype=float)
     trans = np.asarray(sw_transport, dtype=float)
-    _ = (k_field, lock_k)
+    _ = k_field
     sw = recon_w * recon + (1.0 - recon_w) * trans
     return sw, recon_w
 
@@ -395,11 +399,13 @@ def run_point_first_slice(
             permeability_prior_m2 if lock_permeability else k_work
         )
         # --- full-field pressure from pressure sensors only ---
+        sw_for_mob = None if previous is None else previous.sw
         pressure, p_notes = reconstruct_pressure(
             mesh,
             sample_p,
             permeability_m2=k_phys,
             viscosity_pa_s=viscosity_pa_s,
+            saturation=sw_for_mob,
         )
         p_notes = [
             "step2: pressure field from pressure-hard points only "
@@ -408,7 +414,10 @@ def run_point_first_slice(
 
         # --- full-field saturation from saturation sensors only ---
         sw, so, sg, s_notes = reconstruct_saturation(
-            mesh, sample_s, pressure=pressure
+            mesh,
+            sample_s,
+            pressure=pressure,
+            permeability_m2=k_phys if lock_permeability else None,
         )
         s_notes = [
             "step3: saturation field from saturation-hard points only "

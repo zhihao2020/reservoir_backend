@@ -30,6 +30,7 @@ from reservoir_backend.pipeline.k_param import (
     boost_theta_from_indicator,
     default_k_param_prior,
     enforce_k_channel_contrast,
+    enforce_theta_contrast,
     expand_k_from_params,
     fit_corridor_to_indicator,
     project_k_to_params,
@@ -95,6 +96,9 @@ def run_sensor_inversion(
     notes: list[str] = [
         "greenfield: warm corridor → param ES-MDA → corridor refit → hard series",
     ]
+    samples, closed_note = _closed_reservoir_samples(mesh, samples)
+    if closed_note:
+        notes.append(closed_note)
 
     # --- 0) warm-start corridor geometry from a cheap draft (prior k) ---
     if theta0 is None:
@@ -152,26 +156,15 @@ def run_sensor_inversion(
         )
         notes.extend(n2)
 
+    # parametric space: keep a strong channel/matrix gap (linear ≥15×)
+    theta_mean = enforce_theta_contrast(theta_mean, min_log_ratio=float(np.log(15.0)))
+    k_mean = expand_k_from_params(mesh, theta_mean)
     k_mean, theta_mean, ratio0 = enforce_k_channel_contrast(
-        mesh, k_mean, theta_mean, min_ratio=2.5
+        mesh, k_mean, theta_mean, min_ratio=8.0
     )
     notes.append(f"k contrast guard ratio≈{ratio0:.2f}")
 
-    # count exclusive saturation observers only (not injector/producer S)
-    def _n_exclusive_s(sample: SensorSample) -> int:
-        n = 0
-        for name in sample.well_saturation or {}:
-            role = str(mesh.well_role.get(name, "")).lower()
-            if role in ("observer_s", "observer"):
-                n += 1
-        return n
-
-    n_s_excl = max((_n_exclusive_s(s) for s in samples), default=0)
-    # sparse exclusive S: soft-lock + soft-wide Sw polish (best N=8 Dice/L2)
-    # denser exclusive S: hard-lock parametric k (best N=12 recon-led ΔSw)
-    sparse_s = n_s_excl < 6
-
-    # --- 3) hard series ---
+    # --- 3) hard series on locked parametric k ---
     history = _hard_series(
         mesh,
         samples,
@@ -179,8 +172,7 @@ def run_sensor_inversion(
         phi_work=phi0,
         viscosity_pa_s=viscosity_pa_s,
         n_k_iterations=n_k_iterations,
-        lock_permeability=not sparse_s,
-        k_anchor=0.88,
+        lock_permeability=True,
     )
 
     # --- 4) one post-series corridor polish if multi-time history improved geometry ---
@@ -195,13 +187,13 @@ def run_sensor_inversion(
         if (np.isfinite(align_post) and align2 > float(align_post) + 0.02) or (
             not np.isfinite(align_post) and align2 > 0.05
         ):
-            th2 = boost_theta_from_indicator(mesh, th2, ind_f, strength=0.75)
+            th2 = boost_theta_from_indicator(mesh, th2, ind_f, strength=0.85)
             k2 = expand_k_from_params(mesh, th2)
             k2 = enhance_permeability_from_indicator(
-                k2, ind_f, strength=0.25, asymmetric=True
+                k2, ind_f, strength=0.30, asymmetric=True
             )
             k2, th2, ratio2 = enforce_k_channel_contrast(
-                mesh, k2, th2, min_ratio=2.5
+                mesh, k2, th2, min_ratio=8.0
             )
             history = _hard_series(
                 mesh,
@@ -210,8 +202,7 @@ def run_sensor_inversion(
                 phi_work=phi0,
                 viscosity_pa_s=viscosity_pa_s,
                 n_k_iterations=n_k_iterations,
-                lock_permeability=not sparse_s,
-                k_anchor=0.88,
+                lock_permeability=True,
             )
             k_mean, theta_mean = k2, th2
             notes.append(
@@ -226,31 +217,28 @@ def run_sensor_inversion(
     for h in history:
         h.notes = list(h.notes) + notes[:12]
         h.permeability = np.clip(
-            0.95 * k_mean + 0.05 * np.asarray(h.permeability, dtype=float),
+            0.97 * k_mean + 0.03 * np.asarray(h.permeability, dtype=float),
             1.0e-18,
             1.0e-10,
         )
         h.permeability, _, _ = enforce_k_channel_contrast(
-            mesh, h.permeability, theta_mean, min_ratio=2.0
+            mesh, h.permeability, theta_mean, min_ratio=8.0
         )
 
-    # --- 5) Sw polish: soft-wide k for sparse; dense keeps recon-led series ---
-    if len(history) >= 2 and sparse_s:
-        k_sw = _k_for_sw_transport(mesh, theta_mean, k_mean)
+    # --- 5) Sw polish on the same parametric k (no contrast-killing soft-wide) ---
+    if len(history) >= 2:
         history = _sw_polish_series(
             mesh,
             samples,
             history,
-            k_fixed=k_sw,
+            k_fixed=k_mean,
             phi=phi0,
             viscosity_pa_s=viscosity_pa_s,
-            lock_k=False,
+            lock_k=True,
         )
         for h in history:
             h.permeability = np.asarray(k_mean, dtype=float).copy()
-        notes.append("Sw polish on soft-wide parametric k (sparse S net)")
-    elif len(history) >= 2:
-        notes.append("Sw polish skipped (dense S net; lock-k recon series)")
+        notes.append("fixed-k Sw polish (parametric k, lock_k blend)")
 
     return InversionResult(
         history=history,
@@ -260,6 +248,68 @@ def run_sensor_inversion(
         observation_nrmse=nrmse,
         notes=notes,
     )
+
+
+def _closed_reservoir_samples(
+    mesh: MeshBundle,
+    samples: list[SensorSample],
+) -> tuple[list[SensorSample], str]:
+    """Drop face Dirichlet that only copies INJ/PROD BHP (closed-box default).
+
+    Does not invent aquifer data. Real user face pressures that differ from
+    well BHP are kept.
+    """
+    inj_p: float | None = None
+    prod_p: float | None = None
+    for name, role in mesh.well_role.items():
+        if not samples:
+            break
+        p0 = samples[0].well_pressure or {}
+        if role == "injector" and name in p0:
+            inj_p = float(p0[name])
+        if role == "producer" and name in p0:
+            prod_p = float(p0[name])
+    if inj_p is None or prod_p is None:
+        return list(samples), ""
+
+    def _near(a: float, b: float) -> bool:
+        return abs(float(a) - float(b)) <= max(50.0, 1.0e-4 * max(abs(b), 1.0))
+
+    stripped = 0
+    out: list[SensorSample] = []
+    for s in samples:
+        faces = dict(s.boundary.pressure or {})
+        pairs = (("left", "right"), ("front", "back"))
+        for a, b in pairs:
+            if a not in faces or b not in faces:
+                continue
+            va, vb = float(faces[a]), float(faces[b])
+            mimic = (_near(va, inj_p) and _near(vb, prod_p)) or (
+                _near(va, prod_p) and _near(vb, inj_p)
+            )
+            if mimic:
+                faces.pop(a, None)
+                faces.pop(b, None)
+                stripped += 1
+        if faces == (s.boundary.pressure or {}):
+            out.append(s)
+            continue
+        from reservoir_backend.pipeline.state import BoundaryConditions
+
+        s2 = SensorSample(
+            time=s.time,
+            well_pressure=dict(s.well_pressure or {}),
+            well_saturation=dict(s.well_saturation or {}),
+            well_rate=dict(s.well_rate or {}),
+            boundary=BoundaryConditions(pressure=faces, flux=dict(s.boundary.flux or {})),
+        )
+        out.append(s2)
+    note = (
+        f"closed-reservoir: stripped well-mimic face Dirichlet on {stripped} samples"
+        if stripped
+        else ""
+    )
+    return out, note
 
 
 def _sw_polish_series(
@@ -294,9 +344,15 @@ def _sw_polish_series(
         sample_p = filter_sample_for_pressure(sample, mesh)
         sample_s = filter_sample_for_saturation(sample, mesh)
         p, _ = reconstruct_pressure(
-            mesh, sample_p, permeability_m2=k_fixed, viscosity_pa_s=viscosity_pa_s
+            mesh,
+            sample_p,
+            permeability_m2=k_fixed,
+            viscosity_pa_s=viscosity_pa_s,
+            saturation=None if prev is None else prev.sw,
         )
-        sw, so, sg, _ = reconstruct_saturation(mesh, sample_s, pressure=p)
+        sw, so, sg, _ = reconstruct_saturation(
+            mesh, sample_s, pressure=p, permeability_m2=k_fixed
+        )
         if prev is not None and dt is not None and float(dt) > 0.0:
             n_s = len(sample_s.well_saturation)
             n_sub = int(np.clip(round(float(dt) / 4.0) + n_s, 8, 28))
@@ -406,7 +462,7 @@ def _geometry_from_indicator(
         k_mean, ind, strength=0.28, asymmetric=True
     )
     k_mean, theta_mean, ratio = enforce_k_channel_contrast(
-        mesh, k_mean, theta_mean, min_ratio=2.5
+        mesh, k_mean, theta_mean, min_ratio=8.0
     )
     notes.append(
         f"{tag} corridor-fit align={align:.3f} "
@@ -582,6 +638,8 @@ def _forward_member_all_times(
             permeability_m2=k_field,
             viscosity_pa_s=viscosity_pa_s,
             rate_wells=rate_wells[si],
+            saturation=sw_prev,
+            oil_viscosity_pa_s=oil_viscosity_pa_s,
         )
         sample_s = SS(
             time=sample.time,
@@ -590,7 +648,9 @@ def _forward_member_all_times(
             boundary=sample.boundary,
             well_rate={},
         )
-        sw_rec, _, _, _ = reconstruct_saturation(mesh, sample_s, pressure=p)
+        sw_rec, _, _, _ = reconstruct_saturation(
+            mesh, sample_s, pressure=p, permeability_m2=k_field
+        )
         if sw_prev is None or dt is None or dt <= 0.0 or not sample.well_rate:
             sw_state = sw_rec
         else:

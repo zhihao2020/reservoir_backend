@@ -4,9 +4,9 @@
   "n_p": 6,
   "n_s": 6,
   "layout": "uniform",
-  "sw_rel_l2": 0.41606816381664263,
-  "delta_sw_dice": 0.656,
-  "k_channel_over_out": 6.300928944435407,
+  "sw_rel_l2": 0.4244059071337223,
+  "delta_sw_dice": 0.592,
+  "k_channel_over_out": 6.864379197294141,
   "t_last": 791.0,
   "figure": "channel_N12_uniform_cmg_vs_inv.png"
 }

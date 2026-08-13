@@ -660,6 +660,8 @@ def _forward_pressure_cached(
     permeability_m2: float | NDArray[np.float64],
     viscosity_pa_s: float,
     rate_wells: list | None = None,
+    saturation: NDArray[np.float64] | None = None,
+    oil_viscosity_pa_s: float = 5.0e-3,
 ) -> NDArray[np.float64]:
     """TPFA pressure: face BC + rate sources; sensor cells free (soft obs)."""
     grid = mesh.grid
@@ -673,11 +675,24 @@ def _forward_pressure_cached(
     else:
         ref = float(next(iter(boundaries.values()), 0.0))
     wells = rate_wells if rate_wells is not None else _rate_wells_from_sample(mesh, sample)
+    k_use: float | NDArray[np.float64] = permeability_m2
+    if saturation is not None:
+        from reservoir_backend.pipeline.fractional_flow import total_mobility
+
+        sw = np.asarray(saturation, dtype=float)
+        if sw.shape == grid.shape:
+            lam = total_mobility(
+                sw, mu_w=viscosity_pa_s, mu_o=oil_viscosity_pa_s
+            )
+            k_arr = np.asarray(permeability_m2, dtype=float)
+            if k_arr.ndim == 0:
+                k_arr = np.full(grid.shape, float(k_arr))
+            k_use = np.clip(k_arr * lam * float(viscosity_pa_s), 1.0e-22, 1.0e-8)
     result = solve_steady_state_pressure_3d(
         grid=grid,
-        kx=permeability_m2,
-        ky=permeability_m2,
-        kz=permeability_m2,
+        kx=k_use,
+        ky=k_use,
+        kz=k_use,
         mu=viscosity_pa_s,
         dirichlet_boundaries=boundaries or None,
         wells=wells or None,

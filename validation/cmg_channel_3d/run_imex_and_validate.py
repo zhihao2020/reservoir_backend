@@ -197,9 +197,7 @@ def samples_from_out_or_proxy(meta: dict, out_path: Path | None) -> list[SensorS
                             "INJ": (sw_inj, max(0.0, 1.0 - sw_inj), 0.0),
                             "PROD": (sw_prod, max(0.0, 1.0 - sw_prod), 0.0),
                         },
-                        boundary=BoundaryConditions(
-                            pressure={"left": p_inj, "right": p_prod}
-                        ),
+                        boundary=BoundaryConditions(),
                     )
                 )
             samples_from_out_or_proxy._last_sw_series = sw_series  # type: ignore[attr-defined]
@@ -220,7 +218,7 @@ def samples_from_out_or_proxy(meta: dict, out_path: Path | None) -> list[SensorS
                     "INJ": (0.85, 0.15, 0.0),
                     "PROD": (sw_prod, 1.0 - sw_prod, 0.0),
                 },
-                boundary=BoundaryConditions(pressure={"left": p_inj, "right": p_prod}),
+                boundary=BoundaryConditions(),
             )
         )
     return samples
