@@ -46,6 +46,8 @@ from validation.cmg_io.grid_parse import (  # noqa: E402
 HERE = Path(__file__).resolve().parent
 CHANNEL = ROOT / "validation" / "cmg_channel_3d"
 FAULT = ROOT / "validation" / "cmg_fault_3d"
+CHANNEL_FINE = ROOT / "validation" / "cmg_channel_fine"
+FIVESPOT = ROOT / "validation" / "cmg_fivespot"
 
 
 def _mid_k(w: dict) -> int:
@@ -73,16 +75,22 @@ def mesh_with_probes(meta: dict, probe_well_points: list[WellPoint]):
             0.5 * (z_edges[k - 1] + z_edges[k]),
         )
 
-    wi, wp = meta["wells"]["INJ"], meta["wells"]["PROD"]
-    ik, pk = _mid_k(wi), _mid_k(wp)
-    ix, iy, iz = center(wi["i"], wi["j"], ik)
-    px, py, pz = center(wp["i"], wp["j"], pk)
-    wells = [
-        WellPoint("INJ", ix, iy, iz, role="injector"),
-        WellPoint("PROD", px, py, pz, role="producer"),
-        *probe_well_points,
-    ]
-    return build_mesh(bounds, dx, dy, dk, wells=wells), ik, pk
+    wells: list[WellPoint] = []
+    first_inj_k = 1
+    first_prod_k = 1
+    for name, spec in meta["wells"].items():
+        role = str(spec.get("role") or "").lower()
+        if not role:
+            role = "injector" if "inj" in name.lower() else "producer"
+        kk = _mid_k(spec)
+        x, y, z = center(int(spec["i"]), int(spec["j"]), kk)
+        wells.append(WellPoint(name, x, y, z, role=role))
+        if role == "injector" and first_inj_k == 1:
+            first_inj_k = kk
+        if role == "producer" and first_prod_k == 1:
+            first_prod_k = kk
+    wells.extend(probe_well_points)
+    return build_mesh(bounds, dx, dy, dk, wells=wells), first_inj_k, first_prod_k
 
 
 def truth_mask(meta: dict) -> np.ndarray:
@@ -145,60 +153,37 @@ def build_samples(
         sw = sw_by_t[ts]
         pres = p_by_t[tp]
 
-        tb = nearest(t, bhp_times)
-        if tb is None:
-            bi, bp = 4500.0, 2000.0
-        else:
-            bi, bp = bhp[tb]
-        p_inj, p_prod = psi_to_pa(bi), psi_to_pa(bp)
-
-        sw_inj = float(sw[ik - 1, wi["j"] - 1, wi["i"] - 1])
-        sw_prod = float(sw[pk - 1, wp["j"] - 1, wp["i"] - 1])
-        if not np.isfinite(sw_inj):
-            sw_inj = 0.8
-        if not np.isfinite(sw_prod):
-            sw_prod = 0.2
-
-        # pin wells to CMG **grid-block** pressure at the well cell (same
-        # sampling as observer_p). BHP is wellbore, not the field we compare.
-        gi = int(wi["i"]) - 1
-        gj = int(wi["j"]) - 1
-        gk = int(ik) - 1
-        pi = int(wp["i"]) - 1
-        pj = int(wp["j"]) - 1
-        pk_ = int(pk) - 1
-        p_inj_blk = float(pres[gk, gj, gi]) if np.isfinite(pres[gk, gj, gi]) else p_inj
-        p_prod_blk = float(pres[pk_, pj, pi]) if np.isfinite(pres[pk_, pj, pi]) else p_prod
-        well_pressure = {"INJ": p_inj_blk, "PROD": p_prod_blk}
-        well_sat = {
-            "INJ": (sw_inj, max(0.0, 1.0 - sw_inj), 0.0),
-            "PROD": (sw_prod, max(0.0, 1.0 - sw_prod), 0.0),
-        }
-
-        # virtual exclusive probes from mesh roles
+        well_pressure: dict[str, float] = {}
+        well_sat: dict[str, tuple[float, float, float]] = {}
+        well_rate: dict[str, float] = {}
         for name, role in mesh.well_role.items():
-            if role not in ("observer_p", "observer_s"):
+            if name not in mesh.well_cell_id:
                 continue
             cid = mesh.well_cell_id[name]
             ii, jj, kk = mesh.grid.ijk(cid)
-            if role == "observer_p":
+            if role in ("injector", "producer", "observer_p"):
                 val = float(pres[kk, jj, ii])
                 if np.isfinite(val):
+                    # p_series_pa is already Pa
                     well_pressure[name] = val
-            else:
+            if role in ("injector", "producer", "observer_s"):
                 s = float(sw[kk, jj, ii])
                 if not np.isfinite(s):
-                    s = 0.3
+                    s = 0.8 if role == "injector" else 0.25
                 well_sat[name] = (s, max(0.0, 1.0 - s), 0.0)
+            spec = (meta.get("wells") or {}).get(name, {})
+            if role == "injector":
+                q = spec.get("rate_m3s")
+                well_rate[name] = float(q) if q is not None else 5000.0 * 0.158987 / 86400.0
+            elif role == "producer":
+                q = spec.get("rate_m3s")
+                well_rate[name] = float(q) if q is not None else -2500.0 * 0.158987 / 86400.0
 
         tr = nearest(t, rate_times)
-        if tr is None:
-            wr = {
-                "INJ": 5000.0 * 0.158987 / 86400.0,
-                "PROD": -2500.0 * 0.158987 / 86400.0,
-            }
-        else:
+        if tr is not None and "INJ" in well_rate and "PROD" in well_rate:
             wr = rates[tr]
+            well_rate["INJ"] = float(wr["INJ"])
+            well_rate["PROD"] = float(wr["PROD"])
 
         samples.append(
             SensorSample(
@@ -206,7 +191,7 @@ def build_samples(
                 well_pressure=well_pressure,
                 well_saturation=well_sat,
                 boundary=BoundaryConditions(),
-                well_rate={"INJ": float(wr["INJ"]), "PROD": float(wr["PROD"])},
+                well_rate=well_rate,
             )
         )
     return samples
@@ -243,7 +228,7 @@ def run_one(
     base_mesh, ik, pk = mesh_with_probes(meta, [])
     n_p, n_s = split_n_probes(n_total)
     # keep probe budget modest on coarse CMG grids (avoid over-pinning)
-    max_n = max(0, min(12, base_mesh.n_cells // 5))
+    max_n = max(0, min(48, base_mesh.n_cells // 8))
     if n_p + n_s > max_n:
         scale = max_n / max(n_p + n_s, 1)
         n_p = int(n_p * scale)
@@ -428,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     case_map = {
         "channel": ("cmg_undulating_channel", CHANNEL),
         "fault": ("cmg_faulted_dogleg", FAULT),
+        "channel_fine": ("cmg_undulating_channel_fine", CHANNEL_FINE),
+        "fivespot": ("cmg_fivespot", FIVESPOT),
     }
     cases = [c.strip() for c in args.cases.split(",") if c.strip()]
     n_list = [int(x) for x in args.n_list.split(",") if x.strip()]

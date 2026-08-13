@@ -106,17 +106,30 @@ def _parse_plane_block(
             if mval:
                 out[k - 1, :, :] = float(mval.group(1))
             continue
-        for jline in re.finditer(r"J=\s*(\d+)\s+(.+)", body):
-            j = int(jline.group(1))
+        # Wide grids wrap: "I = 1..14" then J-rows, then "I = 15..21" then J-rows.
+        i0 = 0
+        for line in body.splitlines():
+            mi = re.match(r"\s*I\s*=\s*(.+)$", line)
+            if mi and "J=" not in line:
+                cols = [int(x) for x in re.findall(r"\d+", mi.group(1))]
+                if cols:
+                    i0 = cols[0] - 1
+                continue
+            mj = re.match(r"\s*J=\s*(\d+)\s+(.+)$", line)
+            if not mj:
+                continue
+            j = int(mj.group(1))
             if not (1 <= j <= ny):
                 continue
             # CMG values: 3019.  3030.i  2972.p  1.23E+03  (trailing i/p = well flags)
             raw = re.findall(
                 r"([+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[Ee][+-]?\d+)?)[a-zA-Z]?",
-                jline.group(2),
+                mj.group(2),
             )
-            for i, v in enumerate(raw[:nx]):
-                out[k - 1, j - 1, i] = float(v)
+            for ii, v in enumerate(raw):
+                i = i0 + ii
+                if 0 <= i < nx:
+                    out[k - 1, j - 1, i] = float(v)
     return out
 
 

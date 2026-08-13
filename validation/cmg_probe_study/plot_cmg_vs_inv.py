@@ -43,7 +43,35 @@ from validation.cmg_probe_study.run_probe_study import (  # noqa: E402
 HERE = Path(__file__).resolve().parent
 CHANNEL = ROOT / "validation" / "cmg_channel_3d"
 FAULT = ROOT / "validation" / "cmg_fault_3d"
+CHANNEL_FINE = ROOT / "validation" / "cmg_channel_fine"
+FIVESPOT = ROOT / "validation" / "cmg_fivespot"
 OUT_DIR = HERE / "figures"
+
+
+def _setup_cn_font() -> None:
+    """Prefer a CJK-capable UI font so titles/tables render in Chinese."""
+    from matplotlib import font_manager
+
+    candidates = (
+        "Microsoft YaHei",
+        "SimHei",
+        "Source Han Sans SC",
+        "Noto Sans CJK SC",
+        "DengXian",
+        "SimSun",
+    )
+    available = {f.name for f in font_manager.fontManager.ttflist}
+    for name in candidates:
+        if name in available:
+            plt.rcParams["font.sans-serif"] = [name, "DejaVu Sans"]
+            break
+    plt.rcParams["axes.unicode_minus"] = False
+
+
+CASE_CN = {
+    "cmg_undulating_channel": "起伏通道",
+    "cmg_faulted_dogleg": "断层狗腿",
+}
 
 
 def _layer_mean(arr: np.ndarray) -> np.ndarray:
@@ -88,7 +116,7 @@ def _run_inversion(
 
     base_mesh, ik, pk = mesh_with_probes(meta, [])
     n_p, n_s = split_n_probes(n_total)
-    max_n = max(0, min(12, base_mesh.n_cells // 5))
+    max_n = max(0, min(48, base_mesh.n_cells // 8))
     if n_p + n_s > max_n:
         scale = max_n / max(n_p + n_s, 1)
         n_p = int(n_p * scale)
@@ -130,6 +158,8 @@ def _run_inversion(
         if r in ("injector", "producer", "observer_p")
         and n in (samples[0].well_pressure or {})
     )
+    # Product-default point-first path (no case-specific channel prior).
+    _ = n_p_obs
     history = run_time_series(
         mesh,
         samples,
@@ -137,10 +167,7 @@ def _run_inversion(
         porosity_prior=0.3,
         viscosity_pa_s=1.0e-3,
         n_k_iterations=2 if (n_p + n_s) < 4 else 3,
-        assimilate_k=bool(n_p_obs >= 2),
-        esmda_ne=24,
-        esmda_assimilations=4,
-        esmda_max_times=8,
+        assimilate_k=False,
     )
 
     t0, sw0_c = sw_series[0]
@@ -224,8 +251,8 @@ def _imshow(ax, data, title, cmap, vmin=None, vmax=None, cbar_label=""):
         interpolation="nearest",
     )
     ax.set_title(title, fontsize=10)
-    ax.set_xlabel("i")
-    ax.set_ylabel("j")
+    ax.set_xlabel("网格 i")
+    ax.set_ylabel("网格 j")
     cb = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     if cbar_label:
         cb.set_label(cbar_label, fontsize=8)
@@ -234,6 +261,7 @@ def _imshow(ax, data, title, cmap, vmin=None, vmax=None, cbar_label=""):
 
 def plot_bundle(data: dict, out_path: Path) -> Path:
     """Write multi-panel CMG vs inversion comparison figure."""
+    _setup_cn_font()
     m = data["metrics"]
     # vertical mean for robust map view
     sw_c = _layer_mean(data["sw_cmg"])
@@ -265,29 +293,33 @@ def plot_bundle(data: dict, out_path: Path) -> Path:
     k_vmax = float(np.percentile(k_i, 99))
 
     fig, axes = plt.subplots(3, 3, figsize=(12.5, 11.5), constrained_layout=True)
+    case_cn = CASE_CN.get(str(data["case"]), str(data["case"]))
+    layout_cn = {"uniform": "均匀布置", "adaptive": "自适应布置", "wells_only": "仅井点"}.get(
+        str(data["layout"]), str(data["layout"])
+    )
     fig.suptitle(
-        f"{data['case']}  |  N={data['n_total']} ({data['n_p']}p/{data['n_s']}s) "
-        f"{data['layout']}\n"
-        f"Sw rel L2={m['sw_rel_l2']:.3f}   ΔSw Dice={m['delta_sw_dice']:.3f}   "
-        f"k_ch/k_out={m['k_channel_over_out']:.2f}   t={m['t_last']:.0f}",
+        f"{case_cn}  |  测点数 N={data['n_total']}（压力 {data['n_p']} / 饱和度 {data['n_s']}）"
+        f"{layout_cn}\n"
+        f"含水饱和度相对 L2={m['sw_rel_l2']:.3f}   ΔSw 重合 Dice={m['delta_sw_dice']:.3f}   "
+        f"通道内外渗透率比={m['k_channel_over_out']:.2f}   时刻 t={m['t_last']:.0f} 天",
         fontsize=12,
         fontweight="bold",
     )
 
     # Row 0: Sw
-    _imshow(axes[0, 0], sw_c, "CMG Sw (layer-mean)", "YlGnBu", sw_vmin, sw_vmax, "Sw")
-    _imshow(axes[0, 1], sw_i, "Inversion Sw", "YlGnBu", sw_vmin, sw_vmax, "Sw")
-    _imshow(axes[0, 2], sw_err, "|Sw inv − CMG|", "magma", 0.0, None, "|ΔSw|")
+    _imshow(axes[0, 0], sw_c, "CMG 含水饱和度（层平均）", "YlGnBu", sw_vmin, sw_vmax, "含水饱和度")
+    _imshow(axes[0, 1], sw_i, "反演含水饱和度", "YlGnBu", sw_vmin, sw_vmax, "含水饱和度")
+    _imshow(axes[0, 2], sw_err, "|反演 − CMG| 含水饱和度", "magma", 0.0, None, "|Δ含水饱和度|")
     for ax in axes[0]:
         _add_markers(ax, data["markers"])
 
     # Row 1: ΔSw footprint
-    _imshow(axes[1, 0], dsw_c, "CMG |ΔSw| (t₀→t_end)", "OrRd", 0.0, dsw_vmax, "|ΔSw|")
-    _imshow(axes[1, 1], dsw_i, "Inv |ΔSw| (t₀→t_end)", "OrRd", 0.0, dsw_vmax, "|ΔSw|")
+    _imshow(axes[1, 0], dsw_c, "CMG |Δ含水饱和度|（初→末）", "OrRd", 0.0, dsw_vmax, "|Δ含水饱和度|")
+    _imshow(axes[1, 1], dsw_i, "反演 |Δ含水饱和度|（初→末）", "OrRd", 0.0, dsw_vmax, "|Δ含水饱和度|")
     axes[1, 2].imshow(overlay, origin="lower", aspect="equal", interpolation="nearest")
-    axes[1, 2].set_title("ΔSw footprint overlay\n(green=both, red=CMG, blue=inv)")
-    axes[1, 2].set_xlabel("i")
-    axes[1, 2].set_ylabel("j")
+    axes[1, 2].set_title("Δ含水饱和度足迹叠合\n（绿=一致，红=仅CMG，蓝=仅反演）")
+    axes[1, 2].set_xlabel("网格 i")
+    axes[1, 2].set_ylabel("网格 j")
     # truth channel contour on ΔSw panels
     for ax in (axes[1, 0], axes[1, 1], axes[1, 2]):
         if np.any(mask2):
@@ -301,9 +333,9 @@ def plot_bundle(data: dict, out_path: Path) -> Path:
         _add_markers(ax, data["markers"])
 
     # Row 2: pressure + k
-    _imshow(axes[2, 0], p_c, "CMG pressure", "coolwarm", p_vmin, p_vmax, "MPa")
-    _imshow(axes[2, 1], p_i, "Inversion pressure", "coolwarm", p_vmin, p_vmax, "MPa")
-    _imshow(axes[2, 2], k_i, "Inversion k (mD)\n+ truth channel outline", "viridis", None, k_vmax, "mD")
+    _imshow(axes[2, 0], p_c, "CMG 压力", "coolwarm", p_vmin, p_vmax, "MPa")
+    _imshow(axes[2, 1], p_i, "反演压力", "coolwarm", p_vmin, p_vmax, "MPa")
+    _imshow(axes[2, 2], k_i, "反演渗透率 (mD)\n白线为真值通道轮廓", "viridis", None, k_vmax, "mD")
     if np.any(mask2):
         axes[2, 2].contour(
             mask2.astype(float),
@@ -319,8 +351,8 @@ def plot_bundle(data: dict, out_path: Path) -> Path:
     fig.text(
         0.5,
         0.01,
-        "Markers: ▲ INJ  ▼ PROD  ○ observer_p (white) / observer_s (yellow)  |  "
-        "Black/white contour = truth channel from CMG deck",
+        "标记：▲注入井  ▼生产井  ○压力测点（白）/ 饱和度测点（黄）  |  "
+        "黑/白线 = CMG 算例中的真值通道",
         ha="center",
         fontsize=8,
         color="0.25",
@@ -339,10 +371,13 @@ def main() -> int:
     ap.add_argument("--layout", default="uniform", choices=["uniform", "adaptive"])
     ap.add_argument("--out-dir", default=str(OUT_DIR))
     args = ap.parse_args()
+    _setup_cn_font()
 
     case_map = {
         "channel": ("cmg_undulating_channel", CHANNEL),
         "fault": ("cmg_faulted_dogleg", FAULT),
+        "channel_fine": ("cmg_undulating_channel_fine", CHANNEL_FINE),
+        "fivespot": ("cmg_fivespot", FIVESPOT),
     }
     cases = [c.strip() for c in args.cases.split(",") if c.strip()]
     n_list = [int(x) for x in args.n_list.split(",") if x.strip()]
@@ -395,27 +430,29 @@ def main() -> int:
         "",
         "由 `plot_cmg_vs_inv.py` 生成。测点仅 wells + virtual exclusive probes。",
         "",
-        "| figure | case | N | notes |",
-        "|--------|------|---|-------|",
+        "| 图件 | 算例 | 测点数 | 含水饱和度相对L2 | ΔSw重合Dice | 通道内外渗透率比 |",
+        "|------|------|--------|------------------|-------------|------------------|",
     ]
     for p in written:
         j = p.with_suffix(".json")
         if j.is_file():
             meta = json.loads(j.read_text(encoding="utf-8"))
+            cname = CASE_CN.get(str(meta["case"]), str(meta["case"]))
             lines.append(
-                f"| `{p.name}` | {meta['case']} | {meta['n_total']} | "
-                f"SwL2={meta['sw_rel_l2']:.3f}, Dice={meta['delta_sw_dice']:.3f}, "
-                f"k={meta['k_channel_over_out']:.2f} |"
+                f"| `{p.name}` | {cname} | {meta['n_total']} | "
+                f"{meta['sw_rel_l2']:.3f} | {meta['delta_sw_dice']:.3f} | "
+                f"{meta['k_channel_over_out']:.2f} |"
             )
         else:
-            lines.append(f"| `{p.name}` |  |  |  |")
+            lines.append(f"| `{p.name}` |  |  |  |  |  |")
     lines.append("")
     lines.append("## 读图")
     lines.append("")
-    lines.append("- **第1行**：末时刻含水饱和度 Sw（CMG / 反演 / 绝对误差）")
-    lines.append("- **第2行**：多时刻 |ΔSw| 足迹与重叠（绿=一致，红=仅CMG，蓝=仅反演）")
-    lines.append("- **第3行**：压力场 + 反演渗透率（白线为 CMG deck 真通道轮廓）")
-    lines.append("- 标记：▲注入井 ▼生产井 ○ exclusive 测点")
+    lines.append("- **第1行**：末时刻含水饱和度（CMG / 反演 / 绝对误差）")
+    lines.append("- **第2行**：多时刻 |Δ含水饱和度| 足迹与重叠（绿=一致，红=仅CMG，蓝=仅反演）")
+    lines.append("- **第3行**：压力场 + 反演渗透率（白线为 CMG 算例真通道轮廓）")
+    lines.append("- 标记：▲注入井 ▼生产井 ○ 互斥测点")
+    lines.append("- 反演路径为产品默认的**点优先**（不为单个工况更换先验）")
     md.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"index {md}")
     print(f"done: {len(written)} figures → {out_dir}")
