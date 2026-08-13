@@ -14,4 +14,4 @@
 python shale_oil/validation/shale_frac/run_validate.py
 ```
 
-现场 30 cm 箱子可按同一几何填高渗条带；CMG 对照以后再克隆 IMEX 衰竭算例。
+现场 30 cm 箱子可按同一几何填高渗条带。CMG 离线尺子已建成 5 套 IMEX 衰竭类比，见 [../cmg_shale_suite](../cmg_shale_suite/README.md)。

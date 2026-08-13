@@ -83,7 +83,7 @@ print(mask_overlap(disc.active_mask, twin.true_channel_mask))
 | [docs/VALIDATION.md](docs/VALIDATION.md) | 测试 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 限制与排除项 |
 | [black_oil/README.md](black_oil/README.md) | 黑油论文 A 与 IMEX 验证 |
-| [shale_oil/README.md](shale_oil/README.md) | 页岩论文 B 与裂缝孪生 |
+| [shale_oil/README.md](shale_oil/README.md) | 页岩论文 B、裂缝孪生、5 套 IMEX 类比尺子 |
 
 ## 合规
 
