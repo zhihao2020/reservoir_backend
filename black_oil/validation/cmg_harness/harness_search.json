@@ -1,0 +1,70 @@
+{
+  "case": "lab_layers",
+  "attempts": 4,
+  "best": {
+    "case": "lab_layers",
+    "knobs": {
+      "algorithm": "esmda",
+      "n_ensemble": 12,
+      "n_assimilations": 3,
+      "prior_std": 0.8,
+      "inflation": 1.02,
+      "seed": 6,
+      "n_workers": 4
+    },
+    "status": "ready",
+    "probe": "ok",
+    "probe_detail": {
+      "sw_max": 0.6225102102053357,
+      "p_std_psi": 75.10420141340605,
+      "bt_rel": 0.5
+    },
+    "score": {
+      "hold": 0.6155952381352593,
+      "forecast": 0.48116300566083103,
+      "assimilate": 0.6803468142372873,
+      "p_rmse_psi": 20.17975811362452,
+      "p_rmse_demean_psi": 15.014468426660368,
+      "sw_rmse": 0.08077659839144855,
+      "bt_rel": 1.0,
+      "bt_cmg_d": 0.5,
+      "bt_f_d": 1.0,
+      "sw_mean_cmg": 0.5488958333333334,
+      "sw_mean_f": 0.5572898295244195,
+      "J": 1.875713577886635,
+      "k_contrast_post": 3.098682803054447,
+      "notes": [
+        "esmda ne=12 max_steps=3 n_theta=2",
+        "ensemble workers=4",
+        "step 0 esmda \u03b1=3 nRMSE=0.7831 J=11.04 spread=0.7893 kept=12",
+        "step 1 esmda \u03b1=3 nRMSE=0.6965 J=8.732 spread=0.5163 kept=12",
+        "step 2 esmda \u03b1=3 nRMSE=0.647 J=7.534 spread=0.5737 kept=12",
+        "assimilation whitened RMSE=0.6803",
+        "hold-out whitened RMSE=0.6156",
+        "logk_rmse=0.961"
+      ]
+    },
+    "theta": [
+      -31.00242999299571,
+      -29.726308843111866
+    ],
+    "decision": "keep",
+    "reason": "no parent",
+    "attempt_id": "t018"
+  },
+  "beam": [
+    {
+      "id": "t018",
+      "J": 1.875713577886635,
+      "knobs": {
+        "algorithm": "esmda",
+        "n_ensemble": 12,
+        "n_assimilations": 3,
+        "prior_std": 0.8,
+        "inflation": 1.02,
+        "seed": 6,
+        "n_workers": 4
+      }
+    }
+  ]
+}

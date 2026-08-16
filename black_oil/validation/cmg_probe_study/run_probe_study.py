@@ -283,8 +283,8 @@ def run_one(
         viscosity_pa_s=1.0e-3,
         n_k_iterations=2 if (n_p + n_s) < 4 else 3,
         assimilate_k=use_esmda,
-        esmda_ne=24,
-        esmda_assimilations=4,
+        esmda_ne=12,
+        esmda_assimilations=3,
         esmda_max_times=8,
     )
     last = history[-1]
@@ -380,7 +380,7 @@ def write_markdown(results: list[dict], path: Path) -> None:
             "## 读法",
             "",
             "- **N↑ 后 Sw L2 下降或 Dice 上升** → 测点改善重建（反演未必严格单调）。",
-            "- **ES-MDA=Y**：先用井+压力测点软同化 log(k)，再点优先时序。",
+            "- **ES-MDA=Y**：`invert_rock`（指示先验 + ES-MDA 更新 log k，再锁 k 正演）。",
             "- **uniform / adaptive**：几何均匀 vs hybrid DOE；粗网格上均匀常更稳。",
             "- **p hold-out**：未硬约束格点压力相对 CMG；越低越好。",
             "- 井压硬约束误差应接近 0。",

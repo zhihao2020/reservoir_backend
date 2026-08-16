@@ -1,0 +1,33 @@
+{
+  "case": "S1",
+  "ok": true,
+  "analog": true,
+  "n_times": 5,
+  "n_wells": 1,
+  "frac_theta": true,
+  "k_frac_over_matrix": 47.03591939240161,
+  "inv_x_f_m": 112.26326568308454,
+  "truth_x_f_m": 129.54,
+  "inv_F_cd_m3": 9.625126649882183e-11,
+  "truth_F_cd_m3": 1.20325688736e-10,
+  "inv_n_frac": 5.0,
+  "truth_n_frac_planes": 5,
+  "imex_dp_matrix_minus_frac_Pa": 6641987.514512615,
+  "inv_dp_matrix_minus_frac_Pa": 5478821.566124024,
+  "dp_sign_match": true,
+  "dp_ratio": 0.8248768240158392,
+  "notes": [
+    "invert_rock: indicator prior + joint physics ES-MDA then lock-k forward G(m)",
+    "automatic inversion: invert_rock",
+    "exclusive probes n_p=6 n_s=0",
+    "Sw signal \u0394Sw=0.000 < 0.03; pressure-led assimilation (depletion)",
+    "indicator prior mean=0.039 strength=0.95",
+    "data-driven face barrier sealed=0.007",
+    "frac \u03b8 on: n_prod=6 (depletion HW)",
+    "frac \u03b8 ES-MDA ne=8 Na=1 (pressure-led)",
+    "frac joint ES-MDA n_\u03b8=6 ne=8 Na=1 n_times=5 n_obs=30 (pressure-led)",
+    "frac MDA nRMSE=3.931",
+    "\u03b8_frac xf=112 m  Fcd=9.625e-11 m3  n\u22485  k_f/k_m=9.93e+06",
+    "corridor \u03b8 skipped (frac \u03b8 already selected)"
+  ]
+}

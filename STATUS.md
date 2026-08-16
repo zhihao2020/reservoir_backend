@@ -1,52 +1,47 @@
 # 项目状态
 
-主线：**传感器四场流水线**（见 `references/软件要求.txt`）。
+主线：实验室 300 mm 立方试块的多相正演 + ensemble 反演。
 
 | 状态 | 含义 |
 |------|------|
-| **已验证** | 有实现与针对性测试 |
-| **MVP** | 可用但含明确简化假设 |
-| **排除** | 不做 |
+| **已验证** | 有实现与针对性测试，且测试测的是规格要求的行为 |
+| **MVP** | 可用，假设写在 `docs/model_assumptions.md` |
+| **不做** | P0 明确排除 |
 
 ## 能力表
 
-| 能力 | 状态 | 入口 | 证据 | 假设/边界 |
-|------|------|------|------|-----------|
-| 1 网格划分 | 已验证 | `pipeline.build_mesh` | `tests/test_pipeline_mesh.py` | 边界+井+dx/dy/dz → 序号/坐标 |
-| 2 压力场 | MVP | 压力硬点插值/TPFA | `tests/test_pipeline_fields.py` | 井+`observer_p` 仅测 p |
-| 3 饱和度场 | MVP | 饱和度硬点插值 | `tests/test_pipeline_fields.py` | 井+`observer_s` 仅测 S |
-| 4 物性 | MVP | 点 k,φ → 自动空间插值 | `point_workflow` + `spatial_interp` | LOO-CV 选 IDW/普通克里金/堆叠；log-k；无用户方法配置 |
-| 空间插值自动选择 | 已验证 | `pipeline.auto_interpolate_to_grid` | `tests/test_spatial_interp.py` | 点数不足或退化几何→IDW；LOO RMSE 差距超 5% 选优，否则 1/RMSE² 堆叠 |
-| 测点分工 | 已验证 | `observer_p` / `observer_s` | `tests/test_pipeline_fields.py` | **同一测点不同时测 p 与 S** |
-| 4 物性场 k/φ | MVP | `pipeline.invert_rock_properties` | `tests/test_pipeline_fields.py` | 达西 k；流量场；φ 物质平衡；**非均质数组** |
-| 非均质四场验收 | MVP | `validation/heterogeneous_four_field/` | run_validate.py | **禁止均质**；通道/断层孪生 |
-| 饱和度输运代理 | MVP | `pipeline.transport_water_saturation` | `tests/test_pipeline_fields.py` | **f_w(S)** 迎风 + 井产注量源汇 |
-| 井产注量 | MVP | `SensorSample.well_rate` | 同上 | m³/s，+注 −采 |
-| 黑油 / 页岩拆分 | 已整理 | `black_oil/` `shale_oil/` | 两套软件+论文入口 | IMEX 尺子在 black_oil/validation |
-| 端到端 + CLI | MVP | `python -m reservoir_backend.pipeline.run` | `tests/test_pipeline_e2e_cli.py` | slice/series/discovery/esmda |
-| CSV 多时刻传感器 | 已验证 | `pipeline.load_sensor_series` | `tests/test_sensor_series_inversion.py` | 注采井+observer_p/s 时序；边界 CSV |
-| 高精度反演（绿地） | 可选先验 | `run_sensor_inversion`（`k_prior=channel_tube`） | `tests/test_k_param.py` | **非默认**：6 维井间通道管；跨工况请用点优先或全网格 ES-MDA |
-| 自动反演 | MVP | `run_automatic_inversion` / `assimilate_k=True` | `tests/test_auto_inversion.py` | AutoGluon 式堆叠：点优先 + 通量增强；权重由留出测点决定 |
-| ES-MDA k 反演 | MVP | `pipeline.run_esmda_permeability` | `tests/test_sensor_io_esmda.py` | 全网格 log-k；软观测 p+Sw+qw；测点 train/val 见 `probe_split` |
-| 空间插值性能 | 已验证 | `spatial_interp` 向量化 | `tests/test_spatial_interp.py` | IDW/克里金/LOO 矩阵化；克里金 batch RHS |
-| 饱和度自动空间 | MVP | `reconstruct_saturation` | `tests/test_pipeline_fields.py` | 硬点≥8 走 LOO 自动 IDW/克里金/stack；少点保留各向异性 IDW |
-| 方法学参考库 | 只读 | `references/methods/` | methods/README.md | equinor/pyesmda/dass；**禁止 import** |
-| 多时刻形态发现 | MVP | `pipeline.run_shape_discovery` | `tests/test_shape_discovery.py` | 指标=ΔSw+k+Δp；跨时刻 k/φ 数组传递 |
-| k–p 固定点迭代 | MVP | `pipeline.run_time_slice` | `tests/test_pipeline_fields.py` | 默认 2 次；加密后映射 k 场 |
-| 正交指示加密 | MVP | `pipeline.refine_mesh_by_indicator` | 同上 | 高指示区 bbox 全局加密 |
-| 合成通道孪生 | 已验证 | `pipeline.build_channel_twin` | `tests/test_shape_discovery.py` | 已知通道 mask；Dice 软阈值 |
-| CMG 三维通道验证 | MVP | `validation/cmg_channel_3d/` | IMEX Normal Termination + report | `*VARI`+`*DTOP` 起伏山脊；非水平层 |
-| CMG 断层通道验证 | MVP | `validation/cmg_fault_3d/` | IMEX Normal Termination + report | `*FAULT` throw + `*TRANSI` 封闭/窗；狗腿通道 |
-| 实验室 30 cm 层理孪生 | MVP | `validation/lab_box_30cm/` + `pipeline.lab_horizon` | `tests/test_lab_horizon.py` | 0.30 m 满砂；山=模具层理；平顶；15/30/50 同函数采样 |
-| 页岩油裂缝孪生 | MVP | `build_shale_fracture_twin` / `validation/shale_frac/` | `tests/test_shale_fracture.py` | 水平井多段射孔 + 垂直高渗条带 + 衰竭；同一套自动反演 |
-| 合成断层孪生 | MVP | `pipeline.build_faulted_channel_twin` | `tests/test_shape_discovery.py` | 低渗断层带 + 偏移通道 |
-| 测点推荐 (DOE) | MVP | `pipeline.recommend_probes` / `place_uniform_probes` | `tests/test_probe_design.py` | maximin / variance / hybrid；exclusive p/S；无业务 YAML 开关 |
-| CMG 虚拟测点扫 N | MVP | `validation/cmg_probe_study/` | PROBE_STUDY.md | 从 .out 全场 p/S 虚拟抽样；不改 CMG 井网 |
+| 能力 | 状态 | 入口 | 证据 |
+|------|------|------|------|
+| 300 mm / 10 mm → 30³，体积 0.027 m³ | 已验证 | `CartesianGrid.uniform` | `tests/test_grid_lab.py` |
+| 控制 / 观测分离 | 已验证 | `ControlSeries` / `ObservationSeries` | `tests/test_pressure_analytical.py` |
+| 非格点观测算子 | 已验证 | `ObservationOperator` | `tests/test_observation_operator.py` |
+| 单相 1D 压力 | 已验证 | IMPES `single_phase` | `tests/test_pressure_analytical.py` |
+| 两相 IMPES + CFL | MVP | `solver.impes.simulate` | `tests/test_buckley_leverett.py` |
+| 黑油表面体积 \(F\) | 已验证 | `physics.pvt.BlackOilPVT` | `tests/test_black_oil.py` |
+| MRST 离散（迎风 \(\lambda\)、重力、\(k_z\)、TRANSI、SWT） | 已验证 | `discretization.tpfa`、`TableTwoPhase` | 五点/断层 \(F(K)\) p RMSE 21–23 psi，Sw 0.018–0.030 |
+| MRST 隐式输运（后向 Euler + Newton） | 已验证 | `solver.transport.implicit_water` | `tests/test_black_oil.py`；CMG 尺子默认开 |
+| 质量守恒报告 | MVP | `MassBalance`（地面水体积） | `tests/test_mass_balance.py` |
+| 毛管模型（显式选择） | 已验证 | `BrooksCorey` / `NoCapillary` | `tests/test_capillary.py` |
+| 线性高斯 ES-MDA | 已验证 | `inverse.esmda.run_esmda` | `tests/test_esmda_linear.py` |
+| Synthetic \(H(F(m_{true}))\) + hold-out | MVP | `validation.synthetic` | `tests/test_synthetic_twin.py` |
+| 冻结 m 的 forecast | MVP | `DigitalTwin.forecast` | `tests/test_forecast.py` |
+| CLI validate/simulate/invert/forecast/synthetic | MVP | `reservoir` | `tests/test_cli.py` |
+| 三相不混溶 IMPES | MVP | `CoreyThreePhase` | `tests/test_three_phase.py` |
+| 后验 p/S/K 分位数与标准差 | MVP | `DigitalTwin.reconstruct` | `tests/test_reconstruct_uq.py` |
+| CSV 控制/观测 IO | 已验证 | `io.case` | `tests/test_case_csv.py` |
+| 任意深度柱面测点 | 已验证 | `column_sensors` | `tests/test_observation_operator.py` |
+| 反演尺子 A/B（自洽 vs CMG 观测） | MVP | `cmg_lab_layers/run_invert_eval.py` | `invert_eval_report.json` |
+| 多 CMG harness（探针/日记/回溯） | MVP | `reservoir harness` | `tests/test_cmg_harness_*.py`；lab+五点+断层+通道 |
+| 反演预设 / 时限 / hold-out 排行 | MVP | `calibrate_auto`、`inverse.presets` | `tests/test_portfolio.py` |
+| ES / ES-MDA / ES-MDA-RS + hold-out 混合 | MVP | `inverse.algorithms`、`greedy_holdout_blend` | `tests/test_esmda_linear.py`、`test_portfolio.py` |
+| Ensemble 并行正演 | MVP | `inverse.parallel.map_members` | `tests/test_parallel.py` |
+| 限时 HPO（搜算法旋钮） | MVP | `inverse.hpo.run_hpo` | `tests/test_hpo.py` |
+| 自洽两层 K 收回 | 已验证 | `make_two_layer_waterflood` | `tests/test_synthetic_twin.py` |
 
 ## 排除
 
-- 角点网格 / LGR / NNC
-- 黑油 PVT、工业井网
-- OPM/MRST 运行时与等价声明
-- REST/前端/UDP 产品
-- 跨尺度、历史拟合产品套件
+- 四场插值「反演」（已删除）
+- 每 cell 独立反演 27k 个 K（非默认）
+- Archie / EM / acoustic 通用反演（已删除）
+- 溶气/放气 \(R_s(p)\) 自由气、EnKF、MPFA、动态 AMR、PINN
+- 旧 `pipeline/` 产品路径（已删除）

@@ -1,0 +1,32 @@
+[
+  {
+    "case": "lab_layers",
+    "p_rmse_psi": 32.01,
+    "p_demean_psi": 16.00,
+    "sw_rmse": 0.0505,
+    "sw_cmg": 0.5489,
+    "sw_f": 0.5508,
+    "p_mean_f_psi": 3001.7,
+    "p_mean_cmg_psi": 2973.9
+  },
+  {
+    "case": "fault",
+    "p_rmse_psi": 23.27,
+    "p_demean_psi": 22.73,
+    "sw_rmse": 0.0308,
+    "sw_cmg": 0.2309,
+    "sw_f": 0.2282,
+    "p_mean_f_psi": 3489.5,
+    "p_mean_cmg_psi": 3494.4
+  },
+  {
+    "case": "fivespot",
+    "p_rmse_psi": 20.62,
+    "p_demean_psi": 20.15,
+    "sw_rmse": 0.0183,
+    "sw_cmg": 0.2328,
+    "sw_f": 0.2327,
+    "p_mean_f_psi": 3640.6,
+    "p_mean_cmg_psi": 3645.0
+  }
+]

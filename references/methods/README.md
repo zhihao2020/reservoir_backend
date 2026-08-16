@@ -19,7 +19,7 @@
 | `dass/` | [equinor/dass](https://github.com/equinor/dass) | 见上游 | 教学向 ES；taper/localization 思路；与 Emerick 2013 衔接说明 |
 | `esmda-seismic/` | [rodrigoext/esmda](https://github.com/rodrigoext/esmda) | 见上游 | 地震相 + ES-MDA 应用示例（非核心求解） |
 | `genES-MDA-author-copy.pdf` | genES-MDA 作者稿 | 文献 | 通用 ES-MDA 软件包设计与自适应 MDA |
-| `../1-s2.0-S0098300412000994-main.pdf` | Emerick & Reynolds 2013 C&G | 文献 | **ES-MDA 原始论文**（本仓库已有） |
+| Emerick & Reynolds 2013, *Computers & Geosciences* | ES-MDA 原始论文 | 文献 | 本地可放 `references/`，不进 git |
 
 ### 克隆命令（可复现）
 
@@ -34,7 +34,7 @@ git clone --depth 1 https://gitlab.com/antoinecollet5/pyesmda.git
 
 ## 抽取进本仓库产品的逻辑（自研实现）
 
-落地文件：`reservoir_backend/pipeline/esmda.py`、`ensemble_math.py`。
+落地文件：`reservoir_backend/inverse/esmda.py`、`inverse/ensemble.py`。旧 `pipeline/` 已删除。
 
 | 实践 | 文献/上游 | 本仓库实现 |
 |------|-----------|------------|
@@ -42,9 +42,15 @@ git clone --depth 1 https://gitlab.com/antoinecollet5/pyesmda.git
 | \(\sum_i 1/\alpha_i = 1\) | equinor / 论文 | 默认等权 \(\alpha_i=N_a\) 归一化 |
 | log 参数空间 + 上下界裁剪 | 储层 HM 常规 / pyesmda bounds | `log(k)` 更新后 `clip` |
 | 对角 \(R\) 预条件改善条件数 | equinor esmda_inversion 讨论 | `solve_obs_system` 用 \(\mathrm{diag}(R)^{-1/2}\) |
+| 单步 ES（α=1） | dass / Evensen | `algorithm: es` |
+| ES-MDA 等权 α | Emerick 2013 / Equinor IES | `algorithm: esmda` |
+| 几何 α（先稳后狠） | Emerick 变体 | `algorithm: esmda_geo` |
+| 受限步自适应 α、自动停 | pyesmda ES-MDA-RS / Le 2016 | `algorithm: esmda_rs` |
+| 阻尼迭代 ES | Chen & Oliver LM-EnRML / IES | `algorithm: ies` |
+| 限时随机搜旋钮 | AutoGluon fit(time_limit) | `inverse.hpo.run_hpo` |
 | 更新后集成轻微膨胀 | Anderson 2007 / pyesmda | `inflate_ensemble` |
-| 井–参数距离相关局部化 | Gaspari–Cohn / 教学 dass | 可选 `localization_radius_m` |
-| 正向：边界 Dirichlet、井压为软观测 | 本项目反演设定 | 不用井点硬钉扎做 \(G(m)\) |
+| hold-out 加权混合、变差丢掉 | AutoGluon ensemble selection | `calibrate_auto(blend=True)` |
+| 井–参数距离相关局部化 | Gaspari–Cohn / Equinor LocalizedESMDA | 写了，n_θ 大时再开 |
 
 ## 未抽取（有意）
 
@@ -57,4 +63,6 @@ git clone --depth 1 https://gitlab.com/antoinecollet5/pyesmda.git
 1. Emerick & Reynolds 2013 PDF（本仓库 references 根目录）
 2. equinor `esmda.py` 文档字符串 + `normalize_alpha`
 3. pyesmda `ESMDA` 类 API 与 localization
-4. 对照 `reservoir_backend/pipeline/esmda.py` 的自研实现
+4. 对照 `reservoir_backend/inverse/esmda.py` 的自研实现
+
+没有 Optuna / CMOST / 网格搜索 K。那些是正演调参。要学的是先验、MDA 日程、膨胀、局部化，以及测点设计，不是外层 HPO。

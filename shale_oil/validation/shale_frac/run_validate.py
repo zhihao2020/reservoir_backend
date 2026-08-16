@@ -58,6 +58,7 @@ def main() -> int:
         "k_ratio_point_first": _k_ratio(pf[-1].permeability, twin.true_channel_mask),
         "k_ratio_automatic": _k_ratio(auto.k_mean, twin.true_channel_mask),
         "stack_weights": auto.member_weights,
+        "frac_theta": any("frac θ" in n for n in auto.notes),
         "notes": auto.notes,
     }
     dest = HERE / "validation_report.json"

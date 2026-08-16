@@ -1,1 +1,3 @@
-"""Solver module namespace reserved for later stages."""
+from reservoir_backend.solver.impes import Trajectory, simulate
+
+__all__ = ["Trajectory", "simulate"]

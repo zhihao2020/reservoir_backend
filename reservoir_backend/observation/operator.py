@@ -1,0 +1,125 @@
+"""Observation operator H: state on the grid → sensor values."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+from numpy.typing import NDArray
+
+from reservoir_backend.domain.types import Sensor, State
+from reservoir_backend.exceptions import InvalidObservation
+from reservoir_backend.grid.cartesian import CartesianGrid
+from reservoir_backend.ports.flow import FlowPort
+
+
+def _trilinear(grid: CartesianGrid, field: NDArray[np.float64], x: float, y: float, z: float) -> float:
+    """Trilinear interpolation on the cell-center lattice."""
+    values = np.asarray(field, dtype=float).ravel()
+    if values.size != grid.n_cells:
+        raise InvalidObservation(f"field size {values.size} != n_cells {grid.n_cells}")
+    cx, cy, cz = grid.center_axis("x"), grid.center_axis("y"), grid.center_axis("z")
+    ijk = grid.reshape_ijk(values)
+
+    def bracket(coord: float, axis: NDArray[np.float64]) -> tuple[int, int, float]:
+        if axis.size == 1:
+            return 0, 0, 0.0
+        if coord <= axis[0]:
+            return 0, 0, 0.0
+        if coord >= axis[-1]:
+            last = axis.size - 1
+            return last, last, 0.0
+        hi = int(np.searchsorted(axis, coord, side="right"))
+        lo = hi - 1
+        w = (coord - axis[lo]) / (axis[hi] - axis[lo])
+        return lo, hi, float(w)
+
+    i0, i1, wx = bracket(x, cx)
+    j0, j1, wy = bracket(y, cy)
+    k0, k1, wz = bracket(z, cz)
+    c000 = ijk[k0, j0, i0]
+    c100 = ijk[k0, j0, i1]
+    c010 = ijk[k0, j1, i0]
+    c110 = ijk[k0, j1, i1]
+    c001 = ijk[k1, j0, i0]
+    c101 = ijk[k1, j0, i1]
+    c011 = ijk[k1, j1, i0]
+    c111 = ijk[k1, j1, i1]
+    c00 = c000 * (1.0 - wx) + c100 * wx
+    c10 = c010 * (1.0 - wx) + c110 * wx
+    c01 = c001 * (1.0 - wx) + c101 * wx
+    c11 = c011 * (1.0 - wx) + c111 * wx
+    c0 = c00 * (1.0 - wy) + c10 * wy
+    c1 = c01 * (1.0 - wy) + c11 * wy
+    return float(c0 * (1.0 - wz) + c1 * wz)
+
+
+def _volume_average(
+    grid: CartesianGrid,
+    field: NDArray[np.float64],
+    x: float,
+    y: float,
+    z: float,
+    volume_m3: float,
+) -> float:
+    """Average over cells intersecting a cube of volume ``volume_m3`` centered at the point."""
+    side = float(volume_m3) ** (1.0 / 3.0)
+    half = 0.5 * side
+    centers = grid.cell_centers()
+    vol = grid.cell_volumes()
+    inside = (
+        (np.abs(centers[:, 0] - x) <= half)
+        & (np.abs(centers[:, 1] - y) <= half)
+        & (np.abs(centers[:, 2] - z) <= half)
+    )
+    if not np.any(inside):
+        return _trilinear(grid, field, x, y, z)
+    values = np.asarray(field, dtype=float).ravel()
+    w = vol[inside]
+    return float(np.sum(values[inside] * w) / np.sum(w))
+
+
+@dataclass
+class ObservationOperator:
+    """Maps ``State`` (+ optional port rates) to a sensor reading."""
+
+    grid: CartesianGrid
+    sensors: list[Sensor]
+    ports: list[FlowPort] | None = None
+
+    def sample_field(self, sensor: Sensor, field: NDArray[np.float64]) -> float:
+        if sensor.volume_m3 > 0.0:
+            return _volume_average(self.grid, field, sensor.x, sensor.y, sensor.z, sensor.volume_m3)
+        return _trilinear(self.grid, field, sensor.x, sensor.y, sensor.z)
+
+    def sample(
+        self,
+        sensor: Sensor,
+        state: State,
+        port_rates: dict[str, float] | None = None,
+    ) -> float:
+        if sensor.kind == "pressure":
+            return self.sample_field(sensor, state.pressure)
+        if sensor.kind == "saturation":
+            return self.sample_field(sensor, state.sw)
+        if sensor.kind == "phase_rate":
+            if not sensor.port_name:
+                raise InvalidObservation(f"phase_rate sensor {sensor.name} needs port_name")
+            rates = port_rates or {}
+            if sensor.port_name not in rates:
+                raise InvalidObservation(
+                    f"phase_rate sensor {sensor.name}: missing rate for port {sensor.port_name}"
+                )
+            return float(rates[sensor.port_name])
+        raise InvalidObservation(f"unknown sensor kind {sensor.kind}")
+
+    def vector(
+        self,
+        sensors: list[Sensor],
+        state: State,
+        port_rates: dict[str, float] | None = None,
+    ) -> NDArray[np.float64]:
+        return np.asarray(
+            [self.sample(s, state, port_rates=port_rates) for s in sensors],
+            dtype=float,
+        )

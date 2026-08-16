@@ -50,3 +50,7 @@ profiling_reports/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local third-party trees and copyrighted papers (clone / download separately)
+references/MRST-main/
+references/1-s2.0-S0098300412000994-main.pdf

@@ -38,7 +38,7 @@ from reservoir_backend.pipeline.probe_design import field_variance_over_time  # 
 VAL = Path(__file__).resolve().parents[1]
 if str(VAL) not in sys.path:
     sys.path.insert(0, str(VAL))
-from cmg_io.grid_parse import parse_grid_series  # noqa: E402
+from cmg_io.grid_parse import parse_grid_series, parse_surface_rates_m3s  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 CHANNEL = VAL / "cmg_channel_3d"
@@ -185,7 +185,9 @@ def samples_from_cmg(meta: dict, out_path: Path, mesh, ik: int, pk: int):
     p_by_t = {float(t): np.asarray(a, dtype=float) * 6894.757293168 for t, a in p_series}
     bhp = parse_bhp(out_path)
     bhp_times = sorted(bhp.keys())
-    rates = parse_surface_rates_stb_day(out_path)
+    rates = parse_surface_rates_m3s(out_path)
+    if rates and max(float(v.get("INJ", 0.0)) for v in rates.values()) <= 1.0e-12:
+        rates = {}
     rate_times = sorted(rates.keys())
 
     def nearest_bhp(t):
@@ -343,6 +345,9 @@ def compare_case(
         porosity_prior=0.3,
         viscosity_pa_s=1.0e-3,
         n_k_iterations=2,
+        assimilate_k=True,
+        esmda_ne=12,
+        esmda_assimilations=3,
     )
 
     # align last CMG Sw with last history
@@ -413,8 +418,8 @@ def write_markdown(results: list[dict], path: Path) -> None:
         "| 角色 | 全物理黑油/海水驱 **正演** | 传感器 **反演/重建** | 目标不同，不追求逐格数值等价 |",
         "| 网格 | VARI/CART + DTOP/FAULT/TRANSI | 正交结构化 | 软件不保留角点/断层网格几何 |",
         "| 压力 | 多相耦合求解 | TPFA 单相 + 井 Dirichlet + 边界 P/Q | 井点可精确匹配；全场近似 |",
-        "| 饱和度 | 多相输运 | IDW + **达西通量迎风输运** | 已改善流相关足迹；仍非黑油 |",
-        "| 物性 | 输入已知非均质 k | 由 p/S/通量反演 | 欠定；通道区 k 可升高 |",
+        "| 饱和度 | 多相输运 | 锁 k 后两相 fw 迎风输运 | 足迹应跟通道；非 IMEX 逐格等价 |",
+        "| 物性 | 输入已知非均质 k | 指示先验 + ES-MDA 后验 log k | 欠定；通道区 k 应由观测抬升 |",
         "| 验证模型 | 起伏通道 / 断层狗腿（**非均质**） | 同算例井传感器驱动 | 禁止均质对照作为通过标准 |",
         "",
         "## 定量对比（本机 CMG .out）",
@@ -454,8 +459,8 @@ def write_markdown(results: list[dict], path: Path) -> None:
             "## 建议改进优先级",
             "",
             "1. 将 CMG 井控/产注量写入边界/井源项，缩小压力与足迹差。",
-            "2. 饱和度输运加入相对渗透率/分流量（更接近黑油水驱）。",
-            "3. ES-MDA 用 CMG 井压时间序列做非均质 k 后验。",
+            "2. 断层狗腿仍弱：需要更强局部化或把盲测点 p/Sw 当成主指标。",
+            "3. 主指标是盲测点 p/Sw 与 ΔSw Dice，不是全场 Sw L2。",
             "",
         ]
     )

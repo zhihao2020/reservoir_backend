@@ -1,0 +1,2919 @@
+请首先完整审查当前仓库，不要默认当前代码、接口、目录结构、测试用例或历史设计是正确的。
+
+这是一个**绿地项目**：
+
+* 不要求兼容旧 API。
+* 不要求兼容历史配置文件。
+* 不要求保留旧目录结构。
+* 不要求保留已经不符合新设计的测试。
+* 可以删除、重命名、移动和重写现有模块。
+* 不允许为了“让旧测试继续通过”引入 compatibility shim。
+* 不允许在错误架构上继续叠加功能。
+* 如果现有实现与下面的物理问题定义冲突，应以新的物理问题定义为准。
+* 优先保证物理正确性、数值正确性、可验证性、反演可用性，其次才是 API 稳定性。
+* 保持代码简单、清晰、可读，避免不必要的设计模式、抽象层和复杂 Python 语法。
+* 不做过度设计。
+* 不允许留下大量 `TODO/pass/NotImplementedError` 来伪装“架构完成”。
+* 高级能力可以明确列入 roadmap，但当前实现必须有一个完整可运行的 baseline。
+
+本轮工作流程必须是：
+
+1. 完整阅读仓库源码、tests、examples、CLI、config、docs。
+2. 建立“当前实现 vs 本需求”的 gap matrix。
+3. 找出错误假设、错误物理模型、错误的数据定义和已经失效的测试。
+4. 给出目标架构。
+5. 在确认目标架构后直接进行必要的绿地重构。
+6. 删除被新架构替代的旧代码和旧测试。
+7. 建立新的物理验证、数值验证、反演验证。
+8. 最后重新审查整个仓库，而不是只检查自己修改的文件。
+
+---
+
+# 1. 项目的真实问题定义
+
+本项目不是普通油藏生产预测软件，也不是单纯的 Darcy 方程求解器。
+
+目标是：
+
+> **针对页岩油相关物理实验的三维多相渗流数字孪生与反演后端。**
+
+实验对象是：
+
+[
+300,mm\times300,mm\times300,mm
+]
+
+三维立方试块。
+
+试块内部：
+
+* 经过人工构造；
+* 可能存在不同填砂区域；
+* 可能存在高渗/低渗结构；
+* 可能存在倾斜构造；
+* 可能存在隔层；
+* 可能存在人工裂缝或类似薄层结构；
+* 构造可能部分已知，也可能存在不确定性。
+
+试块具有：
+
+* 注入端；
+* 采出端；
+* 若干内部压力传感器；
+* 若干内部饱和度传感器。
+
+实验提供随时间变化的数据，包括但不限于：
+
+* 注入端流量；
+* 注入端压力；
+* 采出端流量；
+* 采出端压力；
+* 注入流体组成；
+* 产出油/气/水比例；
+* 内部测点压力；
+* 内部测点饱和度。
+
+最终希望重建：
+
+### 动态状态场
+
+[
+p(x,y,z,t)
+]
+
+[
+S_w(x,y,z,t)
+]
+
+[
+S_o(x,y,z,t)
+]
+
+[
+S_g(x,y,z,t)
+]
+
+其中：
+
+[
+S_w+S_o+S_g=1
+]
+
+### 静态物性/结构参数
+
+至少包括：
+
+[
+K(x,y,z)
+]
+
+以及条件允许时：
+
+[
+\phi(x,y,z)
+]
+
+进一步可以包括：
+
+* permeability tensor；
+* fracture permeability；
+* fracture aperture；
+* relative permeability parameters；
+* capillary pressure parameters；
+* structure/facies parameters。
+
+必须严格区分：
+
+**渗透率、孔隙度属于静态物性参数。**
+
+**压力、饱和度属于动态状态。**
+
+饱和度不得再被错误定义为“静态物性场”。
+
+---
+
+# 2. 最终数字孪生的数学结构
+
+总体模型应该明确表达为：
+
+[
+m=
+{
+K,\phi,
+\theta_{kr},
+\theta_{pc},
+\theta_{frac},
+...
+}
+]
+
+其中 (m) 是静态模型参数。
+
+控制量：
+
+[
+u(t)
+]
+
+包括：
+
+* injection rate；
+* production pressure；
+* injection pressure；
+* injection composition；
+* 其他人为施加的实验控制。
+
+状态：
+
+[
+x_t=
+[
+p_t,S_{w,t},S_{g,t}
+]
+]
+
+并由：
+
+[
+S_o=1-S_w-S_g
+]
+
+得到油相饱和度。
+
+正演：
+
+[
+x_{0:T}=F(m,u_{0:T})
+]
+
+传感器映射：
+
+[
+d^{sim}=H(x,m)
+]
+
+实验观测：
+
+[
+d^{obs}
+]
+
+反演：
+
+[
+d^{obs}
+\rightarrow
+m^{posterior}
+]
+
+最终系统不是只输出一个 deterministic solution，而应该输出：
+
+[
+E[K]
+]
+
+[
+\sigma_K
+]
+
+以及状态场的：
+
+[
+E[p],\sigma_p
+]
+
+[
+E[S_w],\sigma_{S_w}
+]
+
+等。
+
+系统必须承认 inverse problem 的非唯一性。
+
+不得把某个单一反演结果包装成“唯一真实地下模型”。
+
+---
+
+# 3. Controls 与 Observations 必须彻底分开
+
+这是必须审查的重点。
+
+如果实验采用：
+
+[
+q_{inj}(t)=specified
+]
+
+那么该变量属于：
+
+`Control`
+
+而不是反演误差中的普通 observation。
+
+此时可用于反演的是相应：
+
+[
+p_{inj}^{obs}(t)
+]
+
+反之，如果：
+
+[
+p_{prod}(t)=specified
+]
+
+是恒压采出条件，那么：
+
+[
+q_{prod}^{obs}(t)
+]
+
+才属于 observation。
+
+不得把同一井同一时刻的压力和流量同时作为严格边界条件，然后又拿它们做 history matching。
+
+请建立明确模型：
+
+```text
+Controls
+Observations
+SensorMeasurements
+ExperimentalConditions
+```
+
+控制条件用于正演。
+
+观测数据用于反演和验证。
+
+---
+
+# 4. 不能使用普通机器学习随机 train/test 划分
+
+这个项目不是：
+
+```text
+random 80% train
+random 20% test
+```
+
+反演验证应该至少支持三种方式。
+
+## 4.1 空间留出验证
+
+例如 20 个内部测点：
+
+```text
+15 assimilation sensors
+5 hold-out sensors
+```
+
+5 个 hold-out sensor 完全不参与反演。
+
+posterior model 必须预测这些位置。
+
+---
+
+## 4.2 时间外推验证
+
+例如：
+
+```text
+0–60 min
+```
+
+用于 history matching。
+
+```text
+60–100 min
+```
+
+完全用于 forward prediction。
+
+模型在 60 min 后不得再用未来 observation 修正参数。
+
+---
+
+## 4.3 Synthetic truth
+
+必须具有完整 synthetic inversion benchmark：
+
+先人工定义：
+
+[
+K_{true}
+]
+
+例如：
+
+* layered case；
+* high-perm channel；
+* low-perm barrier；
+* anisotropic case；
+* fractured case。
+
+正演生成 synthetic sensor measurements。
+
+加入已知噪声。
+
+然后使用 inverse pipeline 进行反演。
+
+因为真实实验中的真实 3D K 不可直接知道，所以 synthetic truth 是反演算法验证的核心。
+
+---
+
+# 5. 网格体系必须重新审查
+
+## 5.1 基础尺寸
+
+试块：
+
+```text
+300 mm × 300 mm × 300 mm
+```
+
+如果基础网格：
+
+```text
+10 mm
+```
+
+则必须是：
+
+```text
+30 × 30 × 30 = 27,000 cells
+```
+
+不是 125,000。
+
+```text
+50 × 50 × 50 = 125,000
+```
+
+对应约：
+
+```text
+6 mm
+```
+
+网格。
+
+第一版推荐：
+
+```text
+10 mm / 30³ / 27k cells
+```
+
+作为 baseline。
+
+---
+
+# 6. 必须分离三种空间概念
+
+当前代码如果把它们混在一起，需要重构。
+
+必须区分：
+
+## Parameter Grid
+
+定义需要反演的静态模型参数。
+
+例如：
+
+```text
+6³
+10³
+30³
+```
+
+不一定等于计算网格。
+
+---
+
+## Simulation Grid
+
+PDE 求解网格。
+
+例如：
+
+```text
+30³ baseline
+```
+
+局部可以加密。
+
+---
+
+## Observation Geometry
+
+真实传感器的位置和尺寸。
+
+传感器位置：
+
+```text
+(x, y, z)
+```
+
+不要求和网格节点重合。
+
+---
+
+# 7. 传感器不得决定网格
+
+如果压力传感器位于：
+
+```text
+(73.2 mm, 116.8 mm, 205 mm)
+```
+
+不得要求网格必须在此坐标产生 node。
+
+必须有：
+
+```text
+ObservationOperator
+```
+
+负责：
+
+[
+x\rightarrow d
+]
+
+至少支持：
+
+### PointSensor
+
+三线性或一般 cell interpolation。
+
+### VolumeSensor
+
+如果真实传感器有有限尺寸，使用：
+
+[
+d_s=
+\frac{1}{V_s}
+\int_{V_s}x,dV
+]
+
+的离散近似。
+
+### Well/PortObservation
+
+井端压力、总流量、phase rate、water cut 等。
+
+必须允许 measurement geometry 与 simulation grid 完全解耦。
+
+---
+
+# 8. Grid API 不允许只围绕 nx/ny/nz 设计
+
+即使第一版只实现 Cartesian grid，核心接口也不应该假设永远是规则网格。
+
+建议基础拓扑至少表达：
+
+```text
+Grid
+    cells
+    faces
+    nodes                  # 如果需要
+    neighbors
+    cell_centers
+    face_centers
+    face_normals
+    cell_volumes
+    face_areas
+```
+
+内部 field 建议以：
+
+```text
+(n_cells,)
+```
+
+或：
+
+```text
+(n_cells, n_components)
+```
+
+作为主表示。
+
+不要让整个 solver 到处依赖：
+
+```text
+field[nz, ny, nx]
+```
+
+三维 reshape 主要用于：
+
+* visualization；
+* Cartesian-specific operations；
+* IO。
+
+这样后续才有可能支持：
+
+```text
+CartesianGrid
+LocallyRefinedGrid
+UnstructuredGrid
+```
+
+而不重写整个 physics layer。
+
+---
+
+# 9. 网格加密：必须支持，但分阶段实现
+
+## V1：静态局部加密
+
+必须优先支持：
+
+* injector 周围；
+* producer 周围；
+* sensor 周围；
+* fracture 周围；
+* material interface 周围。
+
+基础：
+
+```text
+10 mm
+```
+
+局部可：
+
+```text
+5 mm
+```
+
+后续：
+
+```text
+2.5 mm
+```
+
+但不能为了一个薄裂缝把整个 300 mm cube 细化到 1 mm。
+
+---
+
+## V2：动态 AMR
+
+后续支持根据：
+
+[
+|\nabla S|
+]
+
+[
+|\nabla p|
+]
+
+residual/error indicator
+
+等动态 refinement。
+
+但动态 AMR 不得作为第一阶段阻塞项。
+
+第一阶段应优先完成：
+
+```text
+background grid + deterministic local refinement
+```
+
+---
+
+# 10. Ensemble 与 AMR 必须兼容
+
+Ensemble member 不能任意拥有完全不同的 parameter vector dimensionality。
+
+因此必须明确：
+
+```text
+Reference Parameter Space
+```
+
+保持固定。
+
+例如：
+
+```text
+10 × 10 × 10 permeability parameters
+```
+
+始终固定。
+
+simulation mesh 可以局部细化，但参数应通过：
+
+```text
+ParameterMapper
+```
+
+从统一 parameter space 映射到 simulation mesh。
+
+否则：
+
+[
+C_{md}
+]
+
+等 ensemble covariance 无法一致计算。
+
+---
+
+# 11. 不允许默认每个 cell 独立反演 K
+
+30³ 有：
+
+```text
+27,000 cells
+```
+
+50³ 有：
+
+```text
+125,000 cells
+```
+
+如果每个 cell 独立反演一个 K，而实验只有有限井数据和有限测点，这是严重欠定问题。
+
+因此必须具有：
+
+```text
+Parameterization
+```
+
+抽象。
+
+至少支持三层。
+
+## Level 1：RegionParameterization
+
+例如：
+
+```text
+K_region_1
+K_region_2
+K_region_3
+...
+```
+
+首先验证完整 inverse pipeline。
+
+---
+
+## Level 2：CoarseFieldParameterization
+
+例如 forward grid：
+
+```text
+30³
+```
+
+但 permeability parameter grid：
+
+```text
+6³
+```
+
+或：
+
+```text
+10³
+```
+
+然后插值/上采样到 simulation grid。
+
+---
+
+## Level 3：Advanced Geological Parameterization
+
+后续再考虑：
+
+* PCA；
+* KL expansion；
+* facies；
+* level set；
+* latent representation；
+* fracture parameters。
+
+不得第一版就直接反演 27k/125k 个完全独立 K。
+
+---
+
+# 12. 参数必须进行合理变换
+
+例如渗透率：
+
+[
+\theta_K=\log K
+]
+
+inverse algorithm 更新：
+
+[
+\theta_K
+]
+
+而不是直接对负值无约束的 K 做 Gaussian update。
+
+孔隙度可以使用 bounded transform。
+
+饱和度更新后必须满足：
+
+[
+0\le S_\alpha\le1
+]
+
+以及：
+
+[
+S_w+S_o+S_g=1
+]
+
+relative permeability / capillary parameters 也必须保证物理允许范围。
+
+---
+
+# 13. 正演不能停留在简单稳态 Darcy
+
+现有代码如果只有：
+
+[
+\nabla\cdot
+\left(
+-\frac K\mu\nabla p
+\right)
+=q
+]
+
+不得声称已经支撑最终页岩油 digital twin。
+
+该模型只能保留作为：
+
+```text
+single-phase verification solver
+```
+
+或低级 benchmark。
+
+---
+
+# 14. 最低目标多相物理模型
+
+基础三相模型至少需要描述：
+
+对于：
+
+[
+\alpha\in{w,o,g}
+]
+
+质量守恒：
+
+[
+\frac{\partial}
+{\partial t}
+(
+\phi\rho_\alpha S_\alpha
+)
++
+\nabla\cdot
+(
+\rho_\alpha u_\alpha
+)
+=
+
+q_\alpha
+]
+
+Darcy flux：
+
+[
+u_\alpha
+========
+
+*
+
+K
+\lambda_\alpha
+(
+\nabla p_\alpha-\rho_\alpha g
+)
+]
+
+其中：
+
+[
+\lambda_\alpha=
+\frac{k_{r\alpha}}{\mu_\alpha}
+]
+
+满足：
+
+[
+S_w+S_o+S_g=1
+]
+
+并至少预留：
+
+[
+p_o-p_w=P_{cow}
+]
+
+[
+p_g-p_o=P_{cgo}
+]
+
+毛管关系。
+
+---
+
+# 15. 第一阶段不要无条件做 compositional
+
+正演体系必须分层。
+
+## Model A：single phase
+
+用途：
+
+* 数值验证；
+* pressure inversion benchmark；
+* grid benchmark。
+
+---
+
+## Model B：two-phase immiscible
+
+用途：
+
+* displacement；
+* Buckley-Leverett；
+* saturation front；
+* capillary；
+* inverse benchmark。
+
+---
+
+## Model C：three-phase immiscible / slightly compressible
+
+这是实验 baseline candidate。
+
+---
+
+## Model D：black-oil
+
+仅在真实实验出现：
+
+* dissolved gas；
+* vaporized oil；
+* bubble-point behavior；
+* 明显 PVT 变化；
+
+时进入。
+
+不得因为项目背景是“页岩油”就无条件堆 black-oil/compositional complexity。
+
+物理模型必须由实验流体和压力范围决定。
+
+---
+
+# 16. 相对渗透率必须模块化
+
+需要类似：
+
+```text
+RelativePermeabilityModel
+```
+
+支持至少：
+
+```text
+CoreyTwoPhase
+```
+
+并为三相提供合理扩展接口。
+
+不得把 Corey 参数硬编码进 transport solver。
+
+---
+
+# 17. 毛管压力必须模块化
+
+30 cm 实验尺度下不得默认：
+
+```text
+Pc = 0
+```
+
+必须至少允许：
+
+```text
+CapillaryPressureModel
+```
+
+包括：
+
+```text
+NoCapillary
+BrooksCorey
+VanGenuchten
+```
+
+等适用实现。
+
+实际实验是否开启由配置决定。
+
+---
+
+# 18. 可压缩性不得硬编码
+
+至少需要明确区分：
+
+```text
+incompressible
+slightly_compressible
+black_oil
+```
+
+rock compressibility 和 fluid compressibility 应属于 physics 配置。
+
+---
+
+# 19. 页岩油背景必须考虑 fracture/matrix，但不要过度实现
+
+架构必须允许：
+
+```text
+Matrix
+Fracture
+MatrixFractureTransfer
+```
+
+但第一阶段不强制实现完整工业级 fracture simulator。
+
+至少需要明确支持：
+
+### 已知厚构造
+
+通过 material/region map 表达。
+
+### 薄裂缝
+
+后续采用：
+
+```text
+embedded feature
+DFM
+EDFM
+mixed-dimensional
+```
+
+之一。
+
+不得通过把整个 cube 暴力细化到裂缝 aperture 尺度解决。
+
+---
+
+# 20. 页岩相关高级物理必须是可选扩展
+
+根据实验条件判断是否需要：
+
+* stress-sensitive permeability；
+* fracture aperture change；
+* non-Darcy flow；
+* diffusion；
+* adsorption；
+* PVT；
+* matrix-fracture transfer。
+
+禁止因为“页岩”二字就同时开启所有物理。
+
+必须在 documentation 中说明：
+
+```text
+为什么需要
+什么实验条件下启用
+目前实现到什么程度
+```
+
+---
+
+# 21. 离散方法必须根据网格条件选择
+
+当前代码需要检查 TPFA 使用是否存在隐含错误。
+
+## Cartesian + K-orthogonal
+
+允许：
+
+```text
+TPFA
+```
+
+作为 baseline。
+
+---
+
+## Skewed / general grid / rotated anisotropy
+
+必须预留：
+
+```text
+MPFA
+```
+
+或 compatible discretization。
+
+不得在明显非 K-orthogonal 网格上继续默认使用 TPFA 并声称结果可靠。
+
+---
+
+# 22. Solver 架构
+
+不要把物理模型、离散、nonlinear solve、time stepping 写在一个大函数中。
+
+建议至少分离：
+
+```text
+PhysicsModel
+Discretization
+LinearSolver
+NonlinearSolver
+TimeStepper
+SimulationRunner
+```
+
+但不要创建几十个只包一层函数的无意义 class。
+
+---
+
+# 23. 时间推进必须自适应
+
+对于 multiphase transport，必须支持：
+
+```text
+adaptive dt
+```
+
+根据：
+
+* CFL；
+* nonlinear convergence；
+* saturation change；
+* convergence failure；
+
+自动缩小或放大 timestep。
+
+失败时不得直接产生 NaN 然后继续计算。
+
+---
+
+# 24. Sequential 与 Fully Implicit 的定位
+
+不要为了追求架构漂亮同时写两套完整 solver。
+
+建议：
+
+## 第一阶段
+
+保留/完善当前已有的：
+
+```text
+pressure + transport
+```
+
+sequential / IMPES 路线，用于：
+
+* benchmark；
+* synthetic inversion；
+* 低成本 ensemble forward。
+
+必须：
+
+* conservation；
+* CFL control；
+* capillary；
+* three-phase constraints；
+* adaptive timestep。
+
+## 后续
+
+为 strongly nonlinear three-phase / black-oil 建立：
+
+```text
+FullyImplicitSolver
+```
+
+接口和实施计划。
+
+不得把简单 sequential solver 包装成工业级 black-oil solver。
+
+---
+
+# 25. 注采端不要默认套用油田尺度 Peaceman well model
+
+这是 30 cm laboratory block。
+
+注采可能实际上是：
+
+* inlet port；
+* outlet port；
+* perforated region；
+* small hole；
+* surface patch。
+
+因此应该优先抽象：
+
+```text
+FlowPort
+InjectionPort
+ProductionPort
+```
+
+支持：
+
+```text
+rate controlled
+pressure controlled
+```
+
+以及作用区域。
+
+如果未来确实需要 reservoir well model，再单独提供：
+
+```text
+WellModel
+```
+
+不要默认把实验 inlet/outlet 当成传统油藏井。
+
+---
+
+# 26. Observation Model 是一级模块
+
+必须具有独立：
+
+```text
+ObservationModel
+```
+
+至少负责：
+
+* sensor coordinates；
+* sensor support volume；
+* time sampling；
+* interpolation；
+* missing measurements；
+* measurement uncertainty；
+* measurement covariance；
+* unit conversion；
+* channel mapping。
+
+正演 solver 不允许直接读取实验 CSV。
+
+实验 IO 与 PDE solver 必须解耦。
+
+---
+
+# 27. 反演误差不能只使用普通 MSE
+
+应支持：
+
+[
+J=
+r^TR^{-1}r
+]
+
+其中：
+
+[
+r=d^{obs}-d^{sim}
+]
+
+(R) 为 measurement error covariance。
+
+不同类型传感器：
+
+* pressure；
+* flow；
+* saturation；
+
+量纲和噪声水平完全不同。
+
+不得直接拼接原始数值然后计算普通 MSE。
+
+---
+
+# 28. Ensemble inversion 是主反演路线
+
+必须建立：
+
+```text
+Assimilator
+```
+
+统一接口。
+
+但不要写成复杂“万能自动算法平台”。
+
+第一阶段至少考虑：
+
+```text
+ESMDA
+```
+
+作为 batch parameter history matching baseline。
+
+ensemble：
+
+[
+m_1,m_2,\ldots,m_{N_e}
+]
+
+每个 member：
+
+[
+d_i=H(F(m_i))
+]
+
+然后利用 parameter-data covariance 更新模型。
+
+---
+
+# 29. ES-MDA 必须完整实现，而不是示意代码
+
+至少需要：
+
+* ensemble initialization；
+* perturbed observations 或合理 deterministic variant；
+* measurement covariance；
+* multiple assimilation steps；
+* inflation factors；
+* covariance calculation；
+* optional localization；
+* transformed parameter update；
+* reproducible random seed；
+* convergence diagnostics；
+* ensemble spread diagnostics。
+
+不得只有：
+
+```text
+mean + covariance + one update
+```
+
+然后命名为 ES-MDA。
+
+---
+
+# 30. 不要只绑定一个反演算法
+
+用户担心单算法在不同问题上不适用。
+
+因此 architecture 应支持：
+
+```text
+ESMDA
+IterativeEnsembleSmoother
+EnKF
+```
+
+但不同算法承担不同任务。
+
+## ES-MDA
+
+用于：
+
+```text
+offline / batch parameter calibration
+```
+
+---
+
+## Iterative Ensemble Smoother
+
+用于：
+
+```text
+strong nonlinear batch inverse problem
+```
+
+或 ES-MDA 明显收敛困难的问题。
+
+---
+
+## EnKF
+
+用于：
+
+```text
+online state assimilation
+```
+
+即实时 digital twin。
+
+第一阶段必须至少完整实现 ES-MDA。
+
+其他算法如果当前没有实现，应留下清晰接口和 roadmap，但不要留下虚假空壳类。
+
+---
+
+# 31. 简单的 Assimilation Planner
+
+不要引入 AI agent 自动选算法。
+
+第一版使用明确规则即可：
+
+```text
+batch static parameter inversion
+    -> ESMDA
+
+batch + strong nonlinearity / poor convergence
+    -> IES candidate
+
+streaming observation / state correction
+    -> EnKF
+```
+
+Planner 只承担显式 routing。
+
+不要过度智能化。
+
+---
+
+# 32. Offline 与 Online Twin 必须区分
+
+## Offline calibration
+
+使用历史实验：
+
+[
+D_{0:T}
+]
+
+更新：
+
+[
+m
+]
+
+主要是：
+
+* K；
+* phi；
+* fracture parameters；
+* kr/Pc parameters。
+
+推荐：
+
+```text
+ES-MDA / IES
+```
+
+---
+
+## Online assimilation
+
+实验继续运行时获得：
+
+[
+D_{t+1}
+]
+
+更新：
+
+[
+x_{t+1}
+]
+
+以及必要的慢变量参数。
+
+推荐：
+
+```text
+EnKF
+```
+
+不得混成一个模糊的 `inverse()` 函数。
+
+---
+
+# 33. 参数与状态联合更新需要保证物理合法
+
+如果未来使用 augmented state：
+
+[
+z=
+[x,m]^T
+]
+
+update 后必须进行：
+
+```text
+StateProjection
+```
+
+保证：
+
+[
+S_\alpha\in[0,1]
+]
+
+[
+S_w+S_o+S_g=1
+]
+
+K 为正。
+
+phi 在合理区间。
+
+必要时 assimilation 后重新做 physics-consistent restart。
+
+不得允许 EnKF 一次 update 后产生：
+
+```text
+Sw = -0.2
+So = 1.4
+```
+
+仍继续运行。
+
+---
+
+# 34. 必须处理 ensemble collapse 和虚假相关
+
+至少需要 diagnostics：
+
+* ensemble spread；
+* posterior/prior variance ratio；
+* data mismatch；
+* rank / singular values；
+* correlation range；
+* parameter update norm。
+
+预留或实现：
+
+```text
+localization
+inflation
+```
+
+特别是高维 K field。
+
+---
+
+# 35. 最终结果必须输出不确定性
+
+不得只输出：
+
+```text
+best_K.npy
+```
+
+至少输出：
+
+```text
+K_mean
+K_std
+K_quantiles
+
+pressure_mean
+pressure_std
+
+Sw_mean
+Sw_std
+
+So_mean
+So_std
+
+Sg_mean
+Sg_std
+```
+
+以及：
+
+```text
+sensor_residuals
+ensemble_diagnostics
+assimilation_history
+```
+
+---
+
+# 36. 必须有 identifiability diagnostics
+
+如果某个参数实际无法由现有 sensor 约束，系统不应该给出虚假的确定结果。
+
+至少评估：
+
+```text
+prior variance
+posterior variance
+ensemble sensitivity
+parameter-data correlation
+```
+
+并能够发现：
+
+```text
+posterior ≈ prior
+```
+
+意味着数据没有约束住该参数。
+
+---
+
+# 37. 实验设计应该作为后续能力
+
+未来 digital twin 应该可以评估：
+
+```text
+下一组传感器放哪里？
+下一次改变什么注入流量？
+是否做 pressure pulse？
+哪个实验最能降低 K uncertainty？
+```
+
+即：
+
+```text
+ExperimentalDesign
+SensorPlacement
+InformationGain
+```
+
+但该部分属于后续阶段，不阻塞当前 baseline。
+
+---
+
+# 38. AI 的定位必须严格控制
+
+当前阶段禁止：
+
+```text
+sensors -> neural network -> entire K/S field
+```
+
+直接代替物理模型作为主路线。
+
+正确路线：
+
+```text
+Physics Solver
+        +
+Ensemble Inversion
+        +
+Data Assimilation
+```
+
+AI 后续用于：
+
+* surrogate forward；
+* parameter dimension reduction；
+* geological latent representation；
+* anomaly detection；
+* experimental design；
+* sensor placement；
+* accelerator。
+
+Physics solver 必须先可靠。
+
+---
+
+# 39. 推荐目标目录结构
+
+不要机械照抄，如果现有代码有更清晰设计可以调整。
+
+建议目标类似：
+
+```text
+src/reservoir_backend/
+
+    domain/
+        experiment.py
+        controls.py
+        observations.py
+        states.py
+        parameters.py
+
+    grid/
+        base.py
+        cartesian.py
+        geometry.py
+        mapping.py
+        refinement.py
+
+    rock/
+        properties.py
+        regions.py
+        permeability.py
+        porosity.py
+
+    fluids/
+        properties.py
+        phases.py
+        pvt.py
+
+    physics/
+        single_phase.py
+        two_phase.py
+        three_phase.py
+        relperm.py
+        capillary.py
+        compressibility.py
+        fractures.py
+
+    discretization/
+        tpfa.py
+        mpfa.py             # only if actually implemented
+        transmissibility.py
+        upwind.py
+
+    solver/
+        pressure.py
+        transport.py
+        sequential.py
+        nonlinear.py
+        timestep.py
+        linear.py
+
+    ports/
+        base.py
+        injection.py
+        production.py
+
+    observation/
+        operator.py
+        sensor.py
+        well_observation.py
+        covariance.py
+
+    inverse/
+        parameterization.py
+        ensemble.py
+        esmda.py
+        ies.py              # only if actually implemented
+        enkf.py             # only if actually implemented
+        localization.py
+        transforms.py
+        diagnostics.py
+
+    twin/
+        offline.py
+        online.py
+        reconstruction.py
+
+    validation/
+        analytical.py
+        synthetic_truth.py
+        metrics.py
+
+    io/
+        experiment_reader.py
+        config.py
+        results.py
+
+    cli/
+        main.py
+```
+
+不要创建空目录或大量空文件。
+
+只有真正需要时再创建模块。
+
+---
+
+# 40. 依赖原则
+
+核心数值计算优先：
+
+```text
+NumPy
+SciPy
+```
+
+可使用：
+
+```text
+pydantic/dataclasses
+```
+
+视当前工程风格选择一个，不要混乱。
+
+不要把以下大型工具直接作为核心 runtime dependency：
+
+```text
+OPM
+MRST
+PorePy
+COMSOL
+```
+
+它们可以作为：
+
+* 理论参考；
+* benchmark；
+* external validation；
+
+而不是让项目退化成外部软件 wrapper。
+
+如果未来 general mesh 确实需要：
+
+```text
+meshio
+gmsh
+```
+
+可以作为 optional dependency，但要说明必要性。
+
+---
+
+# 41. 内部统一使用 SI
+
+所有 physics core 必须使用 SI：
+
+```text
+m
+Pa
+s
+m³/s
+Pa·s
+kg/m³
+m²
+```
+
+输入文件可以使用：
+
+```text
+mm
+mL/min
+mD
+bar
+```
+
+但必须在 IO 边界完成转换。
+
+不得在 solver 内部混合：
+
+```text
+mm + m
+mD + m²
+bar + Pa
+```
+
+---
+
+# 42. 数组规范必须统一
+
+选择并文档化唯一 field convention。
+
+推荐：
+
+```text
+scalar field:
+    (n_cells,)
+
+vector/tensor field:
+    (n_cells, n_components)
+```
+
+不要不同模块分别使用：
+
+```text
+(nx, ny, nz)
+(nz, ny, nx)
+(n_cells,)
+```
+
+却没有统一 mapping。
+
+Cartesian reshape 必须由 grid helper 处理。
+
+---
+
+# 43. 不允许隐式 global state
+
+Case、grid、fluid、rock、controls、observations 应明确传递。
+
+禁止：
+
+* module-level mutable config；
+* hidden singleton；
+* 隐式当前网格；
+* 隐式当前 fluid。
+
+这对 ensemble 并行尤其重要。
+
+---
+
+# 44. Ensemble forward 必须支持并行
+
+每个 ensemble member 本质独立。
+
+架构应该允许：
+
+```text
+serial
+process pool
+```
+
+至少两种 execution backend。
+
+第一阶段 CPU multiprocessing 即可。
+
+不要第一阶段引入 GPU 框架。
+
+并行结果必须在固定 random seed 下可重复。
+
+---
+
+# 45. 必须考虑缓存
+
+可缓存：
+
+* grid geometry；
+* topology；
+* observation mapping；
+* fixed structural matrices。
+
+但如果 K 改变导致 transmissibility 改变，不得错误复用旧 transmissibility。
+
+缓存必须有明确 invalidation 条件。
+
+---
+
+# 46. Forward Solver 的验证要求
+
+必须建立以下 benchmark。
+
+## Single phase
+
+### 1D analytical pressure
+
+验证：
+
+* pressure；
+* flux；
+* conservation。
+
+### 2D/3D homogeneous flow
+
+验证：
+
+* boundary；
+* source/sink；
+* flux consistency。
+
+### anisotropic K
+
+检查 tensor permeability。
+
+---
+
+# 47. Two-phase 验证
+
+至少：
+
+### Buckley-Leverett
+
+无毛管、无重力场景。
+
+比较：
+
+* front location；
+* saturation profile；
+* water cut。
+
+### mass conservation
+
+检查：
+
+[
+M^{n+1}-M^n
+]
+
+与 boundary/source flux。
+
+### saturation bounds
+
+必须保证：
+
+[
+0\le S\le1
+]
+
+---
+
+# 48. Capillary 验证
+
+至少检查：
+
+* Pc 单调性；
+* equilibrium；
+* capillary diffusion；
+* endpoint behavior。
+
+---
+
+# 49. Three-phase 验证
+
+至少：
+
+* saturation closure；
+* phase disappearance；
+* phase mobility；
+* phase rate；
+* global conservation；
+* timestep stability。
+
+如果当前代码做不到，不得宣称 three-phase complete。
+
+---
+
+# 50. Grid 验证
+
+必须检查：
+
+```text
+300 mm / 10 mm -> 30³
+```
+
+以及：
+
+* cell volume；
+* total block volume；
+* face orientation；
+* neighbors；
+* boundary identification。
+
+总 volume 必须正确恢复：
+
+[
+0.3^3 m^3
+]
+
+---
+
+# 51. Sensor Observation 验证
+
+建立已知解析场：
+
+[
+p=x+2y+3z
+]
+
+检查任意 sensor coordinate interpolation 是否正确。
+
+对于 volume sensor：
+
+检查体积平均结果。
+
+不能只测试恰好位于 cell center 的 sensor。
+
+---
+
+# 52. Inversion 最小数学 benchmark
+
+必须建立 linear-Gaussian inverse problem。
+
+在具有解析 posterior 的问题上检查 ensemble update 是否合理。
+
+这比直接拿复杂 reservoir case 测 ES-MDA 更重要。
+
+---
+
+# 53. ES-MDA synthetic benchmark
+
+建立已知：
+
+[
+K_{true}
+]
+
+生成 synthetic experiment。
+
+至少对比：
+
+```text
+prior mismatch
+posterior mismatch
+
+prior K error
+posterior K error
+
+prior prediction
+posterior prediction
+
+prior variance
+posterior variance
+```
+
+目标不是要求 K 每个 cell 完全恢复，而是验证：
+
+* data match 改善；
+* hold-out prediction 改善；
+* uncertainty 合理收缩；
+* true model 位于合理 posterior 范围。
+
+---
+
+# 54. Hold-out validation 必须进入 tests/examples
+
+至少一个 example 必须实现：
+
+```text
+assimilated sensors
+hold-out sensors
+```
+
+然后打印：
+
+```text
+assimilation RMSE
+hold-out RMSE
+```
+
+避免只证明算法会过拟合传感器。
+
+---
+
+# 55. Future prediction validation
+
+至少一个 synthetic experiment：
+
+```text
+history period
+forecast period
+```
+
+历史阶段反演。
+
+forecast 阶段冻结 static parameters。
+
+评价未来：
+
+* pressure；
+* flow；
+* saturation。
+
+---
+
+# 56. 必须输出 mass balance report
+
+每次 simulation 至少能返回：
+
+```text
+initial_mass
+final_mass
+injected_mass
+produced_mass
+boundary_flux
+balance_error
+relative_balance_error
+```
+
+多相分别统计。
+
+不允许只有 saturation 图片但不知道是否守恒。
+
+---
+
+# 57. 每次 inverse run 必须有 diagnostics
+
+至少记录：
+
+```text
+iteration
+data_mismatch
+parameter_update_norm
+ensemble_spread
+failed_members
+simulation_runtime
+```
+
+ES-MDA 每个 assimilation step 都应保存。
+
+---
+
+# 58. Ensemble forward failure 必须处理
+
+某些 realization 可能因为：
+
+* 极端 K；
+* solver 不收敛；
+* timestep 失败；
+
+导致 forward failure。
+
+不能：
+
+```text
+NaN -> covariance
+```
+
+直接污染整个 ensemble。
+
+需要明确策略：
+
+* retry smaller dt；
+* reject invalid parameter；
+* regenerate member；
+* mark failed member；
+* abort if failure ratio exceeds threshold。
+
+该策略必须可配置且有日志。
+
+---
+
+# 59. 配置设计
+
+不要创建巨大 YAML，所有 solver 内部细节都暴露给用户。
+
+配置只应该包含有工程意义的参数。
+
+例如：
+
+```yaml
+geometry:
+  size_m: [0.3, 0.3, 0.3]
+
+grid:
+  type: cartesian
+  spacing_m: 0.01
+
+physics:
+  model: three_phase_immiscible
+  capillary: true
+  gravity: false
+
+inverse:
+  algorithm: esmda
+  ensemble_size: 100
+  assimilation_steps: 4
+
+experiment:
+  controls: ...
+  observations: ...
+```
+
+高级 tuning 可以有 expert config，但不要污染默认 case。
+
+---
+
+# 60. CLI 应围绕真实工作流，而不是零散功能
+
+建议最终：
+
+```text
+reservoir validate case.yaml
+
+reservoir simulate case.yaml
+
+reservoir invert case.yaml
+
+reservoir forecast case.yaml
+
+reservoir synthetic benchmark.yaml
+```
+
+而不是几十个单函数 CLI。
+
+---
+
+# 61. 输出文件必须可追溯
+
+一次 run 需要保存：
+
+```text
+run_config
+grid metadata
+physics metadata
+prior specification
+posterior statistics
+simulation result
+observation residuals
+diagnostics
+random seed
+software version / commit
+```
+
+保证实验可复现。
+
+---
+
+# 62. 不允许把所有 timestep 的所有 ensemble field 无脑全部保存
+
+例如：
+
+```text
+100 ensemble
+× 1000 timestep
+× 27k cells
+× multiple fields
+```
+
+会产生大量数据。
+
+必须区分：
+
+```text
+checkpoint
+observation time
+selected snapshots
+summary statistics
+```
+
+大场数据按需保存。
+
+---
+
+# 63. 当前测试策略需要大改时就直接改
+
+请检查当前 tests。
+
+把测试分成：
+
+```text
+unit/
+physics/
+numerics/
+inverse/
+integration/
+benchmark/
+```
+
+不要求一定用这些文件夹名，但语义必须清晰。
+
+旧测试如果验证的是：
+
+* 被废弃 API；
+* 错误数学行为；
+* 错误目录结构；
+* compatibility；
+
+直接删除。
+
+不要为了保持 pytest 数量而保留无意义测试。
+
+测试数量不是质量指标。
+
+---
+
+# 64. 对当前代码进行逐模块分类
+
+审查当前所有核心代码，将每个模块归入：
+
+```text
+KEEP
+REFACTOR
+REWRITE
+DELETE
+```
+
+并说明原因。
+
+特别检查当前已有：
+
+* pressure solver；
+* velocity/flux；
+* saturation；
+* relperm；
+* capillary；
+* CFL；
+* inversion；
+* fusion；
+* IO；
+* CLI；
+* validation。
+
+不要因为已有代码有大量测试就默认应该 KEEP。
+
+---
+
+# 65. 优先复用真正正确的已有实现
+
+绿地不代表全部重写。
+
+如果现有：
+
+* mass conservation；
+* TPFA；
+* Corey；
+* capillary；
+* CFL；
+* 3D topology；
+
+已经数学正确、接口也能适配新架构，则复用。
+
+但要迁移到新的 domain model。
+
+---
+
+# 66. 删除错误的“通用反演”设计
+
+如果当前 inverse 只是：
+
+```text
+Archie inversion
+EM inversion
+Acoustic inversion
+Fusion
+```
+
+而与新的：
+
+```text
+dynamic multiphase history matching
+```
+
+没有统一物理关系，需要重新判断定位。
+
+这些模块：
+
+* 如果仍有真实实验需求，可以作为 observation/petrophysical adapters；
+* 如果只是早期 demo，且干扰核心架构，可以删除。
+
+不要为了历史代码数量保留无关功能。
+
+---
+
+# 67. 必须重新定义“反演”这个词
+
+项目核心 inverse 应表示：
+
+[
+\text{dynamic observation}
+\rightarrow
+\text{static model parameter posterior}
+]
+
+而不是普通：
+
+```text
+measurement -> direct formula -> property
+```
+
+例如 Archie 可以是：
+
+```text
+PetrophysicalObservationModel
+```
+
+但不能代表整个 reservoir inverse framework。
+
+---
+
+# 68. Digital Twin Orchestrator
+
+最终需要一个很薄的 orchestrator：
+
+```text
+DigitalTwin
+```
+
+负责组织：
+
+```text
+Experiment
+ForwardModel
+ObservationModel
+Assimilator
+Reconstruction
+```
+
+不要让它自己实现 PDE 或 ES-MDA。
+
+例如概念上：
+
+```python
+twin.calibrate(history_data)
+
+twin.forecast(controls)
+
+twin.assimilate(new_observation)
+
+twin.reconstruct(time)
+```
+
+API 名称可调整，但职责必须清晰。
+
+---
+
+# 69. 不要过度 OOP
+
+不要创建：
+
+```text
+AbstractBaseFactory
+SolverFactoryFactory
+StrategyManager
+HandlerProvider
+```
+
+这种结构。
+
+优先：
+
+* dataclass；
+* Protocol；
+* 明确 function；
+* 小型 class。
+
+只有存在真正 interchangeable implementation 时才抽象。
+
+---
+
+# 70. 错误处理必须科学
+
+错误信息不能只是：
+
+```text
+solver failed
+```
+
+至少应该区分：
+
+```text
+InvalidSaturation
+InvalidPermeability
+MassBalanceError
+LinearSolveFailure
+NonlinearConvergenceFailure
+TimeStepUnderflow
+InvalidObservation
+EnsembleMemberFailure
+```
+
+但不要建立复杂 exception hierarchy。
+
+---
+
+# 71. Documentation 必须描述“模型假设”
+
+至少需要：
+
+```text
+docs/model_assumptions.md
+```
+
+说明：
+
+* current phases；
+* compressibility；
+* capillary；
+* gravity；
+* fractures；
+* relative permeability；
+* PVT；
+* discretization；
+* grid restrictions；
+* inverse assumptions。
+
+这样别人不能误用。
+
+---
+
+# 72. Documentation 必须描述“适用边界”
+
+例如：
+
+```text
+当前 TPFA solver 仅保证 Cartesian/K-orthogonal grid。
+```
+
+而不是写：
+
+```text
+supports arbitrary 3D grids
+```
+
+如果实际上没有验证。
+
+---
+
+# 73. 当前阶段明确不做
+
+除非已有强烈必要性，不要在本轮加入：
+
+* compositional EOS；
+* thermal；
+* THM；
+* chemical reaction；
+* GPU；
+* distributed cluster；
+* PINN；
+* deep surrogate；
+* GAN/VAE；
+* automatic experimental design；
+* full dynamic AMR；
+* industrial ECLIPSE deck compatibility；
+* 复杂 GUI。
+
+这些都是后续能力。
+
+---
+
+# 74. 第一阶段 P0 必须真正完成
+
+P0 是底座。
+
+必须完成：
+
+```text
+Experiment domain model
+Control/Observation separation
+Cartesian 30³ baseline
+generalized grid topology
+single-phase verification
+two-phase transport
+relative permeability
+capillary
+adaptive timestep
+mass conservation
+sensor observation operator
+synthetic experiment framework
+```
+
+如果现有代码已经实现，要迁移并验证。
+
+---
+
+# 75. 第二阶段 P1
+
+完成：
+
+```text
+three-phase baseline
+coarse K parameterization
+ES-MDA
+measurement covariance
+ensemble execution
+uncertainty output
+hold-out sensor validation
+future-time validation
+```
+
+做到这一阶段以后，才能称为：
+
+> laboratory multiphase inverse digital twin baseline
+
+---
+
+# 76. 第三阶段 P2
+
+根据真实实验再实现：
+
+```text
+fracture/matrix
+local mesh refinement
+MPFA/general grid
+stress-dependent K
+black-oil if required
+IES
+online EnKF
+```
+
+不能在实验尚未证明需要前全部实现。
+
+---
+
+# 77. 第四阶段 P3
+
+性能和高级能力：
+
+```text
+surrogate
+latent geological parameterization
+sensor placement
+experimental design
+dynamic AMR
+advanced UQ
+```
+
+---
+
+# 78. Codex 首先必须生成审查报告
+
+开始改代码以前，生成：
+
+```text
+docs/audit_2026.md
+```
+
+至少包含：
+
+## A. Current architecture
+
+当前代码真正是什么结构。
+
+## B. Existing capabilities
+
+不能只根据文件名判断，要确认实现。
+
+## C. Requirement matrix
+
+每个关键 requirement 标记：
+
+```text
+PASS
+PARTIAL
+FAIL
+MISSING
+OBSOLETE
+```
+
+## D. Physics errors
+
+所有物理错误或不充分假设。
+
+## E. Numerical errors
+
+所有离散、边界、守恒、稳定性风险。
+
+## F. Inversion errors
+
+现有反演是否真正属于 history matching/data assimilation。
+
+## G. Architecture debt
+
+哪些接口阻碍后续开发。
+
+## H. Delete list
+
+应该删除哪些历史模块/tests/API。
+
+## I. Reuse list
+
+哪些实现值得保留。
+
+---
+
+# 79. 然后生成 target architecture
+
+在：
+
+```text
+docs/target_architecture.md
+```
+
+明确：
+
+```text
+domain dependencies
+module boundaries
+data flow
+forward flow
+inverse flow
+online twin flow
+```
+
+特别画出：
+
+```text
+Experiment
+    |
+    +---- Controls
+    |
+Prior Parameters
+    |
+ParameterMapper
+    |
+Forward Simulator
+    |
+State Field
+    |
+ObservationOperator
+    |
+Predicted Observation
+    |
+Assimilator
+    |
+Posterior Parameters
+```
+
+---
+
+# 80. 再开始代码重构
+
+优先级：
+
+```text
+P0 architecture correctness
+>
+physics correctness
+>
+observation correctness
+>
+inverse correctness
+>
+performance
+>
+advanced features
+```
+
+不要为了漂亮目录先移动所有文件而不解决物理问题。
+
+---
+
+# 81. 每完成一个阶段都运行完整测试
+
+必须执行：
+
+```text
+pytest
+```
+
+以及必要 benchmark。
+
+任何被删除测试都要确认：
+
+是因为测试验证旧行为，
+
+而不是为了掩盖 regression。
+
+---
+
+# 82. 最终必须给我完整修改报告
+
+完成后输出：
+
+## 1. Current repository problems found
+
+逐条列出。
+
+## 2. Architecture changes
+
+说明为什么改。
+
+## 3. Deleted components
+
+说明为什么删除。
+
+## 4. Reused components
+
+说明为什么保留。
+
+## 5. Physics currently supported
+
+必须精确描述。
+
+## 6. Physics not yet supported
+
+不要夸大。
+
+## 7. Inversion currently supported
+
+例如：
+
+```text
+ES-MDA + coarse permeability parameterization
+```
+
+## 8. Validation results
+
+包括：
+
+* analytical；
+* synthetic；
+* conservation；
+* hold-out。
+
+## 9. Remaining technical risks
+
+特别包括：
+
+* three-phase nonlinearities；
+* fracture representation；
+* identifiability；
+* ensemble cost；
+* mesh refinement。
+
+## 10. Next recommended milestone
+
+只能提出真正高 ROI 的下一阶段。
+
+---
+
+# 83. 最重要的验收标准
+
+最终项目不能再被描述成：
+
+> 一个包含压力、饱和度、反演、融合等很多功能的 reservoir backend。
+
+它必须形成一条完整、可验证的科学计算链：
+
+[
+\boxed{
+\text{Experiment}
+\rightarrow
+\text{Controls}
+\rightarrow
+\text{Prior Model}
+\rightarrow
+\text{Multiphase Forward Solver}
+\rightarrow
+\text{Observation Operator}
+\rightarrow
+\text{Data Mismatch}
+\rightarrow
+\text{Ensemble Assimilation}
+\rightarrow
+\text{Posterior Model}
+\rightarrow
+\text{Forecast}
+}
+]
+
+对于真实的 300 mm 页岩油相关实验，最终必须能够回答：
+
+1. 当前采用了什么物理假设？
+2. 注入和采出条件是什么？
+3. 哪些数据参与了反演？
+4. 哪些数据被保留用于验证？
+5. K 是如何参数化的？
+6. 为什么当前数据可以或不可以识别这些参数？
+7. forward solver 是否质量守恒？
+8. posterior 是否比 prior 更能预测未参与反演的数据？
+9. 哪些区域的 K 被传感器真正约束住了？
+10. 哪些区域仍具有巨大 uncertainty？
+11. 新数据到来后 digital twin 如何更新？
+12. 如果模型预测失败，是物理模型问题、参数问题、网格问题还是观测问题？
+
+只要其中多数问题当前代码无法回答，就说明项目还没有真正形成数字孪生反演后端。
+
+---
+
+# 84. 代码风格最后要求
+
+本项目当前仍处于绿地阶段。
+
+请大胆删除错误设计。
+
+要求：
+
+```text
+simple
+explicit
+testable
+physical
+numerically conservative
+modular but not over-engineered
+```
+
+优先使用普通、清晰的 Python。
+
+不要为了展示“高级架构”使用复杂元编程。
+
+不要为了兼容历史实现污染新接口。
+
+不要保留已无实际用途的 legacy code。
+
+不要通过 mock 大量 physics behavior 让测试通过。
+
+测试必须验证真实 numerical behavior。
+
+不要声称尚未实现的能力已经实现。
+
+最终目标不是代码量最大，而是：
+
+> 用尽可能清晰、可靠的架构，把“实验数据 → 三维多相正演 → 观测映射 → ensemble 反演 → 不确定性 → 预测”这条核心链真正打通。

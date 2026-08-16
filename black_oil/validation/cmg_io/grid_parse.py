@@ -151,20 +151,100 @@ def parse_bhp(out_path: Path | str) -> dict[float, tuple[float, float]]:
 
 
 def parse_surface_rates_m3s(out_path: Path | str) -> dict[float, dict[str, float]]:
-    """Best-effort water rates → m³/s (INJ positive, PROD negative)."""
+    """Water rates from IMEX field summary → m³/s (INJ +, PROD −).
+
+    Reads ``Inst Surface Injection/Production Rates`` / ``Water STB/day``
+    under each ``TIME:`` header. The first Water line after Time is usually
+    *production* (often ~0) and must not be treated as injection.
+    """
     text = Path(out_path).read_text(encoding="latin-1", errors="ignore")
     by_t: dict[float, dict[str, float]] = {}
 
     def stbday_to_m3s(x: float) -> float:
-        return x * 0.158987 / 86400.0
+        return float(x) * 0.158987 / 86400.0
 
-    for m in re.finditer(
-        r"Time\s*=\s*([0-9.]+).*?Water\s+STB/day\s+\+\s+([0-9.E+-]+)\s+\+\s+([0-9.E+-]+)",
-        text,
-        re.S | re.I,
-    ):
-        t = float(m.group(1))
-        a, b = float(m.group(2)), float(m.group(3))
-        q1, q2 = stbday_to_m3s(a), stbday_to_m3s(b)
-        by_t[t] = {"INJ": abs(q1), "PROD": -abs(q2) if abs(q2) > 0 else -abs(q1)}
+    chunks = re.split(r"(?=TIME:\s*[0-9.]+)", text)
+    for ch in chunks:
+        mt = re.match(r"TIME:\s*([0-9.]+)", ch)
+        if not mt:
+            continue
+        t = float(mt.group(1))
+        m_inj = re.search(
+            r"Inst Surface Injection Rates.*?Water\s+STB/day\s+\+\s+"
+            r"([0-9.Ee+-]+)\s+\+\s+([0-9.Ee+-]+)",
+            ch,
+            re.S,
+        )
+        m_prd = re.search(
+            r"Inst Surface Production Rates.*?Water\s+STB/day\s+\+\s+"
+            r"([0-9.Ee+-]+)\s+\+\s+([0-9.Ee+-]+)",
+            ch,
+            re.S,
+        )
+        if m_inj is None and m_prd is None:
+            continue
+        inj_stb = 0.0
+        prod_stb = 0.0
+        if m_inj is not None:
+            a, b = abs(float(m_inj.group(1))), abs(float(m_inj.group(2)))
+            inj_stb = max(a, b)
+        if m_prd is not None:
+            a, b = abs(float(m_prd.group(1))), abs(float(m_prd.group(2)))
+            # producer column is the second well in these two-well decks
+            prod_stb = b if b > 0.0 else a
+        by_t[t] = {"INJ": stbday_to_m3s(inj_stb), "PROD": -stbday_to_m3s(prod_stb)}
+    return by_t
+
+
+def parse_liquid_rates_m3s(out_path: Path | str) -> dict[float, dict[str, float]]:
+    """Injector water + producer oil+water (reservoir voidage) in m³/s.
+
+    Two-well IMEX summaries: first numeric column after the zeros is usually
+    the injector, the next is the producer. Liquid production is oil+water so
+    an incompressible / slightly-compressible F has a real sink.
+    """
+    text = Path(out_path).read_text(encoding="latin-1", errors="ignore")
+    by_t: dict[float, dict[str, float]] = {}
+
+    def stbday_to_m3s(x: float) -> float:
+        return float(x) * 0.158987 / 86400.0
+
+    chunks = re.split(r"(?=TIME:\s*[0-9.]+)", text)
+    for ch in chunks:
+        mt = re.match(r"TIME:\s*([0-9.]+)", ch)
+        if not mt:
+            continue
+        t = float(mt.group(1))
+        m_inj_w = re.search(
+            r"Inst Surface Injection Rates.*?Water\s+STB/day\s+\+\s+"
+            r"([0-9.Ee+-]+)\s+\+\s+([0-9.Ee+-]+)",
+            ch,
+            re.S,
+        )
+        m_prd_o = re.search(
+            r"Inst Surface Production Rates.*?Oil\s+STB/day\s+\+\s+"
+            r"([0-9.Ee+-]+)\s+\+\s+([0-9.Ee+-]+)",
+            ch,
+            re.S,
+        )
+        m_prd_w = re.search(
+            r"Inst Surface Production Rates.*?Water\s+STB/day\s+\+\s+"
+            r"([0-9.Ee+-]+)\s+\+\s+([0-9.Ee+-]+)",
+            ch,
+            re.S,
+        )
+        if m_inj_w is None and m_prd_o is None:
+            continue
+        inj = 0.0
+        if m_inj_w is not None:
+            inj = max(abs(float(m_inj_w.group(1))), abs(float(m_inj_w.group(2))))
+        oil = 0.0
+        water = 0.0
+        if m_prd_o is not None:
+            a, b = abs(float(m_prd_o.group(1))), abs(float(m_prd_o.group(2)))
+            oil = b if b > 0.0 else a
+        if m_prd_w is not None:
+            a, b = abs(float(m_prd_w.group(1))), abs(float(m_prd_w.group(2)))
+            water = b if b > 0.0 else a
+        by_t[t] = {"INJ": stbday_to_m3s(inj), "PROD": -stbday_to_m3s(oil + water)}
     return by_t

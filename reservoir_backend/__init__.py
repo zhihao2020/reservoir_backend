@@ -1,5 +1,19 @@
-"""Reservoir backend prototype package."""
+"""Laboratory multiphase inverse digital twin."""
 
-__all__ = ["__version__"]
+from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor, State
+from reservoir_backend.grid.cartesian import CartesianGrid
+from reservoir_backend.twin.offline import DigitalTwin, PhysicsSpec
 
-__version__ = "0.1.0"
+__all__ = [
+    "CartesianGrid",
+    "ControlSeries",
+    "DigitalTwin",
+    "Experiment",
+    "ObservationSeries",
+    "PhysicsSpec",
+    "Sensor",
+    "State",
+    "__version__",
+]
+
+__version__ = "0.2.0"

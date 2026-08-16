@@ -1,8 +1,8 @@
-# 黑油水驱反演（软件 + 论文 A）
+# 黑油水驱（历史 IMEX 尺子）
 
-常规黑油 / 河道砂岩 **注水** 工况。运行时只用注采井 + exclusive 测点；CMG IMEX 只做离线尺子。
+> 2026-08 内核已按 `docs/target_architecture.md` 绿地重构。本目录里依赖 `reservoir_backend.pipeline` 的 Python 反演脚本已退役。CMG `.dat` / `.out` 仍可作离线对照。产品入口是仓库根目录的 `reservoir` CLI。
 
-内核库仍是仓库根目录的 [`reservoir_backend/`](../reservoir_backend/)（四场重建 + 低维 θ ES-MDA）。本目录放 **论文 A 的验证、文档与实验入口**。
+常规黑油 / 河道砂岩 **注水** 工况。CMG IMEX 只做离线尺子。
 
 ## 论文主张
 

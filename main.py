@@ -1,13 +1,6 @@
-"""Entry point for the sensor four-field backend."""
+"""Entry point for the laboratory inverse twin."""
 
-from __future__ import annotations
-
-
-def main() -> None:
-    print("Four-field pipeline ready.")
-    print("  python -m reservoir_backend.pipeline.run --config config/sensor_case.yaml")
-    print("  pytest tests/test_pipeline_mesh.py tests/test_pipeline_fields.py tests/test_pipeline_e2e_cli.py -q")
-
+from reservoir_backend.cli.main import main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

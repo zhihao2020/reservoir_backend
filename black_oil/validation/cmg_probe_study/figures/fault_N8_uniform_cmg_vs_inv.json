@@ -4,9 +4,9 @@
   "n_p": 4,
   "n_s": 4,
   "layout": "uniform",
-  "sw_rel_l2": 0.5077637861858144,
-  "delta_sw_dice": 0.48148148148148145,
-  "k_channel_over_out": 1.0463748164165003,
+  "sw_rel_l2": 0.37897630064141297,
+  "delta_sw_dice": 0.5925925925925926,
+  "k_channel_over_out": 2.3454580752539655,
   "t_last": 791.0,
   "figure": "fault_N8_uniform_cmg_vs_inv.png"
 }

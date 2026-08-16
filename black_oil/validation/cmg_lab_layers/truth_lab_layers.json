@@ -1,0 +1,56 @@
+{
+  "description": "Two-layer lab-analog IMEX ruler for DigitalTwin ES-MDA",
+  "source_template": "black_oil/validation/cmg_channel_3d/mxspr006_channel.dat",
+  "grid": {
+    "nx": 12,
+    "ny": 8,
+    "nz": 6,
+    "di_ft": 2.0,
+    "dj_ft": 2.0,
+    "dk_ft": 1.5,
+    "kdir": "DOWN",
+    "k1": "top",
+    "size_m": [
+      7.315200000000001,
+      4.8768,
+      2.7432000000000003
+    ]
+  },
+  "layers": {
+    "top_high_k_md": 500.0,
+    "bottom_low_k_md": 50.0,
+    "n_top_high": 3,
+    "k_hi_m2": 4.9346165e-13,
+    "k_lo_m2": 4.9346165e-14
+  },
+  "controls": {
+    "inj_bhp_psi": 3200.0,
+    "prod_bhp_psi": 2800.0,
+    "pres_psi": 3000.0,
+    "swi": 0.2,
+    "phi": 0.3
+  },
+  "wells": {
+    "INJ": {
+      "i": 1,
+      "j": 4,
+      "k_cmg": [3, 4, 5, 6],
+      "control": "pressure"
+    },
+    "PROD": {
+      "i": 12,
+      "j": 4,
+      "k_cmg": [1, 2, 3, 4, 5, 6],
+      "control": "pressure"
+    }
+  },
+  "times_day": [
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0,
+    8.0
+  ],
+  "history_end_day": 4.0
+}

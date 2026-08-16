@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reservoir-backend"
-version = "0.1.0"
-description = "Lightweight reservoir backend prototype"
+version = "0.2.0"
+description = "Laboratory multiphase inverse digital twin"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,6 +13,9 @@ dependencies = [
     "PyYAML>=6.0",
     "scipy>=1.11",
 ]
+
+[project.scripts]
+reservoir = "reservoir_backend.cli.main:main"
 
 [project.optional-dependencies]
 dev = [
