@@ -2,7 +2,7 @@
 
 Digital twin (not an open-source reservoir clone)
 -------------------------------------------------
-Open-source engines (OPM, MRST, …) are forward models F. This product is
+External reservoir engines are forward models F. This product is
 
     x = F_lab(m, u),   d_sim = H(x),   d_obs → m_post
 
@@ -50,11 +50,12 @@ from reservoir_backend.domain.types import (
     column_sensors,
 )
 from reservoir_backend.grid.cartesian import CartesianGrid
-from reservoir_backend.inverse.parameterization import RegionParameterization
+from reservoir_backend.inverse.parameterization import ContrastParameterization
 from reservoir_backend.observation.operator import ObservationOperator
-from reservoir_backend.physics.capillary import NoCapillary
-from reservoir_backend.physics.relperm import CoreyTwoPhase
-from reservoir_backend.physics.rock import Rock, log_permeability
+from reservoir_backend.physics.capillary import TableCapillary
+from reservoir_backend.physics.pvt import BlackOilPVT
+from reservoir_backend.physics.relperm import TableThreePhase, TableTwoPhase
+from reservoir_backend.physics.rock import log_permeability
 from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec
 
@@ -106,8 +107,7 @@ def _ports(grid: CartesianGrid, *, inj_control: str = "pressure", truth: dict | 
 
     INJ is not open on the top two high-K layers; PROD is the full column.
     That asymmetry is in the IMEX *PERF list. Copying it is the experiment,
-    not a Peaceman clone. Cell Dirichlet on this *partial* INJ column does
-    not pin both layers at both ends, so p still sees K.
+    not a WI-tuned clone. Productivity uses the deck *GEOMETRY (rw, geofac).
     """
     wells = (truth or {}).get("wells") or {}
     inj_spec = wells.get("INJ") or {}
@@ -120,18 +120,25 @@ def _ports(grid: CartesianGrid, *, inj_control: str = "pressure", truth: dict | 
     prod_ks = _cmg_k_to_ours(grid.nz, prod_spec.get("k_cmg") or (1, 2, 3, 4, 5, 6))
     inj_cells = np.array([grid.index(inj_i, inj_j, k) for k in inj_ks], dtype=np.int64)
     prod_cells = np.array([grid.index(prod_i, prod_j, k) for k in prod_ks], dtype=np.int64)
+    rw_m = 0.20 * FT_TO_M
     inj = FlowPort(
         name="INJ",
         role="injector",
         control=inj_control,
         cell_ids=inj_cells,
-        sw_inj=0.80,
+        sw_inj=1.0,
+        use_productivity=True,
+        rw_m=rw_m,
+        geofac=0.34,
     )
     prod = FlowPort(
         name="PROD",
         role="producer",
         control="pressure",
         cell_ids=prod_cells,
+        use_productivity=True,
+        rw_m=rw_m,
+        geofac=0.34,
     )
     return inj, prod
 
@@ -142,7 +149,7 @@ def _same_cmg_controls(truth: dict, times: np.ndarray) -> list[ControlSeries]:
     p_prod = psi_to_pa(float(truth["controls"]["prod_bhp_psi"]))
     return [
         ControlSeries("INJ", "pressure", times, np.full(times.size, p_inj)),
-        ControlSeries("INJ", "composition", times, np.full(times.size, 0.85)),
+        ControlSeries("INJ", "composition", times, np.full(times.size, 1.0)),
         ControlSeries("PROD", "pressure", times, np.full(times.size, p_prod)),
     ]
 
@@ -211,17 +218,34 @@ def _score_k(k_true, region, post, k_lo, k_hi) -> dict:
     }
 
 
-def _physics(*, p_init: float, sw_init: float) -> PhysicsSpec:
+def _physics(*, p_init: float, sw_init: float, sg_init: float = 0.0, three_phase: bool = False) -> PhysicsSpec:
+    """Same fluid tables, gravity, and sequential-implicit stepping as IMEX.
+
+    Two-phase and three-phase share one dt. ``max_steps`` is only a fuse;
+    implicit BE is not sized to an explicit CFL budget.
+    """
+    pvt = BlackOilPVT.cmg_seawater(p_init=p_init)
+    tp = None
+    if three_phase:
+        tp = TableThreePhase.cmg_seawater(mu_w=pvt.mu_w, mu_o=pvt.mu_o, mu_g=pvt.mu_g)
     return PhysicsSpec(
-        relperm=CoreyTwoPhase(mu_w=1.0e-3, mu_o=1.0e-3),
-        capillary=NoCapillary(),
+        relperm=TableTwoPhase.cmg_seawater(mu_w=pvt.mu_w, mu_o=pvt.mu_o),
+        three_phase=tp,
+        capillary=TableCapillary.cmg_swt(),
+        pvt=pvt,
+        gravity=9.81,
+        kz_over_kx=0.1,
         sw_init=sw_init,
+        sg_init=sg_init,
         p_init=p_init,
-        dt_init=30.0,
+        dt_init=300.0,
         dt_min=0.5,
-        dt_max=120.0,
+        dt_max=1800.0,
         max_cfl=0.50,
-        max_ds=0.18,
+        max_ds=0.25,
+        implicit_transport=True,
+        sfi_outer=0,
+        max_steps=12000,
     )
 
 
@@ -254,7 +278,9 @@ def self_consistent(truth: dict, grid: CartesianGrid, *, design: str) -> dict:
     k_hi = float(truth["layers"]["k_hi_m2"])
     region = _region(grid, int(truth["layers"]["n_top_high"]))
     k_true = np.where(region == 1, k_hi, k_lo)
-    param = RegionParameterization(region, phi=float(truth["controls"]["phi"]))
+    param = ContrastParameterization(
+        region, phi=float(truth["controls"]["phi"]), log_contrast_mean=float(np.log(10.0))
+    )
     p_sigma, s_sigma = 2.5e4, 0.04
     if design == "diverse":
         sensors, hold = diverse_sensors(grid, p_sigma=p_sigma, s_sigma=s_sigma, with_rate=False)
@@ -279,15 +305,16 @@ def self_consistent(truth: dict, grid: CartesianGrid, *, design: str) -> dict:
         param,
         inverse=InverseSpec(
             n_ensemble=12,
-            n_assimilations=4,
+            n_assimilations=3,
             seed=3 if design == "diverse" else 11,
-            prior_mean=np.log(100.0 * MD_TO_M2),
-            prior_std=0.8,
-            n_workers=4,
+            prior_mean=np.log(80.0 * MD_TO_M2),
+            prior_std=1.2,
+            inflation=1.04,
+            n_workers=None,
         ),
     )
     print(f"A/{design}) self-consistent F(m_true), n_sensors={len(sensors)} ...", flush=True)
-    traj = twin.simulate(Rock(k_true, np.full(grid.n_cells, param.phi)), t_end=float(times[-1]), report_times=times)
+    traj = twin.simulate(twin.rock_from_k(k_true), t_end=float(times[-1]), report_times=times)
     twin.experiment.observations = _make_obs_from_traj(twin, sensors, hold, times, traj, seed=4)
     t0 = time.perf_counter()
     post = twin.calibrate()
@@ -382,11 +409,14 @@ def cross_cmg(truth: dict, grid: CartesianGrid) -> dict:
     k_hi = float(truth["layers"]["k_hi_m2"])
     region = _region(grid, int(truth["layers"]["n_top_high"]))
     k_true = np.where(region == 1, k_hi, k_lo)
-    param = RegionParameterization(region, phi=float(truth["controls"]["phi"]))
-    sensors, hold = diverse_sensors(grid, p_sigma=psi_to_pa(30.0), s_sigma=0.05, with_rate=False)
+    param = ContrastParameterization(
+        region, phi=float(truth["controls"]["phi"]), log_contrast_mean=float(np.log(10.0))
+    )
+    sensors, hold = diverse_sensors(grid, p_sigma=psi_to_pa(8.0), s_sigma=0.04, with_rate=False)
     op = ObservationOperator(grid, sensors)
     rng = np.random.default_rng(8)
-    obs = []
+    noisy = []
+    clean = []
     cmg_clean: dict[str, list[float]] = {}
     for s in sensors:
         vals = []
@@ -394,47 +424,26 @@ def cross_cmg(truth: dict, grid: CartesianGrid) -> dict:
             st = State(pressure=pick(p_map, td), sw=pick(sw_map, td))
             vals.append(op.sample(s, st))
         cmg_clean[s.name] = [float(v) for v in vals]
-        va = np.asarray(vals, dtype=float) + rng.normal(0.0, s.sigma, size=len(vals))
-        obs.append(ObservationSeries(s.name, s.kind, times, va, np.full(len(vals), s.sigma), s.name in hold))
+        va = np.asarray(vals, dtype=float)
+        clean.append(ObservationSeries(s.name, s.kind, times, va, np.full(len(vals), s.sigma), s.name in hold))
+        noisy.append(
+            ObservationSeries(
+                s.name,
+                s.kind,
+                times,
+                va + rng.normal(0.0, s.sigma, size=len(vals)),
+                np.full(len(vals), s.sigma),
+                s.name in hold,
+            )
+        )
     inj, prod = _ports(grid, inj_control="pressure", truth=truth)
     experiment = Experiment(
         size_m=grid.size_m(),
         sensors=sensors,
         controls=_same_cmg_controls(truth, times),
-        observations=obs,
+        observations=noisy,
         history_end_s=hist_end,
     )
-    # Model-error R: residual of F(K_CMG) vs CMG gauges is not rock. Do not dump it into K.
-    probe = DigitalTwin(
-        grid,
-        experiment,
-        [inj, prod],
-        _physics(p_init=psi_to_pa(float(truth["controls"]["pres_psi"])), sw_init=float(truth["controls"]["swi"])),
-        param,
-    )
-    traj_m = probe.simulate(
-        Rock(k_true, np.full(grid.n_cells, param.phi)),
-        t_end=float(times[min(1, len(times) - 1)]),
-        report_times=times[times <= hist_end + 1.0],
-    )
-    inflated = []
-    extras = {}
-    for series in obs:
-        sensor = next(s for s in sensors if s.name == series.sensor_name)
-        pred = []
-        mask = series.times_s <= hist_end + 1.0
-        for t in series.times_s:
-            idx = int(np.argmin(np.abs(traj_m.times_s - t)))
-            pred.append(probe.operator.sample(sensor, traj_m.state_at(t), port_rates=traj_m.port_rates[idx]))
-        pred_a = np.asarray(pred, dtype=float)
-        extra = float(np.sqrt(np.mean((pred_a[mask] - series.values[mask]) ** 2))) if np.any(mask) else 0.0
-        extras[series.sensor_name] = extra
-        sig = np.sqrt(series.sigma**2 + extra * extra)
-        inflated.append(
-            ObservationSeries(series.sensor_name, series.kind, series.times_s, series.values, sig, series.holdout)
-        )
-    experiment.observations = inflated
-    print(f"   model-error inflate extras={ {k: round(v, 3) if v < 10 else round(v) for k, v in extras.items()} }", flush=True)
     twin = DigitalTwin(
         grid,
         experiment,
@@ -442,14 +451,18 @@ def cross_cmg(truth: dict, grid: CartesianGrid) -> dict:
         _physics(p_init=psi_to_pa(float(truth["controls"]["pres_psi"])), sw_init=float(truth["controls"]["swi"])),
         param,
         inverse=InverseSpec(
-            n_ensemble=12,
-            n_assimilations=3,
+            n_ensemble=16,
+            n_assimilations=4,
             seed=6,
-            prior_mean=np.log(100.0 * MD_TO_M2),
+            prior_mean=np.log(80.0 * MD_TO_M2),
             prior_std=0.8,
-            n_workers=4,
+            inflation=1.02,
+            n_workers=None,
+            time_limit_s=900.0,
         ),
     )
+    extras = twin.inflate_observations(twin.rock_from_k(k_true), clean=clean, history_end_s=hist_end)
+    print(f"   model-error inflate extras={ {k: round(v, 3) if v < 10 else round(v) for k, v in extras.items()} }", flush=True)
     print("B) invert CMG gauges with F_lab (K_CMG is not the pass bar) ...", flush=True)
     t0s = time.perf_counter()
     post = twin.calibrate()

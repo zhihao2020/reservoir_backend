@@ -13,14 +13,12 @@
       "url": "https://github.com/OPM/opm-tests/blob/master/spe1/SPE1CASE1.DATA"
     },
     {
-      "project": "SINTEF-AppliedCompSci/MRST",
-      "path": "modules/book/examples/1phase/src/simpleIncompTPFA.m",
-      "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/1phase/src/simpleIncompTPFA.m"
+      "project": "book-examples",
+      "path": "modules/book/examples/1phase/src/simpleIncompTPFA.m"
     },
     {
-      "project": "SINTEF-AppliedCompSci/MRST",
-      "path": "modules/book/examples/in2ph/buckleyLeverett1D.m",
-      "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/in2ph/buckleyLeverett1D.m"
+      "project": "book-examples",
+      "path": "modules/book/examples/in2ph/buckleyLeverett1D.m"
     }
   ],
   "cases": [
@@ -64,11 +62,10 @@
       "adapted_benchmark_use": "layered heterogeneous Cartesian pressure benchmark precursor"
     },
     {
-      "case_name": "mrst_simple_incomp_tpfa_reference",
+      "case_name": "seq_simple_incomp_tpfa_reference",
       "source": {
-        "project": "SINTEF-AppliedCompSci/MRST",
-        "path": "modules/book/examples/1phase/src/simpleIncompTPFA.m",
-        "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/1phase/src/simpleIncompTPFA.m"
+        "project": "book-examples",
+        "path": "modules/book/examples/1phase/src/simpleIncompTPFA.m"
       },
       "mentions_tpfa": true,
       "mentions_boundary_conditions": true,
@@ -76,11 +73,10 @@
       "adapted_benchmark_use": "TPFA diagnostic and report schema inspiration; not executed"
     },
     {
-      "case_name": "mrst_buckley_leverett_1d_reference",
+      "case_name": "seq_buckley_leverett_1d_reference",
       "source": {
-        "project": "SINTEF-AppliedCompSci/MRST",
-        "path": "modules/book/examples/in2ph/buckleyLeverett1D.m",
-        "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/in2ph/buckleyLeverett1D.m"
+        "project": "book-examples",
+        "path": "modules/book/examples/in2ph/buckleyLeverett1D.m"
       },
       "grid": [
         100,
@@ -97,7 +93,7 @@
     "runtime_dependency": false,
     "full_spe10_reproduction": false,
     "opm_flow_equivalence": false,
-    "mrst_runtime_integration": false,
+    "seq_runtime_integration": false,
     "commercial_simulator_equivalence": false
   }
 }

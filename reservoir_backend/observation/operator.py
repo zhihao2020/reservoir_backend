@@ -1,4 +1,4 @@
-"""Observation operator H: state on the grid → sensor values."""
+"""Observation operator H: state on the grid -> sensor values."""
 
 from __future__ import annotations
 
@@ -54,6 +54,31 @@ def _trilinear(grid: CartesianGrid, field: NDArray[np.float64], x: float, y: flo
     return float(c0 * (1.0 - wz) + c1 * wz)
 
 
+def _sphere_offsets(radius_m: float) -> NDArray[np.float64]:
+    """Deterministic stencil inside a sphere. Includes the center."""
+    r = float(radius_m)
+    if r <= 0.0:
+        return np.zeros((1, 3), dtype=float)
+    lin = np.linspace(-1.0, 1.0, 5)
+    pts = np.array([(x, y, z) for x in lin for y in lin for z in lin], dtype=float) * r
+    keep = np.sum(pts * pts, axis=1) <= r * r + 1.0e-16
+    return pts[keep]
+
+
+def _interpolated_average(
+    grid: CartesianGrid,
+    field: NDArray[np.float64],
+    x: float,
+    y: float,
+    z: float,
+    offsets: NDArray[np.float64],
+) -> float:
+    acc = 0.0
+    for dx, dy, dz in offsets:
+        acc += _trilinear(grid, field, x + float(dx), y + float(dy), z + float(dz))
+    return float(acc / max(offsets.shape[0], 1))
+
+
 def _volume_average(
     grid: CartesianGrid,
     field: NDArray[np.float64],
@@ -62,21 +87,24 @@ def _volume_average(
     z: float,
     volume_m3: float,
 ) -> float:
-    """Average over cells intersecting a cube of volume ``volume_m3`` centered at the point."""
+    """Average the interpolated field over a cube of volume ``volume_m3``."""
     side = float(volume_m3) ** (1.0 / 3.0)
     half = 0.5 * side
-    centers = grid.cell_centers()
-    vol = grid.cell_volumes()
-    inside = (
-        (np.abs(centers[:, 0] - x) <= half)
-        & (np.abs(centers[:, 1] - y) <= half)
-        & (np.abs(centers[:, 2] - z) <= half)
-    )
-    if not np.any(inside):
-        return _trilinear(grid, field, x, y, z)
-    values = np.asarray(field, dtype=float).ravel()
-    w = vol[inside]
-    return float(np.sum(values[inside] * w) / np.sum(w))
+    lin = np.linspace(-half, half, 4)
+    offsets = np.array([(dx, dy, dz) for dx in lin for dy in lin for dz in lin], dtype=float)
+    return _interpolated_average(grid, field, x, y, z, offsets)
+
+
+def _probe_average(
+    grid: CartesianGrid,
+    field: NDArray[np.float64],
+    x: float,
+    y: float,
+    z: float,
+    diameter_m: float,
+) -> float:
+    """Average the interpolated field over a sphere of the probe diameter."""
+    return _interpolated_average(grid, field, x, y, z, _sphere_offsets(0.5 * float(diameter_m)))
 
 
 @dataclass
@@ -88,6 +116,9 @@ class ObservationOperator:
     ports: list[FlowPort] | None = None
 
     def sample_field(self, sensor: Sensor, field: NDArray[np.float64]) -> float:
+        diameter = float(getattr(sensor, "probe_diameter_m", 0.0) or 0.0)
+        if diameter > 0.0:
+            return _probe_average(self.grid, field, sensor.x, sensor.y, sensor.z, diameter)
         if sensor.volume_m3 > 0.0:
             return _volume_average(self.grid, field, sensor.x, sensor.y, sensor.z, sensor.volume_m3)
         return _trilinear(self.grid, field, sensor.x, sensor.y, sensor.z)
@@ -102,6 +133,11 @@ class ObservationOperator:
             return self.sample_field(sensor, state.pressure)
         if sensor.kind == "saturation":
             return self.sample_field(sensor, state.sw)
+        if sensor.kind == "oil_saturation":
+            return self.sample_field(sensor, state.so())
+        if sensor.kind == "gas_saturation":
+            sg = state.sg if state.sg is not None else np.zeros_like(state.sw)
+            return self.sample_field(sensor, np.asarray(sg, dtype=float))
         if sensor.kind == "phase_rate":
             if not sensor.port_name:
                 raise InvalidObservation(f"phase_rate sensor {sensor.name} needs port_name")

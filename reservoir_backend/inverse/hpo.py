@@ -84,7 +84,7 @@ def run_hpo(
             break
         cfg = sample_trial(rng, algorithms=algorithms)
         t0 = time.perf_counter()
-        post = twin.calibrate(
+        post = twin._calibrate_candidate(
             n_ensemble=int(cfg["n_ensemble"]),
             n_assimilations=int(cfg.get("n_assimilations", 4)),
             prior_std=float(cfg["prior_std"]),
@@ -125,22 +125,24 @@ def run_hpo(
         hist_end = twin.experiment.history_end_s
         t_hist = float(hist_end) if hist_end is not None else float(best.history.times_s[-1])
 
-        def _score_k(k_try):
+        def _score_theta(theta_try):
+            k_try = twin.parameterization.expand(theta_try)
             hist = twin.simulate(twin.rock_from_k(k_try), t_end=t_hist, report_times=best.history.times_s)
             from reservoir_backend.inverse.portfolio import _holdout_of
 
             return _holdout_of(twin, hist)
 
-        pairs = [(p.esmda.k_mean, float(p.holdout_rmse)) for p in posts]
-        picked, k_blend, blend_score = greedy_holdout_blend(pairs, _score_k)
+        pairs = [(p.esmda.theta_mean, float(p.holdout_rmse)) for p in posts]
+        picked, theta_blend, blend_score = greedy_holdout_blend(pairs, _score_theta)
         names = [rows[i].name for i in picked]
-        if k_blend is not None and np.isfinite(blend_score) and blend_score < float(best.holdout_rmse):
+        if theta_blend is not None and np.isfinite(blend_score) and blend_score < float(best.holdout_rmse):
             from dataclasses import replace
             from reservoir_backend.twin.offline import Posterior as Post
 
+            k_blend = twin.parameterization.expand(theta_blend)
             hist = twin.simulate(twin.rock_from_k(k_blend), t_end=t_hist, report_times=best.history.times_s)
             best = Post(
-                esmda=replace(best.esmda, k_mean=k_blend, k_std=best.esmda.k_std),
+                esmda=replace(best.esmda, theta_mean=theta_blend, k_mean=k_blend),
                 assimilate_rmse=float(best.assimilate_rmse),
                 holdout_rmse=float(blend_score),
                 forecast_rmse=None,

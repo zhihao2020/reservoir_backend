@@ -60,7 +60,7 @@ class ContrastParameterization:
     region_id: NDArray[np.int64]
     phi: float = 0.20
     log_contrast_mean: float = float(np.log(20.0))
-    log_contrast_std: float = 1.00,
+    log_contrast_std: float = 1.00
     log_contrast_min: float = 0.0
     log_contrast_max: float = float(np.log(200.0))
 

@@ -1,0 +1,26 @@
+{
+  "operations": [
+    {
+      "type": "replace",
+      "parameter_name": "wprn_grid",
+      "old": "*WPRN   *GRID 5",
+      "new": "*WPRN   *GRID 1",
+      "count": 1
+    },
+    {
+      "type": "replace",
+      "parameter_name": "dtmax",
+      "old": "*DTMAX  62.",
+      "new": "*DTMAX  0.05",
+      "count": 1
+    },
+    {
+      "type": "block_replace",
+      "parameter_name": "times",
+      "reason": "Lab window 0.1-5 day instead of multi-year DATEs",
+      "start": "   *TIME      1.0",
+      "end": "   *STOP",
+      "replacement": "   *TIME      0.1\n   *TIME      0.5\n   *TIME      1.0\n   *TIME      2.0\n   *TIME      5.0\n\n"
+    }
+  ]
+}

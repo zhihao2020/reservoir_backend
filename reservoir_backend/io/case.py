@@ -10,7 +10,7 @@ import yaml
 
 from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor
 from reservoir_backend.grid.cartesian import CartesianGrid
-from reservoir_backend.inverse.parameterization import CoarseFieldParameterization, RegionParameterization
+from reservoir_backend.io.parameterization_cfg import parameterization_from_cfg
 from reservoir_backend.physics.capillary import capillary_from_name
 from reservoir_backend.physics.pvt import BlackOilPVT
 from reservoir_backend.physics.relperm import CoreyThreePhase, CoreyTwoPhase
@@ -48,17 +48,46 @@ def _read_control_csv(path: Path) -> list[dict[str, Any]]:
     return out
 
 
-def _read_observation_csv(path: Path) -> list[dict[str, Any]]:
+def _csv_time(row: dict[str, str], default_unit: str | None) -> float:
+    if row.get("time_s") not in (None, ""):
+        return float(row["time_s"])
+    if row.get("time") not in (None, ""):
+        unit = str(row.get("time_unit") or default_unit or "s")
+        return to_seconds(float(row["time"]), unit)
+    raise ValueError("observation CSV row needs time_s or time")
+
+
+def _read_observation_csv(
+    path: Path,
+    *,
+    time_unit: str | None = None,
+    pressure_unit: str | None = None,
+) -> list[dict[str, Any]]:
     import csv
 
     rows = list(csv.DictReader(path.open(encoding="utf-8")))
+    if not rows:
+        raise ValueError(f"observation CSV is empty: {path}")
     grouped: dict[tuple[str, str], list[tuple[float, float, float, bool]]] = {}
     for row in rows:
-        key = (str(row["sensor"]), str(row.get("kind", "pressure")))
+        if not str(row.get("sensor", "")).strip():
+            continue
+        kind = str(row.get("kind", "pressure") or "pressure")
+        key = (str(row["sensor"]), kind)
         hold = str(row.get("holdout", "0")).strip() in {"1", "true", "True", "yes"}
-        grouped.setdefault(key, []).append(
-            (float(row["time_s"]), float(row["value"]), float(row.get("sigma", 1.0)), hold)
-        )
+        t = _csv_time(row, time_unit)
+        value = float(row["value"])
+        sigma = float(row.get("sigma", 1.0) or 1.0)
+        unit = str(row.get("unit") or "").strip() or (pressure_unit if kind == "pressure" else None)
+        if kind == "pressure" and unit:
+            value = _maybe_convert(value, unit, "pressure")
+            sigma = _maybe_convert(sigma, unit, "pressure")
+        elif kind == "phase_rate" and unit:
+            value = _maybe_convert(value, unit, "rate")
+            sigma = _maybe_convert(sigma, unit, "rate")
+        grouped.setdefault(key, []).append((t, value, sigma, hold))
+    if not grouped:
+        raise ValueError(f"observation CSV has no sensor rows: {path}")
     out = []
     for (sensor, kind), pairs in grouped.items():
         pairs.sort()
@@ -126,37 +155,69 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
             pvt = BlackOilPVT.slightly_compressible(ct, pref=p_init)
     relperm = CoreyTwoPhase(mu_w=pvt.mu_w, mu_o=pvt.mu_o)
     three = CoreyThreePhase(mu_w=pvt.mu_w, mu_o=pvt.mu_o, mu_g=pvt.mu_g) if model in {"three_phase", "three_phase_immiscible", "c"} else None
+    single = model in {"single_phase", "single", "a"}
+    default_transport = "explicit" if single else "implicit"
+    transport = str(phys_cfg.get("transport", default_transport)).lower()
+    implicit = transport in {"implicit", "impl", "true", "1", "on"}
+    # FIM stays opt-in until the CMG liberation ruler gate passes (≤ ~6.5 psi).
+    fim_raw = phys_cfg.get("fully_implicit", False)
+    fully_implicit = str(fim_raw).lower() in {"1", "true", "yes", "on", "fim"} if not isinstance(fim_raw, bool) else bool(fim_raw)
     physics = PhysicsSpec(
         relperm=relperm,
         three_phase=three,
         capillary=capillary,
         pvt=pvt,
-        single_phase=model in {"single_phase", "single", "a"},
+        single_phase=single,
         sw_init=float(phys_cfg.get("sw_init", relperm.swi)),
         sg_init=float(phys_cfg.get("sg_init", 0.0)),
         p_init=p_init,
         dt_init=float(phys_cfg.get("dt_init", 5.0)),
         dt_max=float(phys_cfg.get("dt_max", 30.0)),
+        implicit_transport=bool(implicit),
+        fully_implicit=bool(fully_implicit),
     )
 
     ports: list[FlowPort] = []
     for p in cfg.get("ports") or []:
-        xyz = (float(p["x"]), float(p["y"]), float(p["z"]))
+        name = str(p["name"])
+        role = str(p.get("role", "injector"))
+        control = str(p.get("control", "rate"))
+        sw_inj = float(p.get("sw_inj", 1.0))
+        use_wi = bool(p.get("use_productivity", False))
+        perforation = str(p.get("perforation", "point")).lower()
+        if perforation in {"column", "full_column", "z"}:
+            ports.append(
+                FlowPort.column(
+                    grid,
+                    name,
+                    role,
+                    control,
+                    float(p["x"]),
+                    float(p["y"]),
+                    sw_inj=sw_inj,
+                    use_productivity=use_wi,
+                )
+            )
+            continue
+        xyz = (float(p["x"]), float(p["y"]), float(p.get("z", 0.0)))
         ports.append(
             FlowPort.at_point(
                 grid,
-                str(p["name"]),
-                str(p.get("role", "injector")),
-                str(p.get("control", "rate")),
+                name,
+                role,
+                control,
                 xyz,
                 radius_m=float(p.get("radius_m", 0.0)),
-                sw_inj=float(p.get("sw_inj", 1.0)),
-                use_productivity=bool(p.get("use_productivity", False)),
+                sw_inj=sw_inj,
+                use_productivity=use_wi,
             )
         )
 
+    defaults = cfg.get("sensors_defaults") or {}
+    default_probe = float(defaults.get("probe_diameter_m", 0.0) or 0.0)
     sensors: list[Sensor] = []
     for s in cfg.get("sensors") or []:
+        probe = s.get("probe_diameter_m", default_probe)
         sensors.append(
             Sensor(
                 name=str(s["name"]),
@@ -165,6 +226,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                 y=float(s["y"]),
                 z=float(s["z"]),
                 volume_m3=float(s.get("volume_m3", 0.0)),
+                probe_diameter_m=float(probe or 0.0),
                 port_name=s.get("port"),
                 sigma=float(s.get("sigma", 1.0)),
             )
@@ -192,7 +254,11 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
     observations: list[ObservationSeries] = []
     obs_src = exp_cfg.get("observations") or cfg.get("observations") or []
     if isinstance(obs_src, str):
-        obs_src = _read_observation_csv(Path(cfg_dir) / obs_src)
+        obs_src = _read_observation_csv(
+            Path(cfg_dir) / obs_src,
+            time_unit=exp_cfg.get("observation_time_unit"),
+            pressure_unit=exp_cfg.get("observation_pressure_unit"),
+        )
     for o in obs_src:
         kind = str(o.get("kind", "pressure"))
         unit = o.get("unit")
@@ -217,6 +283,11 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
             )
         )
 
+    known = {s.name for s in sensors}
+    unknown = sorted({o.sensor_name for o in observations} - known)
+    if unknown:
+        raise ValueError(f"observations name sensors not in case: {unknown}")
+
     history_end = exp_cfg.get("history_end_s")
     if history_end is None and exp_cfg.get("history_end") is not None:
         history_end = to_seconds(float(exp_cfg["history_end"]), str(exp_cfg.get("history_end_unit", "s")))
@@ -231,19 +302,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
     )
 
     inv = cfg.get("inverse") or {}
-    kind = str(inv.get("parameterization", "coarse_field")).lower()
-    phi = float((cfg.get("rock") or {}).get("porosity", 0.20))
-    if kind == "region":
-        nreg = int(inv.get("n_regions", 2))
-        z = grid.cell_centers()[:, 2]
-        cuts = np.quantile(z, np.linspace(0, 1, nreg + 1)[1:-1]) if nreg > 1 else []
-        rid = np.zeros(grid.n_cells, dtype=np.int64)
-        for i, c in enumerate(cuts, start=1):
-            rid[z >= c] = i
-        param: RegionParameterization | CoarseFieldParameterization = RegionParameterization(rid, phi=phi)
-    else:
-        coarse = inv.get("coarse_n", [6, 6, 6])
-        param = CoarseFieldParameterization(grid, int(coarse[0]), int(coarse[1]), int(coarse[2]), phi=phi)
+    param = parameterization_from_cfg(grid, cfg, Path(cfg_dir))
 
     from reservoir_backend.inverse.presets import knobs_for
 
@@ -260,6 +319,12 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
         time_limit_s=None if inv.get("time_limit_s") is None else float(inv["time_limit_s"]),
         n_workers=None if inv.get("n_workers") is None else int(inv["n_workers"]),
         reconstruct_members=int(inv.get("reconstruct_members", 8)),
+        search_structure=(
+            False
+            if inv.get("region_map") and inv.get("search_structure") is None
+            else None if inv.get("search_structure") is None else bool(inv["search_structure"])
+        ),
+        structure_candidates=None if not inv.get("structure_candidates") else [str(x) for x in inv["structure_candidates"]],
     )
     return DigitalTwin(grid, experiment, ports, physics, param, inverse=inverse)
 

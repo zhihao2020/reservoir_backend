@@ -20,10 +20,7 @@ sys.path[:0] = [str(ROOT), str(VAL), str(HERE)]
 
 from cmg_io.grid_parse import parse_grid_series, psi_to_pa
 from reservoir_backend.domain.types import Experiment
-from reservoir_backend.physics.capillary import NoCapillary
-from reservoir_backend.physics.relperm import CoreyTwoPhase
-from reservoir_backend.physics.rock import Rock
-from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec
+from reservoir_backend.twin.offline import DigitalTwin, InverseSpec
 from run_invert_eval import (
     DAY_S,
     MD_TO_M2,
@@ -75,8 +72,7 @@ def _simulate(grid, truth, k_flat, days):
         param,
         inverse=InverseSpec(n_ensemble=4, n_assimilations=1),
     )
-    phi = float(truth["controls"]["phi"])
-    traj = twin.simulate(Rock(k_flat, np.full(grid.n_cells, phi)), t_end=float(times[-1]), report_times=times)
+    traj = twin.simulate(twin.rock_from_k(k_flat), t_end=float(times[-1]), report_times=times)
     out = {}
     for t in times:
         st = traj.state_at(float(t))

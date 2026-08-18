@@ -4,7 +4,7 @@ from reservoir_backend.domain.types import ControlSeries, State
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.relperm import CoreyTwoPhase
 from reservoir_backend.physics.rock import Rock
-from reservoir_backend.ports.flow import FlowPort, geometric_wi, half_cell_wi
+from reservoir_backend.ports.flow import FlowPort, geometric_wi, half_cell_wi, peaceman_wi
 from reservoir_backend.solver.impes import simulate
 
 
@@ -74,6 +74,15 @@ def test_geometric_wi_positive() -> None:
     grid = CartesianGrid.uniform((0.3, 0.3, 0.3), 0.1)
     wi = geometric_wi(grid, 0, 1.0e-12)
     assert wi > 0.0
+
+
+def test_peaceman_wi_uses_deck_radius() -> None:
+    grid = CartesianGrid.uniform((2.4, 1.6, 0.9), (0.6, 0.4, 0.45))
+    k = 50.0 * 9.869233e-16
+    wi = peaceman_wi(grid, 0, k, 0.20 * 0.3048, geofac=0.34)
+    assert wi > 0.0
+    wi_thin = peaceman_wi(grid, 0, k, 0.10 * 0.3048, geofac=0.34)
+    assert wi > wi_thin
 
 
 def test_half_cell_wi_stronger_than_hole() -> None:
@@ -230,3 +239,60 @@ def test_column_wi_floods_high_k_first() -> None:
     assert front(high) >= front(low)
     assert float(high[min(front(high), high.size - 1)]) >= 0.25
     assert float(np.max(sw)) <= 1.0 + 1.0e-8
+
+
+def test_wellbore_head_injects_more_into_deeper_layer() -> None:
+    """IMEX *K well: BHP at the top connection, hydrostatic head down the hole."""
+    nx, nz = 6, 4
+    grid = CartesianGrid(
+        nx=nx,
+        ny=1,
+        nz=nz,
+        dx=np.full(nx, 0.20),
+        dy=np.array([0.20]),
+        dz=np.full(nz, 1.0),
+    )
+    rock = Rock.uniform(grid.n_cells, k=3.0e-12, phi=0.20)
+    inj = FlowPort.column(
+        grid, "INJ", "injector", "pressure", 0.10, 0.10, sw_inj=1.0, use_productivity=True, rw_m=0.02
+    )
+    prod = FlowPort.column(
+        grid, "PROD", "producer", "pressure", 1.10, 0.10, use_productivity=True, rw_m=0.02
+    )
+    t_end = 12.0
+    times = np.array([0.0, t_end])
+    traj = simulate(
+        grid,
+        rock,
+        CoreyTwoPhase(mu_w=1.0e-3, mu_o=1.0e-3),
+        [inj, prod],
+        [
+            ControlSeries("INJ", "pressure", times, np.full(2, 2.4e5)),
+            ControlSeries("INJ", "composition", times, np.full(2, 1.0)),
+            ControlSeries("PROD", "pressure", times, np.full(2, 1.2e5)),
+        ],
+        State(pressure=np.full(grid.n_cells, 1.6e5), sw=np.full(grid.n_cells, 0.25)),
+        t_end=t_end,
+        gravity=9.81,
+        dt_init=0.5,
+        dt_max=1.0,
+        max_cfl=0.45,
+        max_ds=0.12,
+    )
+    sw = traj.states[-1].sw
+    bot = np.array([sw[c] for c in range(grid.n_cells) if grid.ijk(c)[2] == 0])
+    top = np.array([sw[c] for c in range(grid.n_cells) if grid.ijk(c)[2] == nz - 1])
+    assert float(bot[0]) > float(top[0]) + 0.008
+
+
+def test_connection_bhp_increases_down_the_well() -> None:
+    from reservoir_backend.solver.impes import _connection_bhp
+
+    grid = CartesianGrid(
+        nx=1, ny=1, nz=3, dx=np.array([1.0]), dy=np.array([1.0]), dz=np.full(3, 2.0)
+    )
+    cells = np.array([0, 1, 2], dtype=np.int64)
+    p = _connection_bhp(grid, cells, 1.0e5, 1000.0, 9.81)
+    z = grid.cell_centers()[:, 2]
+    assert p[2] == 1.0e5
+    assert abs(p[0] - p[2] - 1000.0 * 9.81 * (z[2] - z[0])) < 1.0e-6

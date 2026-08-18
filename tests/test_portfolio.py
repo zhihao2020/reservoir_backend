@@ -96,6 +96,7 @@ def test_calibrate_auto_leaderboard_on_synthetic() -> None:
     assert board
     assert any(r["selected"] for r in board)
     assert np.isfinite(post.holdout_rmse)
+    assert np.allclose(post.esmda.k_mean, case.twin.parameterization.expand(post.esmda.theta_mean))
     algos = {r.get("algorithm") for r in board}
     assert algos & {"es", "esmda", "esmda_geo", "esmda_rs", "ies"}
 

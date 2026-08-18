@@ -1,0 +1,95 @@
+{
+  "path": "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab",
+  "rules_path": "C:\\Users\\xuzhihao\\.codex\\skills\\cmg-suite\\references\\phase1-metric-rules.json",
+  "health_rules_path": "C:\\Users\\xuzhihao\\.codex\\skills\\cmg-suite\\references\\phase1-run-health-rules.json",
+  "selected_metric_ids": [
+    "run_success_flag",
+    "warning_count",
+    "error_count",
+    "cum_oil_mstb",
+    "cum_oil_field_total",
+    "avg_reservoir_pressure_psi",
+    "avg_reservoir_pressure_kpa",
+    "cum_water_injection_field_total"
+  ],
+  "inspected_files": [
+    {
+      "file": "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out",
+      "success_markers": [
+        "end_of_simulation",
+        "normal_termination"
+      ],
+      "error_markers": []
+    }
+  ],
+  "run_success": true,
+  "success_markers": [
+    "end_of_simulation",
+    "normal_termination"
+  ],
+  "run_errors": [],
+  "metrics": [
+    {
+      "metric_id": "run_success_flag",
+      "value": 1,
+      "extractor": "marker_presence",
+      "pattern": "success_markers",
+      "units": null,
+      "file": "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out"
+    },
+    {
+      "metric_id": "warning_count",
+      "value": 5,
+      "extractor": "regex_last",
+      "pattern": "(?m)^\\s*(\\d+) Warning messages\\.\\s+(\\d+) Error messages\\.",
+      "units": null,
+      "file": "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out"
+    },
+    {
+      "metric_id": "error_count",
+      "value": 0,
+      "extractor": "regex_last",
+      "pattern": "(?m)^\\s*(\\d+) Warning messages\\.\\s+(\\d+) Error messages\\.",
+      "units": null,
+      "file": "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out"
+    },
+    {
+      "metric_id": "avg_reservoir_pressure_psi",
+      "value": 1501.47,
+      "extractor": "regex_last",
+      "pattern": "Average reservoir pressure including aquifer blocks\\s*=\\s*([0-9.Ee+-]+)\\s*psi",
+      "units": "psi",
+      "file": "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out"
+    }
+  ],
+  "missing_metrics": [
+    {
+      "metric_id": "avg_reservoir_pressure_kpa",
+      "status": "missing_section",
+      "searched_files": [
+        "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out"
+      ]
+    },
+    {
+      "metric_id": "cum_oil_mstb",
+      "status": "missing_section",
+      "searched_files": [
+        "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out"
+      ]
+    },
+    {
+      "metric_id": "cum_oil_field_total",
+      "status": "missing_section",
+      "searched_files": [
+        "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out"
+      ]
+    },
+    {
+      "metric_id": "cum_water_injection_field_total",
+      "status": "missing_section",
+      "searched_files": [
+        "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out"
+      ]
+    }
+  ]
+}

@@ -1,4 +1,10 @@
-from reservoir_backend.validation.synthetic import evaluate_synthetic, make_two_layer_waterflood
+import numpy as np
+
+from reservoir_backend.validation.synthetic import (
+    evaluate_synthetic,
+    make_channel_waterflood,
+    make_two_layer_waterflood,
+)
 
 
 def test_synthetic_observations_come_from_forward() -> None:
@@ -23,4 +29,18 @@ def test_esmda_recovers_layer_permeability() -> None:
     assert 6.0 <= metrics["contrast_post"] <= 16.0
     assert metrics["k_true_in_2std_frac"] > 0.8
     assert post.assimilate_rmse < 2.0
+    assert metrics["forward_match_nrmse"] < 0.3
+    assert np.allclose(post.esmda.k_mean, case.twin.parameterization.expand(post.esmda.theta_mean))
     assert post.history.reports[-1].mass.relative_balance_error < 0.08
+
+
+def test_esmda_recovers_known_channel() -> None:
+    case = make_channel_waterflood(n_times=6, t_end=700.0, seed=4)
+    post = case.twin.calibrate(n_ensemble=16, n_assimilations=4, seed=9)
+    metrics = evaluate_synthetic(case, post)
+    assert metrics["posterior_data_nrmse"] < metrics["prior_data_nrmse"]
+    assert metrics["posterior_logk_rmse"] < 0.40
+    assert 6.0 <= metrics["contrast_post"] <= 16.0
+    assert metrics["forward_match_nrmse"] < 0.40
+    assert np.allclose(post.esmda.k_mean, case.twin.parameterization.expand(post.esmda.theta_mean))
+    assert int(np.max(case.twin.parameterization.region_id)) == 1

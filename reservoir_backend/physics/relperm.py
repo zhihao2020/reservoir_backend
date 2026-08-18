@@ -51,7 +51,7 @@ class CoreyTwoPhase:
 
 @dataclass(frozen=True)
 class TableTwoPhase:
-    """Tabulated two-phase kr (MRST ``tabulatedSatFunc`` / IMEX *SWT)."""
+    """Tabulated two-phase kr (IMEX *SWT)."""
 
     sw: NDArray[np.float64]
     krw: NDArray[np.float64]
@@ -171,3 +171,128 @@ class CoreyThreePhase:
         fo = np.divide(lo, lt, out=np.zeros_like(lt), where=lt > 0.0)
         fg = np.divide(lg, lt, out=np.zeros_like(lt), where=lt > 0.0)
         return fw, fo, fg
+
+
+@dataclass(frozen=True)
+class TableThreePhase:
+    """IMEX *SWT + *SLT. Default oil rule is Stone II.
+
+    Sl = 1 − Sg. Not inverted; tables are the experiment fluid.
+    """
+
+    sw: NDArray[np.float64]
+    krw: NDArray[np.float64]
+    krow: NDArray[np.float64]
+    sl: NDArray[np.float64]
+    krg: NDArray[np.float64]
+    krog: NDArray[np.float64]
+    mu_w: float = 1.1e-3
+    mu_o: float = 0.64e-3
+    mu_g: float = 2.08e-5
+    oil_rule: str = "stone2"
+
+    def __post_init__(self) -> None:
+        sw = np.asarray(self.sw, dtype=float).ravel()
+        krw = np.asarray(self.krw, dtype=float).ravel()
+        krow = np.asarray(self.krow, dtype=float).ravel()
+        sl = np.asarray(self.sl, dtype=float).ravel()
+        krg = np.asarray(self.krg, dtype=float).ravel()
+        krog = np.asarray(self.krog, dtype=float).ravel()
+        if sw.size < 2 or sw.size != krw.size or sw.size != krow.size:
+            raise ValueError("SWT columns must align and have >= 2 rows")
+        if sl.size < 2 or sl.size != krg.size or sl.size != krog.size:
+            raise ValueError("SLT columns must align and have >= 2 rows")
+        if np.any(np.diff(sw) <= 0.0) or np.any(np.diff(sl) <= 0.0):
+            raise ValueError("SWT/SLT saturations must be strictly increasing")
+        object.__setattr__(self, "sw", sw)
+        object.__setattr__(self, "krw", np.clip(krw, 0.0, None))
+        object.__setattr__(self, "krow", np.clip(krow, 0.0, None))
+        object.__setattr__(self, "sl", sl)
+        object.__setattr__(self, "krg", np.clip(krg, 0.0, None))
+        object.__setattr__(self, "krog", np.clip(krog, 0.0, None))
+        if min(self.mu_w, self.mu_o, self.mu_g) <= 0.0:
+            raise ValueError("table viscosities must be positive")
+        rule = str(self.oil_rule).strip().lower()
+        if rule not in {"product", "stone1", "stone2", "baker"}:
+            raise ValueError(f"unknown oil_rule {self.oil_rule}")
+        object.__setattr__(self, "oil_rule", rule)
+
+    @property
+    def swi(self) -> float:
+        return float(self.sw[0])
+
+    @property
+    def sgr(self) -> float:
+        wet = np.where(self.krg[::-1] > 1.0e-14)[0]
+        sl_g = float(self.sl[::-1][wet[0]]) if wet.size else float(self.sl[0])
+        return max(0.0, 1.0 - sl_g)
+
+    def kr(
+        self, sw: NDArray[np.float64] | float, sg: NDArray[np.float64] | float
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        sw_a = np.clip(np.asarray(sw, dtype=float), float(self.sw[0]), float(self.sw[-1]))
+        sg_a = np.clip(np.asarray(sg, dtype=float), 0.0, 1.0)
+        sl_a = np.clip(1.0 - sg_a, float(self.sl[0]), float(self.sl[-1]))
+        krw = np.interp(sw_a, self.sw, self.krw)
+        krg = np.interp(sl_a, self.sl, self.krg)
+        krow = np.interp(sw_a, self.sw, self.krow)
+        krog = np.interp(sl_a, self.sl, self.krog)
+        kro_cw = max(float(self.krow[0]), 1.0e-30)
+        if self.oil_rule == "stone2":
+            kro = kro_cw * ((krow / kro_cw + krw) * (krog / kro_cw + krg) - krw - krg)
+            kro = np.clip(kro, 0.0, kro_cw)
+        elif self.oil_rule == "stone1":
+            swi = float(self.swi)
+            sgr = float(self.sgr)
+            sor = max(0.0, 1.0 - float(self.sw[np.where(self.krow <= 1.0e-14)[0][0]])) if np.any(self.krow <= 1.0e-14) else 0.20
+            so = np.clip(1.0 - sw_a - sg_a, 0.0, 1.0)
+            denom = max(1.0 - swi - sor - sgr, 1.0e-8)
+            so_s = np.clip((so - sor) / denom, 0.0, 1.0)
+            sw_s = np.clip((sw_a - swi) / max(1.0 - swi - sor, 1.0e-8), 0.0, 1.0)
+            sg_s = np.clip(sg_a / max(1.0 - swi - sgr, 1.0e-8), 0.0, 1.0)
+            kro = so_s * np.divide(krow, np.maximum(1.0 - sw_s, 1.0e-8)) * np.divide(krog, np.maximum(1.0 - sg_s, 1.0e-8))
+            kro = np.clip(kro, 0.0, kro_cw)
+        elif self.oil_rule == "baker":
+            so = np.clip(1.0 - sw_a - sg_a, 0.0, 1.0)
+            swi = float(self.swi)
+            a = np.divide(so, np.maximum(so + sw_a - swi, 1.0e-8))
+            b = np.divide(so, np.maximum(so + sg_a, 1.0e-8))
+            kro = np.clip(a * krow + b * krog, 0.0, kro_cw)
+        else:
+            kro = krow * krog
+        return krw, kro, krg
+
+    def mobility(
+        self, sw: NDArray[np.float64] | float, sg: NDArray[np.float64] | float
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        krw, kro, krg = self.kr(sw, sg)
+        lw = krw / self.mu_w
+        lo = kro / self.mu_o
+        lg = krg / self.mu_g
+        return lw, lo, lg, lw + lo + lg
+
+    def fractional_flow(
+        self, sw: NDArray[np.float64] | float, sg: NDArray[np.float64] | float
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        lw, lo, lg, lt = self.mobility(sw, sg)
+        fw = np.divide(lw, lt, out=np.zeros_like(lt), where=lt > 0.0)
+        fo = np.divide(lo, lt, out=np.zeros_like(lt), where=lt > 0.0)
+        fg = np.divide(lg, lt, out=np.zeros_like(lt), where=lt > 0.0)
+        return fw, fo, fg
+
+    @classmethod
+    def cmg_seawater(
+        cls, *, mu_w: float = 1.1e-3, mu_o: float = 0.64e-3, mu_g: float = 2.08e-5
+    ) -> TableThreePhase:
+        """IMEX *SWT + *SLT from the virtual-experiment decks."""
+        return cls(
+            sw=np.array([0.20, 0.30, 0.40, 0.50, 0.60, 0.80, 0.90, 1.00]),
+            krw=np.array([0.00, 0.07, 0.15, 0.24, 0.33, 0.65, 0.83, 1.00]),
+            krow=np.array([1.00, 0.40, 0.125, 0.0649, 0.0048, 0.00, 0.00, 0.00]),
+            sl=np.array([0.20, 0.30, 0.40, 0.50, 0.55, 0.60, 0.70, 0.75, 0.80, 0.88, 0.95, 0.98, 0.999, 1.00]),
+            krg=np.array([0.98, 0.94, 0.87, 0.72, 0.60, 0.41, 0.19, 0.125, 0.075, 0.025, 0.005, 0.00, 0.00, 0.00]),
+            krog=np.array([0.00, 0.00, 1.0e-4, 0.001, 0.010, 0.021, 0.09, 0.20, 0.35, 0.70, 0.98, 0.997, 1.00, 1.00]),
+            mu_w=float(mu_w),
+            mu_o=float(mu_o),
+            mu_g=float(mu_g),
+        )

@@ -1,1 +1,1 @@
-"""Validation harnesses and CMG comparison utilities (not product kernel)."""
+"""Validation utilities (synthetic twin). CMG compare lives under black_oil/validation."""

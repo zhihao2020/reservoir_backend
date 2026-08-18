@@ -1,13 +1,13 @@
 # CMG 两层尺子：同一工况，实验室反演
 
-开源油藏程序（OPM、MRST…）是正演 \(F\)。这里要测的是数字孪生：
+外部油藏正演只是 \(F\)。这里要测的是数字孪生：
 
 \[
 x=F_{\mathrm{lab}}(m,u),\quad d=H(x),\quad d_{\mathrm{obs}}\to m_{\mathrm{post}}
 \]
 
 和 IMEX「工况一样」= **同一套井控 \(u(t)\)** + **同一批 \((x,y,z)\) 测点**。  
-不是把 \(F\) 改成黑油再去收回格子 \(K_{\mathrm{CMG}}\)（那是调参）。
+\(F\) 用牌组 `*SWT`、海水 PVT 和重力（不是为了收回格子 \(K_{\mathrm{CMG}}\)）。
 
 ## 模型（从通道样例克隆后改）
 
@@ -45,7 +45,7 @@ python black_oil/validation/cmg_lab_layers/run_invert_eval.py
 
 报告：`invert_eval_report.json`。
 
-多案、探针剪枝、旋钮回溯见 `reservoir harness suite`（`black_oil/validation/cmg_harness/README.md`）。
+产品尺子是自洽反演（协议 A），不是场 Dice 对 CMG。`reservoir harness` 已删除。
 
 场图（CMG 仿真 vs 反演正演）：
 
@@ -65,8 +65,12 @@ python black_oil/validation/cmg_lab_layers/plot_cmg_inv_fields.py
 
 | | 层对比度（真 10） | 后验 md | log K RMSE | hold-out | 预报 |
 |--|-------------------|---------|------------|----------|------|
-| **A 自洽** | **9.56** | 54 / 520 | **0.065** | 1.59 | 1.12 |
-| **B CMG 测点 + \(R\) 膨胀** | 3.10（等效，不是 10） | 42 / 130 | 不收 \(K_{\mathrm{CMG}}\) | **0.62** | **0.48** |
+| **A 自洽** | **9.35** | **52 / 491** | **0.037** | **1.47** | — |
+| **B CMG 测点 + \(R\) 膨胀** | **6.83**（等效） | **59 / 402** | 不收 \(K_{\mathrm{CMG}}\) | **0.62** | **0.37** |
+
+\(F\)：牌组 `*SWT`、海水 PVT、\(g=9.81\)、\(k_z=0.1k_x\)、隐式输运、Peaceman（牌组 `*GEOMETRY`）、注入 \(S_w=1\)。  
+自洽观测必须走 `rock_from_k`（带 \(k_z\)）。上一版用各向同性 `Rock` 造观测、各向异性正演反演，协议 A 会漂到 90 / 796 md。  
+同岩石对 IMEX：1 天压力 RMSE **6.9 psi**、含水 **0.038**。协议 A 后验场对 IMEX 压力 **7.3 psi**（几乎贴在地板上）。
 
 对策：先算 \(F(K_{\mathrm{CMG}})\) 对 CMG 测点的残差（压力约 180 psi，\(S_w\) 约 0.3），写进 \(R\)。集成就不再把模型差拧进层状 \(K\)。B 的 hold-out 从 4.3 降到 **0.74**（在模型误差尺度上拟合），对比度不再反转。
 

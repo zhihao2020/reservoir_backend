@@ -70,8 +70,7 @@ def _simulate(grid, truth, k, days):
         param,
         inverse=InverseSpec(n_ensemble=4, n_assimilations=1),
     )
-    phi = float(truth["controls"]["phi"])
-    traj = twin.simulate(Rock(k, np.full(grid.n_cells, phi)), t_end=float(times[-1]), report_times=times)
+    traj = twin.simulate(twin.rock_from_k(k), t_end=float(times[-1]), report_times=times)
     out = {}
     for t in times:
         st = traj.state_at(float(t))

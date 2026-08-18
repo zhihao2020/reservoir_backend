@@ -52,5 +52,17 @@ Thumbs.db
 desktop.ini
 
 # Local third-party trees and copyrighted papers (clone / download separately)
+# Keep references/README.md, fixtures/, extract_*.py, methods/ trackable.
 references/MRST-main/
+references/MRST-2026a/
+references/opm-simulators-master/
+references/opm-upscaling-master/
+references/GEOS-develop/
+references/JutulDarcy.jl-main/
+references/OpenPNM-dev/
+references/StrataTrapper-main/
+references/open-darts-main/
+references/pyvplm-master/
+references/concecpt/
 references/1-s2.0-S0098300412000994-main.pdf
+references/*.pptx

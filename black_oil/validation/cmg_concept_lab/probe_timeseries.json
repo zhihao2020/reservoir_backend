@@ -1,0 +1,3070 @@
+{
+  "out": "D:\\Tool\\CMG\\_cmg_suite_runs\\concept_lab\\case_clone\\mxspr006_concept.out",
+  "n_series": 85,
+  "kinds": {
+    "pressure": 39,
+    "saturation": 46
+  },
+  "series": [
+    {
+      "name": "R_bottom_00_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.05,
+      "z_m": 0.05666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12562247.788152095
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_10_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.05,
+      "z_m": 0.08333333333333334,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.3025
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5433333333333333
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6005
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6231666666666666
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6595
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_20_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.05,
+      "z_m": 0.11,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_30_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.05,
+      "z_m": 0.08333333333333334,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.28283333333333327
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.49716666666666665
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5914999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6086666666666667
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6435
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_40_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.05,
+      "z_m": 0.05666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858925
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045166
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_01_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.1,
+      "z_m": 0.05666666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.3776666666666667
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5916666666666667
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.63
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6596666666666666
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6951666666666667
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_11_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.1,
+      "z_m": 0.08333333333333334,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12559949.535721038
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_21_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.1,
+      "z_m": 0.11,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2915
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5285000000000001
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5994999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6200000000000001
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6555
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_31_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.1,
+      "z_m": 0.08333333333333334,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_41_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.1,
+      "z_m": 0.05666666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2783333333333334
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.4853333333333333
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5879999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6058333333333333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6395
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_02_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.15,
+      "z_m": 0.05666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12562247.788152095
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_12_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.15,
+      "z_m": 0.08333333333333334,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.33699999999999997
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5723333333333334
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.615
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6413333333333333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6746666666666667
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_22_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.15,
+      "z_m": 0.11,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_32_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.15,
+      "z_m": 0.08333333333333334,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2826666666666666
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5076666666666667
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.598
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6134999999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6485000000000001
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_42_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.15,
+      "z_m": 0.05666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858925
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045166
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_03_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.2,
+      "z_m": 0.05666666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.3776666666666667
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5916666666666667
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6299999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6596666666666666
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6951666666666667
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_13_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.2,
+      "z_m": 0.08333333333333334,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12559949.535721038
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_23_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.2,
+      "z_m": 0.11,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2915
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5290000000000001
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5994999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6200000000000001
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6555
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_33_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.2,
+      "z_m": 0.08333333333333334,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_43_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.2,
+      "z_m": 0.05666666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2783333333333334
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.4853333333333333
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5879999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6058333333333333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6395
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_04_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.25,
+      "z_m": 0.05666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12562247.788152093
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338335
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_14_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.25,
+      "z_m": 0.08333333333333334,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.30249999999999994
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5433333333333333
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6004999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6231666666666666
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6594999999999999
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_24_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.25,
+      "z_m": 0.11,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858926
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338335
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_34_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.25,
+      "z_m": 0.08333333333333334,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.28283333333333327
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.49716666666666665
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5914999999999998
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6086666666666667
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6435
+        }
+      ]
+    },
+    {
+      "name": "R_bottom_44_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.25,
+      "z_m": 0.05666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858925
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045164
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338333
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045164
+        }
+      ]
+    },
+    {
+      "name": "R_interface_00_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.05,
+      "z_m": 0.1366666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12562247.788152095
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_interface_10_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.05,
+      "z_m": 0.16333333333333336,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.29733333333333334
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5388333333333334
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6001666666666666
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.623
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6595
+        }
+      ]
+    },
+    {
+      "name": "R_interface_20_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.05,
+      "z_m": 0.19,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_interface_30_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.05,
+      "z_m": 0.16333333333333336,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2793333333333334
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.49183333333333334
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5901666666666667
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6085
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6435
+        }
+      ]
+    },
+    {
+      "name": "R_interface_40_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.05,
+      "z_m": 0.1366666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858925
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045166
+        }
+      ]
+    },
+    {
+      "name": "R_interface_01_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.1,
+      "z_m": 0.1366666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.3693333333333333
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5883333333333334
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.628
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6573333333333333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6918333333333333
+        }
+      ]
+    },
+    {
+      "name": "R_interface_11_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.1,
+      "z_m": 0.16333333333333336,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_interface_21_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.1,
+      "z_m": 0.19,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2875
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.523
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5994999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6200000000000001
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.656
+        }
+      ]
+    },
+    {
+      "name": "R_interface_31_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.1,
+      "z_m": 0.16333333333333336,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10351328.949476225
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10352478.075691752
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_interface_41_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.1,
+      "z_m": 0.1366666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.27466666666666667
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.47933333333333333
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5866666666666666
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6054999999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.639
+        }
+      ]
+    },
+    {
+      "name": "R_interface_02_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.15,
+      "z_m": 0.1366666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12562247.788152095
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_interface_12_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.15,
+      "z_m": 0.16333333333333336,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.32866666666666666
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.568
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6134999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6401666666666668
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6726666666666667
+        }
+      ]
+    },
+    {
+      "name": "R_interface_22_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.15,
+      "z_m": 0.19,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_interface_32_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.15,
+      "z_m": 0.16333333333333336,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2788333333333334
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5023333333333333
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.597
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6134999999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6485000000000001
+        }
+      ]
+    },
+    {
+      "name": "R_interface_42_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.15,
+      "z_m": 0.1366666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858925
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045166
+        }
+      ]
+    },
+    {
+      "name": "R_interface_03_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.2,
+      "z_m": 0.1366666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.3693333333333333
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5883333333333334
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6279999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6573333333333333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6918333333333333
+        }
+      ]
+    },
+    {
+      "name": "R_interface_13_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.2,
+      "z_m": 0.16333333333333336,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_interface_23_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.2,
+      "z_m": 0.19,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2875
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.523
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5994999999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6200000000000001
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.656
+        }
+      ]
+    },
+    {
+      "name": "R_interface_33_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.2,
+      "z_m": 0.16333333333333336,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10351328.949476225
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10352478.075691752
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_interface_43_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.2,
+      "z_m": 0.1366666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.27466666666666667
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.4793333333333333
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5866666666666666
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6054999999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.639
+        }
+      ]
+    },
+    {
+      "name": "R_interface_04_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.25,
+      "z_m": 0.1366666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12562247.788152093
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338335
+        }
+      ]
+    },
+    {
+      "name": "R_interface_14_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.25,
+      "z_m": 0.16333333333333336,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2973333333333333
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5388333333333334
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6001666666666665
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.623
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6594999999999999
+        }
+      ]
+    },
+    {
+      "name": "R_interface_24_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.25,
+      "z_m": 0.19,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858926
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045166
+        }
+      ]
+    },
+    {
+      "name": "R_interface_34_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.25,
+      "z_m": 0.16333333333333336,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2793333333333334
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.49183333333333323
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5901666666666665
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6085
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6435
+        }
+      ]
+    },
+    {
+      "name": "R_interface_44_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.25,
+      "z_m": 0.1366666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858925
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045164
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045164
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045164
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045164
+        }
+      ]
+    },
+    {
+      "name": "R_top_00_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.05,
+      "z_m": 0.21666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_top_10_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.05,
+      "z_m": 0.24333333333333335,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2934999999999999
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5321666666666668
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5996666666666666
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6221666666666666
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6581666666666668
+        }
+      ]
+    },
+    {
+      "name": "R_top_20_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.05,
+      "z_m": 0.27,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_top_30_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.05,
+      "z_m": 0.24333333333333335,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2753333333333333
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.48416666666666663
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5881666666666666
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.608
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6418333333333333
+        }
+      ]
+    },
+    {
+      "name": "R_top_40_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.05,
+      "z_m": 0.21666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858926
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045166
+        }
+      ]
+    },
+    {
+      "name": "R_top_01_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.1,
+      "z_m": 0.21666666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.36
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5855
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6266666666666667
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6553333333333333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6885000000000001
+        }
+      ]
+    },
+    {
+      "name": "R_top_11_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.1,
+      "z_m": 0.24333333333333335,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10353052.638799515
+        }
+      ]
+    },
+    {
+      "name": "R_top_21_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.1,
+      "z_m": 0.27,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2835
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.515
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5985
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.619
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.654
+        }
+      ]
+    },
+    {
+      "name": "R_top_31_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.1,
+      "z_m": 0.24333333333333335,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_top_41_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.1,
+      "z_m": 0.21666666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.27066666666666667
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.47233333333333327
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5848333333333332
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6054999999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6388333333333334
+        }
+      ]
+    },
+    {
+      "name": "R_top_02_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.15,
+      "z_m": 0.21666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338336
+        }
+      ]
+    },
+    {
+      "name": "R_top_12_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.15,
+      "z_m": 0.24333333333333335,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.31716666666666665
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5626666666666668
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.613
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6405000000000001
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6736666666666666
+        }
+      ]
+    },
+    {
+      "name": "R_top_22_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.15,
+      "z_m": 0.27,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_top_32_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.15,
+      "z_m": 0.24333333333333335,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2748333333333334
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.4946666666666667
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5961666666666667
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6128333333333333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6481666666666667
+        }
+      ]
+    },
+    {
+      "name": "R_top_42_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.15,
+      "z_m": 0.21666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858926
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045166
+        }
+      ]
+    },
+    {
+      "name": "R_top_03_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.2,
+      "z_m": 0.21666666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.36
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5855
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.6266666666666667
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6553333333333333
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6885000000000001
+        }
+      ]
+    },
+    {
+      "name": "R_top_13_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.2,
+      "z_m": 0.24333333333333335,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338336
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10353052.638799515
+        }
+      ]
+    },
+    {
+      "name": "R_top_23_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.2,
+      "z_m": 0.27,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2835
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.515
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5985
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.619
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.654
+        }
+      ]
+    },
+    {
+      "name": "R_top_33_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.2,
+      "z_m": 0.24333333333333335,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858928
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045168
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045168
+        }
+      ]
+    },
+    {
+      "name": "R_top_43_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.2,
+      "z_m": 0.21666666666666667,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.27066666666666667
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.47233333333333327
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5848333333333331
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6054999999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6388333333333334
+        }
+      ]
+    },
+    {
+      "name": "R_top_04_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.05,
+      "y_m": 0.25,
+      "z_m": 0.21666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858926
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10355925.454338335
+        }
+      ]
+    },
+    {
+      "name": "R_top_14_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.1,
+      "y_m": 0.25,
+      "z_m": 0.24333333333333335,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.29349999999999987
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5321666666666668
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5996666666666666
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6221666666666666
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6581666666666666
+        }
+      ]
+    },
+    {
+      "name": "R_top_24_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.15,
+      "y_m": 0.25,
+      "z_m": 0.27,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858926
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045166
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10355925.454338335
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045166
+        }
+      ]
+    },
+    {
+      "name": "R_top_34_s",
+      "kind": "saturation",
+      "source": "resistivity",
+      "x_m": 0.2,
+      "y_m": 0.25,
+      "z_m": 0.24333333333333335,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2753333333333333
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.4841666666666665
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5881666666666665
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.608
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6418333333333333
+        }
+      ]
+    },
+    {
+      "name": "R_top_44_p",
+      "kind": "pressure",
+      "source": "resistivity",
+      "x_m": 0.25,
+      "y_m": 0.25,
+      "z_m": 0.21666666666666667,
+      "unit": "Pa",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 12555353.030858925
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 10349030.697045164
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 10349030.697045164
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 10349030.697045164
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 10349030.697045164
+        }
+      ]
+    },
+    {
+      "name": "A_01_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.075,
+      "y_m": 0.075,
+      "z_m": 0.075,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.33181249999999995
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5641093749999999
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.609328125
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6360781249999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6716718749999999
+        }
+      ]
+    },
+    {
+      "name": "A_02_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.075,
+      "y_m": 0.075,
+      "z_m": 0.225,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.314578125
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5556249999999999
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.607578125
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6343749999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.668984375
+        }
+      ]
+    },
+    {
+      "name": "A_03_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.075,
+      "y_m": 0.225,
+      "z_m": 0.075,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.33181249999999995
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5641093749999999
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.609328125
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6360781249999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.671671875
+        }
+      ]
+    },
+    {
+      "name": "A_04_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.075,
+      "y_m": 0.225,
+      "z_m": 0.225,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.314578125
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5556249999999999
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.607578125
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6343749999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6689843750000001
+        }
+      ]
+    },
+    {
+      "name": "A_05_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.225,
+      "y_m": 0.075,
+      "z_m": 0.075,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.28010937499999994
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.4902968749999999
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.589390625
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6067968749999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.641
+        }
+      ]
+    },
+    {
+      "name": "A_06_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.225,
+      "y_m": 0.075,
+      "z_m": 0.225,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.272796875
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.4780625
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5866874999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6067499999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6404375
+        }
+      ]
+    },
+    {
+      "name": "A_07_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.225,
+      "y_m": 0.225,
+      "z_m": 0.075,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.280109375
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.49029687499999997
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5893906250000001
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6067968749999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.641
+        }
+      ]
+    },
+    {
+      "name": "A_08_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.225,
+      "y_m": 0.225,
+      "z_m": 0.225,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.272796875
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.47806249999999995
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5866875
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6067499999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6404375000000001
+        }
+      ]
+    },
+    {
+      "name": "A_09_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.15,
+      "y_m": 0.075,
+      "z_m": 0.075,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2912499999999999
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5257499999999999
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.599
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6174999999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6534374999999999
+        }
+      ]
+    },
+    {
+      "name": "A_10_s",
+      "kind": "saturation",
+      "source": "acoustic",
+      "x_m": 0.15,
+      "y_m": 0.075,
+      "z_m": 0.225,
+      "unit": "fraction",
+      "samples": [
+        {
+          "time_day": 0.1,
+          "time_day_requested": 0.1,
+          "value": 0.2852499999999999
+        },
+        {
+          "time_day": 0.5,
+          "time_day_requested": 0.5,
+          "value": 0.5155000000000001
+        },
+        {
+          "time_day": 1.0,
+          "time_day_requested": 1.0,
+          "value": 0.5976874999999999
+        },
+        {
+          "time_day": 2.0,
+          "time_day_requested": 2.0,
+          "value": 0.6174999999999999
+        },
+        {
+          "time_day": 5.0,
+          "time_day_requested": 5.0,
+          "value": 0.6535
+        }
+      ]
+    }
+  ]
+}

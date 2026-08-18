@@ -63,6 +63,7 @@ def sort_rows(rows: list[LeaderboardRow]) -> list[LeaderboardRow]:
 
 
 def blend_k_means(k_list: list[NDArray[np.float64]], scores: list[float]) -> NDArray[np.float64]:
+    """Score-weighted blend of generic, equally shaped vectors."""
     weights = []
     for s in scores:
         v = float(s)
@@ -83,8 +84,8 @@ def greedy_holdout_blend(
 ) -> tuple[list[int], NDArray[np.float64] | None, float]:
     """Add members by hold-out. Keep a candidate only if the blend improves.
 
-    ``members`` is ``(k_mean, holdout_rmse)``. ``score_fn(k)`` re-evaluates hold-out.
-    Returns selected indices, blended K (or None), and the winning score.
+    ``members`` is ``(vector, holdout_rmse)``. ``score_fn(vector)`` re-evaluates hold-out.
+    Returns selected indices, the blended vector (or None), and the winning score.
     """
     if not members:
         raise ValueError("no members to blend")
@@ -124,7 +125,7 @@ def run_portfolio(twin, *, time_limit_s: float | None = None, blend: bool = True
             notes.append(f"skip {name}: time_limit reached")
             break
         t0 = time.perf_counter()
-        post = twin.calibrate(
+        post = twin._calibrate_candidate(
             n_ensemble=int(knobs["n_ensemble"]),
             n_assimilations=int(knobs["n_assimilations"]),
             prior_std=float(knobs["prior_std"]),
@@ -161,16 +162,18 @@ def run_portfolio(twin, *, time_limit_s: float | None = None, blend: bool = True
         hist_end = twin.experiment.history_end_s
         t_hist = float(hist_end) if hist_end is not None else float(best.history.times_s[-1])
 
-        def _score_k(k_try: NDArray[np.float64]) -> float:
+        def _score_theta(theta_try: NDArray[np.float64]) -> float:
+            k_try = twin.parameterization.expand(theta_try)
             hist = twin.simulate(twin.rock_from_k(k_try), t_end=t_hist, report_times=best.history.times_s)
             return _holdout_of(twin, hist)
 
-        pairs = [(p.esmda.k_mean, float(p.holdout_rmse)) for p in posts]
-        picked, k_blend, blend_score = greedy_holdout_blend(pairs, _score_k)
+        pairs = [(p.esmda.theta_mean, float(p.holdout_rmse)) for p in posts]
+        picked, theta_blend, blend_score = greedy_holdout_blend(pairs, _score_theta)
         names = [rows[i].name for i in picked]
-        if k_blend is not None and np.isfinite(blend_score) and blend_score < float(best.holdout_rmse):
+        if theta_blend is not None and np.isfinite(blend_score) and blend_score < float(best.holdout_rmse):
+            k_blend = twin.parameterization.expand(theta_blend)
             hist = twin.simulate(twin.rock_from_k(k_blend), t_end=t_hist, report_times=best.history.times_s)
-            esmda = replace(best.esmda, k_mean=k_blend, k_std=best.esmda.k_std)
+            esmda = replace(best.esmda, theta_mean=theta_blend, k_mean=k_blend)
             best = Posterior(
                 esmda=esmda,
                 assimilate_rmse=float(best.assimilate_rmse),

@@ -16,11 +16,11 @@ d^{sim}=H(x,m),\quad
 d^{obs}\rightarrow m^{posterior}
 \]
 
-- \(m\)：静态参数。第一版至少是区域或粗网格上的 \(K\)（log 空间），φ 可先固定。
+- \(m\)：静态参数。产品默认 2-region log \(K\)（log 空间），φ 可先固定。粗网格 6³ / 逐格不是默认。
 - \(u(t)\)：控制。定流量注入、定压采出、注入组成等。同一端口同一时刻，压力和流量不能同时当严格 BC 又当反演数据。
 - \(x_t=(p,S_w[,S_g])\)：动态状态。\(S_o=1-S_w-S_g\)。饱和度不是物性场。
 - \(H\)：观测算子。传感器是空间中的 \((x,y,z)\)，不必落在网格节点或同一深度。一口井/一根探针上不同深度就是多个 `Sensor`（`column_sensors`）。
-- 开源油藏软件（OPM、MRST 等）只是某种 \(F\)。本产品是 \(F+H+\) 反演。和 CMG「工况一样」指同一套 \(u(t)\) 和同一批测点坐标，**不是** \(F\equiv\) IMEX。
+- 外部油藏正演引擎只是某种 \(F\)。本产品是 \(F+H+\) 反演。和 CMG「工况一样」指同一套 \(u(t)\) 和同一批测点坐标，**不是** \(F\equiv\) IMEX。
 
 最终输出必须是后验统计，不是一张「真实 K」图：
 
@@ -142,8 +142,8 @@ P0 只实现 Cartesian。接口先留齐，避免全库写死 `field[k,j,i]`：
 | 名字 | P0 |
 |------|-----|
 | Simulation grid | 30 × 30 × 30，dx = 10 mm |
-| Parameter grid | Region 或 6³ / 10³，由 ParameterMapper 上采样 |
-| Observation geometry | 传感器 (x,y,z) 与可选体积，不吸附成「网格必须过该点」 |
+| Parameter grid | 默认 2-region log K；CoarseField 可选，不是默认 |
+| Observation geometry | 探头 6 mm；H 在插值场上做球平均。坐标不必落在节点上 |
 
 ### 4.3 physics（P0 = Model A + Model B）
 
@@ -151,8 +151,8 @@ P0 只实现 Cartesian。接口先留齐，避免全库写死 `field[k,j,i]`：
 |------|------|------|
 | A 单相 | 数值验证、压力 benchmark | TPFA，不可压或微可压 |
 | B 两相不混溶 | 实验室 \(B=1\) 特例 | 与 D 同一套守恒，PVT 取单位体积系数 |
-| C 三相 | 可选 | 独立 Corey，不是 Stone |
-| D 黑油油水 | 默认 \(F\)（CMG 虚拟实验） | \(b_\alpha(p)\)、岩石压缩、地面流量；无自由气 \(R_s\) 方程 |
+| C 三相 | 可选 | `*SWT`+`*SLT` Stone II；活油 \(R_s\) 进气守恒 |
+| D 黑油油水 | 默认 \(F\)（CMG 虚拟实验） | \(b_\alpha(p)\)、岩石压缩、地面流量；油水不跟踪溶解气 |
 
 30 cm 默认：重力可关（水平驱）；**毛管默认开 Brooks–Corey 或由 case 显式关**，禁止静默 Pc=0 还声称实验室物理完整。
 
@@ -187,8 +187,9 @@ P0 只做完整 ES-MDA：
 
 ```text
 Parameterization
-    RegionParameterization      先打通 pipeline
-    CoarseFieldParameterization 6³ 或 10³ log K
+    RegionParameterization      默认 2-region log K；`--auto` 可试 1/2/3 层
+    ContrastParameterization    已知高渗体；符号不反演
+    CoarseFieldParameterization 可选，不是产品默认
     # 通道管 / 裂缝 θ 可保留为一种 Region/结构参数，禁止自动当万能先验
 
 Assimilator
@@ -245,7 +246,7 @@ for n in timesteps:                          # 自适应 Δt
 
 ```text
 1. 读 Experiment：划分 control / assimilate / hold-out / forecast 时段
-2. 选 Parameterization（默认 Region 或 10³，不是 30³）
+2. 选 Parameterization（默认 2-region log K，不是 6³ / 逐格）
 3. 在 θ 空间抽样 ensemble（log K，固定 seed）
 4. 每个成员：θ → K → F(m, u_history) → H(x) → d_sim
 5. ES-MDA 多步更新（现有 ensemble_math）
@@ -263,7 +264,7 @@ for n in timesteps:                          # 自适应 Δt
 |------|----------------|--------|
 | 把 \(F\) 改到和 IMEX 一样，再收回 \(K_{\mathrm{CMG}}\) | 调参 / history match | **禁止**当主线目标 |
 | 同一套井控 \(u(t)\)，用实验室 \(F\) 解释测点 | 数字孪生反演 | **要做** |
-| 用 OPM/MRST 替换 \(F\) | 换正演引擎 | 以后可插，不改变 \(H\) 和 ES-MDA |
+| 换另一套正演引擎当 \(F\) | 换正演引擎 | 以后可插，不改变 \(H\) 和 ES-MDA |
 
 工况对齐清单（和 CMG 或真实实验）：
 
@@ -273,6 +274,8 @@ for n in timesteps:                          # 自适应 Δt
 4. 数据还要有信息：井控必须让 \(\Delta p\)、\(\Delta S_w\) 留在窗口里。
 
 测点越多、种类越杂（不同深度的 \(p\) 和 \(S_w\)，再加**不是控制量**的流量），可辨识性越好。稀疏单平面压力几乎看不见层。
+
+产品尺子是自洽反演（贴回本正演），不是场 Dice 对 CMG。三维 p/S 是 F(m_post) 重建。
 
 跨模拟器 / 真实生产的通过标准是观测、hold-out、预报变好。后验 \(K\) 是「我们的 \(F\) 下能解释数据的等效渗透率」，不是 CMG 格子 \(K\)。
 
@@ -325,8 +328,8 @@ physics:
 
 inverse:
   algorithm: esmda
-  parameterization: coarse_field   # region | coarse_field
-  coarse_n: [10, 10, 10]
+  parameterization: region   # default 2-region log K
+  n_regions: 2
   ensemble_size: 40
   assimilation_steps: 4
   seed: 7
@@ -383,7 +386,7 @@ reservoir synthetic bench.yaml
 3. **时间与单位**：内部秒；删 day 启发式。
 4. **IMPES Model B**：接线 saturation_solver + 边界通量 + 自适应 dt + 质量报告。
 5. **毛管**：30 cm case 显式选择模型。
-6. **Parameterization**：Region 或 10³；ES-MDA 只更新 θ。
+6. **Parameterization**：默认 2-region log K；ES-MDA 只更新 θ。
 7. **产品 invert**：用 G(m)+H，去掉指示混合、舌头、0.7/0.3。
 8. **Synthetic truth**：观测必须来自 \(H(F(m_{true}))\)。
 9. **Hold-out + forecast** 测试与 example。
@@ -397,9 +400,10 @@ reservoir synthetic bench.yaml
 - GPU、分布式
 - PINN / 深度代理 / VAE
 - 动态 AMR、工业 ECLIPSE 兼容
-- 同时写第二套 Fully Implicit
+- 同时写第二套工业级 Fully Implicit（FIM 为 MVP opt-in；默认仍顺序，直到放气闸门）
 - 空的 IES/EnKF/MPFA 类
 - 为旧四场 API 写 compatibility shim
+- 运行时 import OPM/GEOS；产品符号与上游同名
 
 ---
 

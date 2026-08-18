@@ -43,10 +43,13 @@ def cmd_validate(case: Path, output: Path | None) -> int:
         "n_ports": len(twin.ports),
         "n_sensors": len(twin.experiment.sensors),
         "n_theta": twin.parameterization.n_params,
+        "parameterization": type(twin.parameterization).__name__,
+        "parameterization_class": type(twin.parameterization).__name__,
         "n_ensemble": twin.inverse.n_ensemble,
         "n_workers": twin.inverse.n_workers,
         "capillary": getattr(twin.physics.capillary, "name", type(twin.physics.capillary).__name__),
         "three_phase": twin.physics.three_phase is not None,
+        "implicit_transport": bool(twin.physics.implicit_transport),
     }
     print(json.dumps(report, indent=2))
     if output:
@@ -91,12 +94,18 @@ def cmd_invert(
     preset: str | None = None,
     time_limit: float | None = None,
     auto: bool = False,
+    self_check: bool = False,
 ) -> int:
     twin = load_case(case)
+    k_true = None
     if not twin.experiment.observations:
-        raise SystemExit("invert needs experiment.observations (or a synthetic case)")
+        if not self_check:
+            raise SystemExit("invert needs experiment.observations (or use --self-check)")
+        from reservoir_backend.apply import attach_two_layer_demo
+
+        k_true = attach_two_layer_demo(twin)
     if auto:
-        post = twin.calibrate_auto(time_limit_s=time_limit, search=True)
+        post = twin.calibrate_auto(time_limit_s=time_limit, search=True, search_structure=True)
     else:
         post = twin.calibrate(preset=preset, time_limit_s=time_limit)
     t_rec = float(post.history.times_s[-1])
@@ -115,6 +124,27 @@ def cmd_invert(
         "leaderboard": getattr(twin, "last_leaderboard", []),
         "mass_balance": mass_report(twin.grid, twin.rock_from_theta(post.esmda.theta_mean), post.history),
     }
+    if self_check:
+        if k_true is None:
+            raise SystemExit("--self-check requires a case with no observations")
+        from reservoir_backend.twin.offline import predict_from_trajectory, stack_observations
+
+        series = twin.experiment.observations
+        stacked = stack_observations(series)
+        times = np.unique(np.concatenate([o.times_s for o in series]))
+        t_end = float(times[-1])
+        true_hist = twin.simulate(
+            Rock(k_true, np.full(twin.grid.n_cells, float(getattr(twin.parameterization, "phi", 0.2)))),
+            t_end=t_end, report_times=times,
+        )
+        post_hist = twin.simulate(twin.rock_from_theta(post.esmda.theta_mean), t_end=t_end, report_times=times)
+        d_true = predict_from_trajectory(twin.operator, twin.experiment, true_hist, series)
+        d_post = predict_from_trajectory(twin.operator, twin.experiment, post_hist, series)
+        payload["self_check"] = {
+            "forward_match_nrmse": float(np.sqrt(np.mean(((d_post - d_true) / stacked.sigma) ** 2))),
+            "posterior_logk_rmse": float(np.sqrt(np.mean((np.log(post.esmda.k_mean) - np.log(k_true)) ** 2))),
+            "k_mean_vs_expand_max": float(np.max(np.abs(post.esmda.k_mean - twin.parameterization.expand(post.esmda.theta_mean)))),
+        }
     print(json.dumps(payload, indent=2))
     if output:
         _save_fields(output, fields)
@@ -144,11 +174,11 @@ def cmd_forecast(case: Path, output: Path | None) -> int:
     return 0
 
 
-def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
+def cmd_apply(case: Path, output: Path | None, *, demo: bool = False, auto: bool = False) -> int:
     """Lab invert you can actually run. Not a CMG field matcher."""
     import yaml
 
-    from reservoir_backend.apply import attach_two_layer_demo, plot_posterior_fields, write_observation_csv
+    from reservoir_backend.apply import accept_demo, attach_two_layer_demo, plot_posterior_fields, write_observation_csv
 
     output = output or Path("results/apply")
     output.mkdir(parents=True, exist_ok=True)
@@ -159,34 +189,57 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
     if not twin.experiment.observations:
         if not demo:
             raise SystemExit(
-                "no observations in the case. Put a CSV in experiment.observations, "
+                "no observations in the case. Put a CSV in experiment.observations "
+                "(see config/observations_template.csv), "
                 "or run: reservoir apply config/lab_apply.yaml --demo --output results/lab"
             )
         k_true = attach_two_layer_demo(twin, holdout=hold)
         write_observation_csv(output / "observations.csv", twin)
-    post = twin.calibrate()
+    if auto:
+        post = twin.calibrate_auto(search=True, search_structure=True)
+    else:
+        post = twin.calibrate()
     t_rec = float(post.history.times_s[-1])
     fields = twin.reconstruct(post, t_rec)
+    forecast = twin.forecast(post)
+    post.forecast_rmse = twin.score_forecast(forecast)
+    last = forecast.states[-1]
+    fields["forecast_pressure"] = last.pressure
+    fields["forecast_sw"] = last.sw
+    fields["forecast_so"] = last.so()
     if k_true is not None:
         fields["k_true"] = k_true
     plots = plot_posterior_fields(twin.grid, fields, output / "figures", k_true=k_true)
+    probes = [float(s.probe_diameter_m) for s in twin.experiment.sensors]
     payload = {
         "use": "lab 300 mm invert — posterior K and F(m_post) fields, not CMG cell maps",
         "n_cells": twin.grid.n_cells,
         "n_theta": twin.parameterization.n_params,
+        "parameterization": type(twin.parameterization).__name__,
+        "probe_diameter_m": probes,
+        "history_end_s": twin.experiment.history_end_s,
+        "holdout_sensors": hold,
         "assimilate_rmse": post.assimilate_rmse,
         "holdout_rmse": post.holdout_rmse,
+        "forecast_rmse": post.forecast_rmse,
         "theta_mean": post.esmda.theta_mean.tolist(),
         "theta_std": post.esmda.theta_std.tolist(),
         "identifiability": post.identifiability.tolist(),
         "k_mean_md": (float(np.mean(post.esmda.k_mean)) / 9.869233e-16),
+        "mass_balance": mass_report(twin.grid, twin.rock_from_theta(post.esmda.theta_mean), post.history),
         "demo": bool(demo and k_true is not None),
+        "structure_board": getattr(twin, "last_structure_board", []),
+        "implicit_transport": bool(twin.physics.implicit_transport),
         "figures": [str(p) for p in plots],
-        "next": "replace observations.csv with lab gauges (same columns) and drop --demo",
+        "next": "fill config/observations_template.csv, set experiment.observations, drop --demo",
     }
+    if k_true is not None:
+        payload["acceptance"] = accept_demo(twin, post, k_true)
     print(json.dumps(payload, indent=2))
     _save_fields(output, fields)
     _write_json(output / "apply.json", payload)
+    if k_true is not None and not bool(payload["acceptance"]["pass"]):
+        return 1
     return 0
 
 
@@ -218,27 +271,14 @@ def main(argv: list[str] | None = None) -> int:
     inv_p.add_argument("--preset", choices=["fast", "balanced", "strict"], default=None)
     inv_p.add_argument("--time-limit", type=float, default=None, help="seconds; stops MDA / portfolio")
     inv_p.add_argument("--auto", action="store_true", help="try a small invert portfolio, pick by hold-out")
+    inv_p.add_argument("--self-check", action="store_true", help="with no observations, generate a two-layer demo and verify inversion")
     ap = sub.add_parser("apply", help="lab invert: demo or observations CSV → posterior fields")
     ap.add_argument("case", type=Path)
     ap.add_argument("--output", type=Path, default=None)
     ap.add_argument("--demo", action="store_true", help="if no observations, generate lab-consistent two-layer data")
+    ap.add_argument("--auto", action="store_true", help="search 1/2/3-layer structure and invert knobs by hold-out")
     p = sub.add_parser("synthetic")
     p.add_argument("--output", type=Path, default=None)
-    hs = sub.add_parser("harness", help="multi-CMG invert suite / search / journal")
-    hsub = hs.add_subparsers(dest="harness_cmd", required=True)
-    hs_suite = hsub.add_parser("suite", help="run catalog cases")
-    hs_suite.add_argument("--cases", default=None, help="comma ids, default ready cases")
-    hs_suite.add_argument("--fast", action="store_true", help="probes on all; invert only lab_layers")
-    hs_suite.add_argument("--all-invert", action="store_true", help="invert every ready case (slow)")
-    hs_suite.add_argument("--no-invert", action="store_true", help="probes only")
-    hs_suite.add_argument("--output", type=Path, default=None)
-    hs_search = hsub.add_parser("search", help="beam search invert knobs (not K)")
-    hs_search.add_argument("--case", default="lab_layers")
-    hs_search.add_argument("--time-limit", type=float, default=300.0)
-    hs_search.add_argument("--output", type=Path, default=None)
-    hs_j = hsub.add_parser("journal", help="show breakthroughs")
-    hs_j.add_argument("--case", default=None)
-    hs_j.add_argument("--threshold", type=float, default=1.0)
     args = parser.parse_args(argv)
     if args.cmd == "validate":
         return cmd_validate(args.case, args.output)
@@ -251,43 +291,14 @@ def main(argv: list[str] | None = None) -> int:
             preset=args.preset,
             time_limit=args.time_limit,
             auto=args.auto,
+            self_check=args.self_check,
         )
     if args.cmd == "forecast":
         return cmd_forecast(args.case, args.output)
     if args.cmd == "apply":
-        return cmd_apply(args.case, args.output, demo=args.demo)
+        return cmd_apply(args.case, args.output, demo=args.demo, auto=args.auto)
     if args.cmd == "synthetic":
         return cmd_synthetic(args.output)
-    if args.cmd == "harness":
-        return cmd_harness(args)
-    return 2
-
-
-def cmd_harness(args) -> int:
-    from reservoir_backend.validation.cmg_harness.journal import Journal, breakthroughs
-    from reservoir_backend.validation.cmg_harness.run_one import run_suite
-    from reservoir_backend.validation.cmg_harness.search import run_search
-
-    if args.harness_cmd == "suite":
-        ids = [x.strip() for x in args.cases.split(",")] if args.cases else None
-        fast = bool(args.fast or not args.all_invert)
-        if args.all_invert:
-            fast = False
-        report = run_suite(ids, invert=not args.no_invert, fast=fast, journal=Journal())
-        print(json.dumps(report, indent=2, default=str))
-        if args.output:
-            _write_json(args.output / "harness_suite.json", report)
-        return 0
-    if args.harness_cmd == "search":
-        report = run_search(args.case, time_limit_s=args.time_limit, journal=Journal())
-        print(json.dumps(report, indent=2, default=str))
-        if args.output:
-            _write_json(args.output / "harness_search.json", report)
-        return 0
-    if args.harness_cmd == "journal":
-        hits = breakthroughs(Journal(), threshold=args.threshold, case=args.case)
-        print(json.dumps(hits, indent=2, default=str))
-        return 0
     return 2
 
 

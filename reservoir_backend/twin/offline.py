@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 
 import numpy as np
 from numpy.typing import NDArray
@@ -19,7 +20,7 @@ from reservoir_backend.inverse.parameterization import (
 from reservoir_backend.observation.operator import ObservationOperator
 from reservoir_backend.physics.capillary import NoCapillary
 from reservoir_backend.physics.pvt import BlackOilPVT
-from reservoir_backend.physics.relperm import CoreyThreePhase, CoreyTwoPhase
+from reservoir_backend.physics.relperm import CoreyThreePhase, CoreyTwoPhase, TableThreePhase
 from reservoir_backend.physics.rock import Rock
 from reservoir_backend.ports.flow import FlowPort, validate_port_controls
 from reservoir_backend.solver.impes import Trajectory, simulate, water_mass
@@ -42,13 +43,16 @@ class InverseSpec:
     algorithm: str = "esmda"
     time_limit_s: float | None = None
     n_workers: int | None = None
+    fail_fraction: float = 0.30
     reconstruct_members: int = 8
+    search_structure: bool | None = None
+    structure_candidates: list[str] | None = None
 
 
 @dataclass
 class PhysicsSpec:
     relperm: CoreyTwoPhase = field(default_factory=CoreyTwoPhase)
-    three_phase: CoreyThreePhase | None = None
+    three_phase: CoreyThreePhase | TableThreePhase | None = None
     capillary: object = field(default_factory=NoCapillary)
     pvt: BlackOilPVT = field(default_factory=BlackOilPVT.incompressible)
     gravity: float = 0.0
@@ -64,6 +68,14 @@ class PhysicsSpec:
     max_cfl: float = 0.5
     max_ds: float = 0.15
     implicit_transport: bool = False
+    sfi_outer: int = 0
+    reupdate_pressure: bool = True
+    upwind_type: str = "potential"
+    # Default on for three-phase product configs via case loader; field default stays
+    # False for two-phase / single-phase DigitalTwin construction.
+    fully_implicit: bool = False  # opt-in FIM; flip default only after liberation ruler gate
+    max_steps: int = 12000
+    hydrostatic_init: bool = False
 
 
 @dataclass
@@ -129,6 +141,7 @@ def predict_from_trajectory(
                 y=sensor.y,
                 z=sensor.z,
                 volume_m3=sensor.volume_m3,
+                probe_diameter_m=sensor.probe_diameter_m,
                 port_name=sensor.port_name,
                 sigma=sensor.sigma,
             )
@@ -183,17 +196,29 @@ class DigitalTwin:
         if self.physics.three_phase is not None:
             sg = np.full(n, float(self.physics.sg_init))
         pressure = np.full(n, float(self.physics.p_init))
-        if self.physics.gravity > 0.0:
+        if self.physics.hydrostatic_init and self.physics.gravity > 0.0:
             z = self.grid.cell_centers()[:, 2]
+            sw0 = float(self.physics.sw_init)
+            sg0 = float(self.physics.sg_init) if self.physics.three_phase is not None else 0.0
+            so0 = max(0.0, 1.0 - sw0 - sg0)
+            pvt = self.physics.pvt
+            b_w = float(np.asarray(pvt.b_w(self.physics.p_init)))
+            b_o = float(np.asarray(pvt.b_o(self.physics.p_init)))
+            b_g = float(np.asarray(pvt.b_g(self.physics.p_init)))
             rho = (
-                float(self.physics.sw_init) * self.physics.pvt.rho_w_sc
-                + (1.0 - float(self.physics.sw_init)) * self.physics.pvt.rho_o_sc
+                sw0 * pvt.rho_w_sc * b_w
+                + so0 * pvt.rho_o_sc * b_o
+                + sg0 * pvt.rho_g_sc * b_g
             )
             pressure = pressure - rho * float(self.physics.gravity) * (z - float(np.mean(z)))
+        rs = None
+        if self.physics.pvt.has_live_oil():
+            rs = np.asarray(self.physics.pvt.rs(pressure), dtype=float).ravel()
         return State(
             pressure=pressure,
             sw=np.full(n, float(self.physics.sw_init)),
             sg=sg,
+            rs=rs,
             time_s=0.0,
         )
 
@@ -244,6 +269,10 @@ class DigitalTwin:
                 face_mult_y=self.face_mult_y,
                 face_mult_z=self.face_mult_z,
                 implicit=self.physics.implicit_transport,
+                sfi_outer=int(self.physics.sfi_outer),
+                reupdate_pressure=bool(self.physics.reupdate_pressure),
+                upwind_type=str(self.physics.upwind_type),
+                fully_implicit=bool(self.physics.fully_implicit),
                 single_phase=self.physics.single_phase,
                 mu_single=self.physics.mu_single,
                 dt_init=self.physics.dt_init,
@@ -251,10 +280,14 @@ class DigitalTwin:
                 dt_max=self.physics.dt_max,
                 max_cfl=self.physics.max_cfl,
                 max_ds=self.physics.max_ds,
+                max_steps=int(self.physics.max_steps),
                 report_times=report_times,
                 three_phase=self.physics.three_phase,
             )
-        except TimeStepUnderflow:
+        except TimeStepUnderflow as exc:
+            msg = str(exc)
+            if "more than" in msg and "steps" in msg:
+                raise
             nxt = max(floor * 0.1, 1.0e-4)
             if nxt >= floor - 1.0e-15:
                 raise
@@ -266,6 +299,67 @@ class DigitalTwin:
                 state0=state0,
                 dt_min=nxt,
             )
+
+    def inflate_observations(
+        self,
+        rock: Rock,
+        *,
+        clean: list[ObservationSeries],
+        history_end_s: float | None = None,
+        extra_cap_mult: float | None = 1.5,
+    ) -> dict[str, float]:
+        """Set each σ to ``sqrt(σ_inst² + RMSE(F(rock), clean)²)``.
+
+        ``clean`` is the noiseless gauge series. Instrument σ stays on the
+        current ``experiment.observations``. Using the noisy series as clean
+        folds the instrument draw into R and over-damps K.
+        ``extra_cap_mult`` clips model-error extra at ``mult * σ_inst``.
+        """
+        from reservoir_backend.observation.error import inflate_sigma
+
+        if not self.experiment.observations:
+            raise ValueError("no observations to inflate")
+        hist = self.experiment.history_end_s if history_end_s is None else float(history_end_s)
+        clean_map = {s.sensor_name: s for s in clean}
+        times = np.unique(np.concatenate([s.times_s for s in self.experiment.observations]))
+        t_end = float(hist) if hist is not None else float(times.max())
+        report = times[times <= t_end + 1.0] if hist is not None else times
+        if report.size == 0:
+            report = times
+        traj = self.simulate(rock, t_end=float(report.max()), report_times=report)
+        extras: dict[str, float] = {}
+        inflated: list[ObservationSeries] = []
+        for series in self.experiment.observations:
+            ref = clean_map.get(series.sensor_name)
+            if ref is None:
+                raise ValueError(f"clean series missing {series.sensor_name}")
+            sensor = next(s for s in self.experiment.sensors if s.name == series.sensor_name)
+            mask = series.times_s <= t_end + 1.0 if hist is not None else np.ones(series.times_s.size, dtype=bool)
+            pred = []
+            clean_v = []
+            for i, t in enumerate(series.times_s):
+                if not mask[i]:
+                    continue
+                idx = int(np.argmin(np.abs(traj.times_s - t)))
+                pred.append(self.operator.sample(sensor, traj.state_at(float(t)), port_rates=traj.port_rates[idx]))
+                j = int(np.argmin(np.abs(ref.times_s - t)))
+                clean_v.append(float(ref.values[j]))
+            inst = float(np.mean(series.sigma[mask])) if np.any(mask) else float(np.mean(series.sigma))
+            cap = None if extra_cap_mult is None else inst * float(extra_cap_mult)
+            extra, sig = inflate_sigma(pred, clean_v, inst, extra_cap=cap)
+            extras[series.sensor_name] = extra
+            inflated.append(
+                ObservationSeries(
+                    series.sensor_name,
+                    series.kind,
+                    series.times_s,
+                    series.values,
+                    np.full(series.times_s.size, sig),
+                    series.holdout,
+                )
+            )
+        self.experiment.observations = inflated
+        return extras
 
     def _forward_vector(
         self,
@@ -290,7 +384,28 @@ class DigitalTwin:
         seed: int | None = None,
         preset: str | None = None,
         time_limit_s: float | None = None,
-        algorithm: str | None = None,
+        n_workers: int | None = None,
+        inflation: float | None = None,
+    ) -> Posterior:
+        """Run the fixed ES-MDA calibration path."""
+        return self._calibrate_candidate(
+            n_ensemble=n_ensemble, n_assimilations=n_assimilations,
+            prior_mean=prior_mean, prior_std=prior_std, seed=seed, preset=preset,
+            time_limit_s=time_limit_s, algorithm="esmda", n_workers=n_workers,
+            inflation=inflation,
+        )
+
+    def _calibrate_candidate(
+        self,
+        *,
+        n_ensemble: int | None = None,
+        n_assimilations: int | None = None,
+        prior_mean: float | None = None,
+        prior_std: float | None = None,
+        seed: int | None = None,
+        preset: str | None = None,
+        time_limit_s: float | None = None,
+        algorithm: str = "esmda",
         n_workers: int | None = None,
         inflation: float | None = None,
     ) -> Posterior:
@@ -334,7 +449,7 @@ class DigitalTwin:
         )
         pstd = float(prior_std if prior_std is not None else knobs.get("prior_std", self.inverse.prior_std))
         infl = float(inflation if inflation is not None else knobs.get("inflation", self.inverse.inflation))
-        algo = str(algorithm or knobs.get("algorithm", self.inverse.algorithm))
+        algo = str(algorithm)
         budget = time_limit_s if time_limit_s is not None else self.inverse.time_limit_s
 
         def fwd(theta: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -354,6 +469,7 @@ class DigitalTwin:
             time_limit_s=budget,
             algorithm=algo,
             n_workers=self.inverse.n_workers if n_workers is None else n_workers,
+            fail_fraction=float(self.inverse.fail_fraction),
         )
         rock = self.rock_from_k(result.k_mean)
         hist = self.simulate(rock, t_end=t_hist, report_times=d_obs.times)
@@ -386,9 +502,32 @@ class DigitalTwin:
         blend: bool = True,
         search: bool = True,
         n_trials: int | None = None,
+        search_structure: bool | None = None,
     ) -> Posterior:
-        """Try several assimilators / knobs; pick and maybe blend on hold-out."""
+        """Try structure hypotheses and/or assimilator knobs; pick on hold-out."""
         budget = time_limit_s if time_limit_s is not None else self.inverse.time_limit_s
+        from reservoir_backend.inverse.structure import run_structure_search, should_search_structure
+
+        do_struct = should_search_structure(
+            has_region_map=False,
+            search_structure=self.inverse.search_structure if search_structure is None else search_structure,
+            candidates=self.inverse.structure_candidates,
+        )
+        extra_notes: list[str] = []
+        if do_struct:
+            t0 = time.perf_counter()
+            best_s, srows = run_structure_search(self, time_limit_s=budget)
+            self.last_structure_board = srows
+            extra_notes.append(f"structure search {len(srows)} candidates")
+            extra_notes.extend(best_s.notes)
+            if budget is not None:
+                budget = max(0.0, float(budget) - (time.perf_counter() - t0))
+                if budget <= 1.0:
+                    best_s.notes = list(best_s.notes) + extra_notes
+                    self.last_leaderboard = srows
+                    return best_s
+        else:
+            best_s = None
         if search:
             from reservoir_backend.inverse.hpo import run_hpo
 
@@ -398,7 +537,12 @@ class DigitalTwin:
 
             best, rows, extra = run_portfolio(self, time_limit_s=budget, blend=blend)
         self.last_leaderboard = [r.as_dict() for r in rows]
-        best.notes = list(best.notes) + extra
+        best.notes = list(best.notes) + extra + extra_notes
+        if best_s is not None and np.isfinite(best_s.holdout_rmse) and (
+            not np.isfinite(best.holdout_rmse) or float(best_s.holdout_rmse) < float(best.holdout_rmse)
+        ):
+            best_s.notes = list(best_s.notes) + extra_notes + ["kept structure winner over knob search"]
+            return best_s
         return best
 
     def forecast(
@@ -412,8 +556,10 @@ class DigitalTwin:
         history_end = self.experiment.history_end_s
         state0 = posterior.history.states[-1].copy() if posterior.history.states else self.initial_state()
         if t_end is None:
-            times = [o.times_s[-1] for o in self.experiment.observations]
-            t_end = max(times) if times else state0.time_s
+            ends = [float(state0.time_s)]
+            ends.extend(float(c.times_s[-1]) for c in (controls or self.experiment.controls) if c.times_s.size)
+            ends.extend(float(o.times_s[-1]) for o in self.experiment.observations if o.times_s.size)
+            t_end = max(ends)
         if history_end is not None and state0.time_s < float(history_end):
             # restart forecast from the last history state
             pass

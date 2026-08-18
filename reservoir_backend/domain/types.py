@@ -13,11 +13,12 @@ class Sensor:
     """Measurement geometry. Coordinates are SI metres, independent of the grid."""
 
     name: str
-    kind: str  # pressure | saturation | phase_rate
+    kind: str  # pressure | saturation | oil_saturation | gas_saturation | phase_rate
     x: float
     y: float
     z: float
     volume_m3: float = 0.0
+    probe_diameter_m: float = 0.0
     port_name: str | None = None
     sigma: float = 0.0
 
@@ -25,8 +26,12 @@ class Sensor:
         kind = str(self.kind).strip().lower()
         if kind in {"p", "pressure"}:
             kind = "pressure"
-        elif kind in {"s", "sw", "saturation"}:
+        elif kind in {"s", "sw", "saturation", "water_saturation"}:
             kind = "saturation"
+        elif kind in {"so", "oil", "oil_saturation"}:
+            kind = "oil_saturation"
+        elif kind in {"sg", "gas", "gas_saturation"}:
+            kind = "gas_saturation"
         elif kind in {"qw", "phase_rate", "water_rate", "rate"}:
             kind = "phase_rate"
         else:
@@ -34,6 +39,8 @@ class Sensor:
         object.__setattr__(self, "kind", kind)
         if self.volume_m3 < 0.0:
             raise ValueError("sensor volume_m3 must be >= 0")
+        if self.probe_diameter_m < 0.0:
+            raise ValueError("sensor probe_diameter_m must be >= 0")
 
 
 def column_sensors(
@@ -45,6 +52,7 @@ def column_sensors(
     *,
     sigma: float,
     volume_m3: float = 0.0,
+    probe_diameter_m: float = 0.0,
     labels: list[str] | tuple[str, ...] | None = None,
     port_name: str | None = None,
 ) -> list[Sensor]:
@@ -69,6 +77,7 @@ def column_sensors(
             y=float(y),
             z=z,
             volume_m3=volume_m3,
+            probe_diameter_m=float(probe_diameter_m),
             port_name=port_name,
             sigma=float(sigma),
         )
@@ -112,7 +121,7 @@ class ObservationSeries:
     """A single observation channel. SI values, times in seconds."""
 
     sensor_name: str
-    kind: str  # pressure | saturation | phase_rate
+    kind: str  # pressure | saturation | oil_saturation | gas_saturation | phase_rate
     times_s: NDArray[np.float64]
     values: NDArray[np.float64]
     sigma: NDArray[np.float64]
@@ -122,8 +131,12 @@ class ObservationSeries:
         kind = str(self.kind).strip().lower()
         if kind in {"p", "pressure"}:
             kind = "pressure"
-        elif kind in {"s", "sw", "saturation"}:
+        elif kind in {"s", "sw", "saturation", "water_saturation"}:
             kind = "saturation"
+        elif kind in {"so", "oil", "oil_saturation"}:
+            kind = "oil_saturation"
+        elif kind in {"sg", "gas", "gas_saturation"}:
+            kind = "gas_saturation"
         elif kind in {"qw", "phase_rate", "water_rate", "rate"}:
             kind = "phase_rate"
         else:
@@ -150,6 +163,7 @@ class State:
     pressure: NDArray[np.float64]
     sw: NDArray[np.float64]
     sg: NDArray[np.float64] | None = None
+    rs: NDArray[np.float64] | None = None
     time_s: float = 0.0
 
     def so(self) -> NDArray[np.float64]:
@@ -161,6 +175,7 @@ class State:
             pressure=np.asarray(self.pressure, dtype=float).copy(),
             sw=np.asarray(self.sw, dtype=float).copy(),
             sg=None if self.sg is None else np.asarray(self.sg, dtype=float).copy(),
+            rs=None if self.rs is None else np.asarray(self.rs, dtype=float).copy(),
             time_s=float(self.time_s),
         )
 

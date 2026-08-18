@@ -18,6 +18,23 @@ from reservoir_backend.twin.offline import DigitalTwin
 from reservoir_backend.validation.synthetic import layered_permeability
 
 
+def demo_sample_times(twin: DigitalTwin, *, n_hist: int = 5, n_fc: int = 2) -> NDArray[np.float64]:
+    """History samples plus at least one time after history_end_s for forecast."""
+    ctrl_end = max((float(c.times_s[-1]) for c in twin.experiment.controls), default=700.0)
+    hist_end = float(twin.experiment.history_end_s) if twin.experiment.history_end_s is not None else ctrl_end
+    hist_end = min(max(hist_end, 0.0), ctrl_end)
+    if hist_end <= 0.0:
+        hist_end = ctrl_end
+    n_hist = max(int(n_hist), 1)
+    hist = np.linspace(hist_end / n_hist, hist_end, n_hist)
+    if ctrl_end > hist_end + 1.0e-12:
+        n_fc = max(int(n_fc), 1)
+        step = (ctrl_end - hist_end) / n_fc
+        fc = np.linspace(hist_end + step, ctrl_end, n_fc)
+        return np.unique(np.concatenate([hist, fc]))
+    return np.unique(hist)
+
+
 def attach_two_layer_demo(
     twin: DigitalTwin,
     *,
@@ -26,32 +43,100 @@ def attach_two_layer_demo(
     seed: int = 3,
     holdout: list[str] | tuple[str, ...] | None = None,
 ) -> NDArray[np.float64]:
-    """Fill empty observations from H(F(two-layer truth)) on this case's grid."""
+    """Fill empty observations from H(F(known-structure truth)) on this case's grid.
+
+    If the case already has a 0/1 region map (layers or a channel), that map is
+    the truth. Otherwise fall back to a mid-plane z split.
+    """
     grid = twin.grid
-    z_cut = grid.origin[2] + 0.5 * grid.size_m()[2]
-    k_true = layered_permeability(grid, k_lo, k_hi, z_cut)
+    rid = getattr(twin.parameterization, "region_id", None)
+    if rid is not None and int(np.max(rid)) >= 1:
+        k_true = np.full(grid.n_cells, float(k_lo), dtype=float)
+        k_true[np.asarray(rid, dtype=np.int64).ravel() == 1] = float(k_hi)
+    else:
+        z_cut = grid.origin[2] + 0.5 * grid.size_m()[2]
+        k_true = layered_permeability(grid, k_lo, k_hi, z_cut)
     phi = float(getattr(twin.parameterization, "phi", 0.20))
-    times = twin.experiment.all_times_s()
-    if times.size == 0:
-        times = np.array([0.0, 300.0, 600.0], dtype=float)
+    times = demo_sample_times(twin)
     t_end = float(times[-1])
     traj = twin.simulate(Rock(k_true, np.full(grid.n_cells, phi)), t_end=t_end, report_times=times)
     rng = np.random.default_rng(seed)
+    names = set(holdout or ())
     obs = []
-    hold = set()
-    # keep existing holdout names if the case listed them with no series
     for s in twin.experiment.sensors:
         vals = []
         for i, t in enumerate(traj.times_s):
             rates = traj.port_rates[i] if i < len(traj.port_rates) else {}
             vals.append(twin.operator.sample(s, traj.state_at(float(t)), port_rates=rates))
         va = np.asarray(vals, dtype=float) + rng.normal(0.0, max(s.sigma, 1.0e-12), size=len(vals))
-        hold = s.name in set(holdout or ())
         obs.append(
-            ObservationSeries(s.name, s.kind, np.asarray(traj.times_s, dtype=float), va, np.full(len(vals), max(s.sigma, 1.0e-12)), hold)
+            ObservationSeries(
+                s.name,
+                s.kind,
+                np.asarray(traj.times_s, dtype=float),
+                va,
+                np.full(len(vals), max(s.sigma, 1.0e-12)),
+                s.name in names,
+            )
         )
     twin.experiment.observations = obs
     return k_true
+
+
+def _layer_means(k: NDArray[np.float64], region_id: NDArray[np.int64]) -> tuple[float, float]:
+    rid = np.asarray(region_id, dtype=np.int64).ravel()
+    kk = np.asarray(k, dtype=float).ravel()
+    lo = float(np.mean(kk[rid == 0]))
+    hi = float(np.mean(kk[rid == 1]))
+    return lo, hi
+
+
+def accept_demo(twin: DigitalTwin, posterior, k_true: NDArray[np.float64]) -> dict[str, float | bool]:
+    """P0 gate: recover the two-layer contrast and keep hold-out / forecast finite."""
+    from reservoir_backend.twin.offline import predict_from_trajectory, stack_observations
+
+    rid = np.asarray(twin.parameterization.region_id, dtype=np.int64).ravel()
+    k_post = np.asarray(posterior.esmda.k_mean, dtype=float).ravel()
+    k_lo_t, k_hi_t = _layer_means(k_true, rid)
+    k_lo_p, k_hi_p = _layer_means(k_post, rid)
+    contrast_true = k_hi_t / max(k_lo_t, 1.0e-30)
+    contrast_post = k_hi_p / max(k_lo_p, 1.0e-30)
+    logk_rmse = float(np.sqrt(np.mean((np.log(k_post) - np.log(np.asarray(k_true, dtype=float).ravel())) ** 2)))
+    expand_err = float(np.max(np.abs(k_post - twin.parameterization.expand(posterior.esmda.theta_mean))))
+
+    assim = twin.experiment.assimilate_observations()
+    stacked = stack_observations(assim)
+    times = np.unique(np.concatenate([o.times_s for o in twin.experiment.observations]))
+    t_end = float(times[-1])
+    phi = float(getattr(twin.parameterization, "phi", 0.20))
+    true_hist = twin.simulate(Rock(k_true, np.full(twin.grid.n_cells, phi)), t_end=t_end, report_times=times)
+    post_hist = twin.simulate(twin.rock_from_theta(posterior.esmda.theta_mean), t_end=t_end, report_times=times)
+    d_true = predict_from_trajectory(twin.operator, twin.experiment, true_hist, assim)
+    d_post = predict_from_trajectory(twin.operator, twin.experiment, post_hist, assim)
+    forward_match = float(np.sqrt(np.mean(((d_post - d_true) / stacked.sigma) ** 2)))
+
+    hold = float(posterior.holdout_rmse)
+    forecast = float(posterior.forecast_rmse) if posterior.forecast_rmse is not None else float("nan")
+    passed = bool(
+        6.0 <= contrast_post <= 16.0
+        and logk_rmse < 0.5
+        and expand_err < 1.0e-12
+        and np.isfinite(hold)
+        and np.isfinite(forecast)
+        and forward_match < 1.0
+    )
+    return {
+        "pass": passed,
+        "contrast_true": contrast_true,
+        "contrast_post": contrast_post,
+        "k_lo_md_post": k_lo_p / 9.869233e-16,
+        "k_hi_md_post": k_hi_p / 9.869233e-16,
+        "posterior_logk_rmse": logk_rmse,
+        "forward_match_nrmse": forward_match,
+        "k_mean_vs_expand_max": expand_err,
+        "holdout_nrmse": hold,
+        "forecast_nrmse": forecast,
+    }
 
 
 def mark_holdout(twin: DigitalTwin, names: list[str]) -> None:

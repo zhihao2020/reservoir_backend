@@ -22,6 +22,9 @@ class FlowPort:
     sw_inj: float = 1.0
     wi_multiplier: float = 1.0
     use_productivity: bool = False
+    rw_m: float = 0.0
+    skin: float = 0.0
+    geofac: float = 0.0
 
     def __post_init__(self) -> None:
         role = str(self.role).strip().lower()
@@ -52,6 +55,9 @@ class FlowPort:
         radius_m: float = 0.0,
         sw_inj: float = 1.0,
         use_productivity: bool = False,
+        rw_m: float = 0.0,
+        skin: float = 0.0,
+        geofac: float = 0.0,
     ) -> FlowPort:
         """Map a physical port to the containing cell, or cells inside ``radius_m``."""
         if radius_m <= 0.0:
@@ -69,6 +75,9 @@ class FlowPort:
             cell_ids=cells,
             sw_inj=sw_inj,
             use_productivity=use_productivity,
+            rw_m=rw_m,
+            skin=skin,
+            geofac=geofac,
         )
 
     @classmethod
@@ -82,6 +91,9 @@ class FlowPort:
         y: float,
         sw_inj: float = 1.0,
         use_productivity: bool = False,
+        rw_m: float = 0.0,
+        skin: float = 0.0,
+        geofac: float = 0.0,
     ) -> FlowPort:
         """Perforate every layer at ``(x, y)`` so a layered K is actually driven."""
         z_edges = grid.edge_z()
@@ -94,7 +106,38 @@ class FlowPort:
             cell_ids=cells,
             sw_inj=sw_inj,
             use_productivity=use_productivity,
+            rw_m=rw_m,
+            skin=skin,
+            geofac=geofac,
         )
+
+
+def peaceman_wi(
+    grid: CartesianGrid,
+    cell: int,
+    permeability: float,
+    rw_m: float,
+    *,
+    skin: float = 0.0,
+    geofac: float = 0.0,
+) -> float:
+    """Vertical Peaceman connection (m³). ``q = WI λ (p_bhp - p)``.
+
+    Default ``re = 0.14 sqrt(dx²+dy²)``. If ``geofac > 0``, use the CMG
+    *GEOMETRY form ``re = geofac * sqrt(dx dy)``.
+    """
+    i, j, k = grid.ijk(int(cell))
+    dx, dy, dz = float(grid.dx[i]), float(grid.dy[j]), float(grid.dz[k])
+    rw = float(rw_m)
+    if rw <= 0.0:
+        raise InvalidControl("peaceman rw_m must be > 0")
+    if float(geofac) > 0.0:
+        re = float(geofac) * float(np.sqrt(dx * dy))
+    else:
+        re = 0.14 * float(np.sqrt(dx * dx + dy * dy))
+    denom = float(np.log(max(re, 1.01 * rw) / rw) + float(skin))
+    denom = max(denom, 1.0e-12)
+    return float(2.0 * np.pi * float(permeability) * dz / denom)
 
 
 def geometric_wi(grid: CartesianGrid, cell: int, permeability: float, radius_m: float = 0.0) -> float:

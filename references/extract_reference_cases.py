@@ -18,23 +18,23 @@ def extract_reference_cases() -> dict:
     """Extract metadata and small arrays from reference files."""
     opm_water = _extract_opm_water_1ph()
     opm_spe1 = _extract_opm_spe1()
-    mrst_tpfa = _extract_mrst_tpfa()
-    mrst_bl = _extract_mrst_buckley_leverett()
+    seq_tpfa = _extract_seq_tpfa()
+    seq_bl = _extract_seq_buckley_leverett()
     summary = {
         "fixture_name": "open_source_adapted_reference_cases",
         "success": True,
         "sources": [
             opm_water["source"],
             opm_spe1["source"],
-            mrst_tpfa["source"],
-            mrst_bl["source"],
+            seq_tpfa["source"],
+            seq_bl["source"],
         ],
-        "cases": [_case_without_arrays(opm_water), _case_without_arrays(opm_spe1), _case_without_arrays(mrst_tpfa), _case_without_arrays(mrst_bl)],
+        "cases": [_case_without_arrays(opm_water), _case_without_arrays(opm_spe1), _case_without_arrays(seq_tpfa), _case_without_arrays(seq_bl)],
         "policy": {
             "runtime_dependency": False,
             "full_spe10_reproduction": False,
             "opm_flow_equivalence": False,
-            "mrst_runtime_integration": False,
+            "seq_runtime_integration": False,
             "commercial_simulator_equivalence": False,
         },
     }
@@ -47,9 +47,9 @@ def extract_reference_cases() -> dict:
         FIXTURES / "open_source_adapted_arrays.npz",
         spe1_permx_md=opm_spe1["arrays"]["permx_md"],
         spe1_dz_ft=opm_spe1["arrays"]["dz_ft"],
-        mrst_bl_grid=np.asarray(mrst_bl["grid"], dtype=int),
-        mrst_bl_perm_md=np.asarray([mrst_bl["permeability_md"]], dtype=float),
-        mrst_bl_porosity=np.asarray([mrst_bl["porosity"]], dtype=float),
+        seq_bl_grid=np.asarray(seq_bl["grid"], dtype=int),
+        seq_bl_perm_md=np.asarray([seq_bl["permeability_md"]], dtype=float),
+        seq_bl_porosity=np.asarray([seq_bl["porosity"]], dtype=float),
     )
     return summary
 
@@ -121,17 +121,16 @@ def _extract_opm_spe1() -> dict:
     }
 
 
-def _extract_mrst_tpfa() -> dict:
+def _extract_seq_tpfa() -> dict:
     path = _require_upstream(
         UPSTREAM / "mrst" / "modules" / "book" / "examples" / "1phase" / "src" / "simpleIncompTPFA.m"
     )
     text = path.read_text(encoding="utf-8")
     return {
-        "case_name": "mrst_simple_incomp_tpfa_reference",
+        "case_name": "seq_simple_incomp_tpfa_reference",
         "source": {
-            "project": "SINTEF-AppliedCompSci/MRST",
+            "project": "book-examples",
             "path": "modules/book/examples/1phase/src/simpleIncompTPFA.m",
-            "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/1phase/src/simpleIncompTPFA.m",
         },
         "mentions_tpfa": "two-point flux approximation" in text.lower() or "TPFA" in text,
         "mentions_boundary_conditions": "Boundary condition" in text or "bc" in text,
@@ -140,7 +139,7 @@ def _extract_mrst_tpfa() -> dict:
     }
 
 
-def _extract_mrst_buckley_leverett() -> dict:
+def _extract_seq_buckley_leverett() -> dict:
     path = _require_upstream(
         UPSTREAM / "mrst" / "modules" / "book" / "examples" / "in2ph" / "buckleyLeverett1D.m"
     )
@@ -148,16 +147,15 @@ def _extract_mrst_buckley_leverett() -> dict:
     grid_match = re.search(r"cartGrid\(\[(\d+)\s*,\s*(\d+)\]\)", text)
     rock_match = re.search(r"makeRock\(G,\s*([\d.]+)\*milli\*darcy,\s*([\d.]+)\)", text)
     if grid_match is None or rock_match is None:
-        raise ValueError("failed to parse MRST Buckley-Leverett reference")
+        raise ValueError("failed to parse sequential Buckley-Leverett reference")
     grid = [int(grid_match.group(1)), int(grid_match.group(2))]
     perm = float(rock_match.group(1))
     porosity = float(rock_match.group(2))
     return {
-        "case_name": "mrst_buckley_leverett_1d_reference",
+        "case_name": "seq_buckley_leverett_1d_reference",
         "source": {
-            "project": "SINTEF-AppliedCompSci/MRST",
+            "project": "book-examples",
             "path": "modules/book/examples/in2ph/buckleyLeverett1D.m",
-            "url": "https://github.com/SINTEF-AppliedCompSci/MRST/blob/main/modules/book/examples/in2ph/buckleyLeverett1D.m",
         },
         "grid": grid,
         "permeability_md": perm,

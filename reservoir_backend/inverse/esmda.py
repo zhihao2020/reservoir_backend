@@ -255,12 +255,13 @@ def run_esmda(
             break
 
     n_final = int(theta.shape[0])
+    theta_mean = np.mean(theta, axis=0)
     k_members = np.stack([parameterization.expand(theta[e]) for e in range(n_final)], axis=0)
     return ESMdaResult(
         theta_ensemble=theta,
-        theta_mean=np.mean(theta, axis=0),
+        theta_mean=theta_mean,
         theta_std=np.std(theta, axis=0),
-        k_mean=np.mean(k_members, axis=0),
+        k_mean=parameterization.expand(theta_mean),
         k_std=np.std(k_members, axis=0),
         k_q10=np.quantile(k_members, 0.10, axis=0),
         k_q50=np.quantile(k_members, 0.50, axis=0),

@@ -143,6 +143,28 @@ def test_fault_transi_kills_x_face() -> None:
     assert float(np.min(tx[:, :, 3])) > 0.0
 
 
+def test_implicit_transport_runs_when_dt_below_thirty() -> None:
+    from reservoir_backend.solver.impes import simulate as run
+
+    grid, rock, relperm, inj, prod = _box()
+    q_in, q_out = 6.0e-9, -3.0e-9
+    t_end = 12.0
+    times = np.array([0.0, t_end])
+    controls = [
+        ControlSeries("INJ", "rate", times, np.full(2, q_in)),
+        ControlSeries("INJ", "composition", times, np.full(2, 1.0)),
+        ControlSeries("PROD", "rate", times, np.full(2, q_out)),
+    ]
+    state0 = State(pressure=np.full(grid.n_cells, 1.5e5), sw=np.full(grid.n_cells, 0.20))
+    impl = run(
+        grid, rock, relperm, [inj, prod], controls, state0, t_end,
+        dt_init=4.0, dt_max=8.0, max_cfl=0.45, implicit=True,
+    )
+    assert any(getattr(r, "notes", None) is not None for r in impl.reports)
+    assert impl.reports[-1].mass.relative_balance_error < 0.08
+    assert float(np.mean(impl.states[-1].sw)) > 0.20
+
+
 def test_implicit_transport_allows_large_dt() -> None:
     from reservoir_backend.solver.impes import simulate as run
 

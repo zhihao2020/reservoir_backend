@@ -1,6 +1,6 @@
 """Two-point flux approximation on Cartesian K-orthogonal grids.
 
-Geometric half-transmissibility follows MRST ``computeTrans``.
+Geometric half-transmissibility is the two-point half-transmissibility.
 Phase-potential upwind of mobility follows ``getFluxAndProps*_BO``.
 """
 
@@ -109,16 +109,36 @@ def _phase_face_ops(
     gravity: float,
     rho_w: float,
     rho_o: float,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Conductivity and gravity flux L→R from phase-potential upwind."""
+    lg_l: NDArray[np.float64] | None = None,
+    lg_r: NDArray[np.float64] | None = None,
+    rho_g: float = 1.0,
+    pc_l: NDArray[np.float64] | None = None,
+    pc_r: NDArray[np.float64] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Conductivity, extra flux, and phase fluxes L→R from phase-potential upwind.
+
+    Oil pressure is primary. Water potential is ``p − Pcow``. Gas uses the
+    same oil pressure (SLT Pcog = 0 on the virtual-experiment decks).
+    """
     g = float(gravity)
-    dphi_w = (p_l - p_r) + float(rho_w) * g * (z_l - z_r)
-    dphi_o = (p_l - p_r) + float(rho_o) * g * (z_l - z_r)
+    pcw_l = np.zeros_like(p_l) if pc_l is None else pc_l
+    pcw_r = np.zeros_like(p_r) if pc_r is None else pc_r
+    dz = z_l - z_r
+    dphi_w = (p_l - pcw_l) - (p_r - pcw_r) + np.asarray(rho_w, dtype=float) * g * dz
+    dphi_o = (p_l - p_r) + np.asarray(rho_o, dtype=float) * g * dz
     lw_f = _upwind_pair(lw_l, lw_r, dphi_w)
     lo_f = _upwind_pair(lo_l, lo_r, dphi_o)
+    qw = t_geom * lw_f * dphi_w
+    qo = t_geom * lo_f * dphi_o
+    qg = np.zeros_like(qw)
     cond = t_geom * (lw_f + lo_f)
-    gflux = t_geom * (lw_f * float(rho_w) + lo_f * float(rho_o)) * g * (z_l - z_r)
-    return cond, gflux
+    if lg_l is not None and lg_r is not None:
+        dphi_g = (p_l - p_r) + np.asarray(rho_g, dtype=float) * g * dz
+        lg_f = _upwind_pair(lg_l, lg_r, dphi_g)
+        qg = t_geom * lg_f * dphi_g
+        cond = cond + t_geom * lg_f
+    gflux = qw + qo + qg - cond * (p_l - p_r)
+    return cond, gflux, qw, qo, qg
 
 
 def interior_transmissibility(
@@ -133,27 +153,53 @@ def interior_transmissibility(
     mult_z: NDArray[np.float64] | None = None,
     lw: NDArray[np.float64] | None = None,
     lo: NDArray[np.float64] | None = None,
+    lg: NDArray[np.float64] | None = None,
     pressure: NDArray[np.float64] | None = None,
     gravity: float = 0.0,
     rho_w: float = 1000.0,
     rho_o: float = 800.0,
-) -> tuple[NDArray, NDArray, NDArray, NDArray, NDArray, NDArray]:
-    """Face conductivity T λ and gravity flux. Q = Tλ Δp + gflux."""
+    rho_g: float = 1.0,
+    pc: NDArray[np.float64] | None = None,
+    return_phases: bool = False,
+) -> tuple:
+    """Face conductivity T λ and gravity/capillary flux. Q = Tλ Δp + gflux."""
     n = grid.n_cells
     t_gx, t_gy, t_gz = geometric_transmissibility(grid, k, ky=ky, kz=kz, mult_x=mult_x, mult_y=mult_y, mult_z=mult_z)
     nz, ny, nx = grid.nz, grid.ny, grid.nx
     use_upwind = lw is not None and lo is not None and pressure is not None
+    lg_ijk = None
+    pc_ijk = None
+    rw_ijk = ro_ijk = rg_ijk = None
     if use_upwind:
         lw_ijk = grid.reshape_ijk(as_cell_field(lw, n, "lw"))
         lo_ijk = grid.reshape_ijk(as_cell_field(lo, n, "lo"))
         p_ijk = grid.reshape_ijk(as_cell_field(pressure, n, "pressure"))
         z_ijk = grid.reshape_ijk(grid.cell_centers()[:, 2])
+        if lg is not None:
+            lg_ijk = grid.reshape_ijk(as_cell_field(lg, n, "lg"))
+        if pc is not None:
+            pc_ijk = grid.reshape_ijk(as_cell_field(pc, n, "pc"))
+        if np.asarray(rho_w).size > 1:
+            rw_ijk = grid.reshape_ijk(as_cell_field(np.asarray(rho_w, dtype=float).ravel(), n, "rho_w"))
+        if np.asarray(rho_o).size > 1:
+            ro_ijk = grid.reshape_ijk(as_cell_field(np.asarray(rho_o, dtype=float).ravel(), n, "rho_o"))
+        if np.asarray(rho_g).size > 1:
+            rg_ijk = grid.reshape_ijk(as_cell_field(np.asarray(rho_g, dtype=float).ravel(), n, "rho_g"))
     else:
         m_ijk = grid.reshape_ijk(as_cell_field(mobility, n, "mobility"))
 
+    def _rf(left, right, fallback):
+        if left is None:
+            return fallback
+        return 0.5 * (left + right)
+
+    qw_x = qo_x = qg_x = None
+    qw_y = qo_y = qg_y = None
+    qw_z = qo_z = qg_z = None
+
     if nx > 1:
         if use_upwind:
-            t_x, g_x = _phase_face_ops(
+            t_x, g_x, qw_x, qo_x, qg_x = _phase_face_ops(
                 t_gx,
                 lw_ijk[:, :, :-1],
                 lw_ijk[:, :, 1:],
@@ -164,8 +210,13 @@ def interior_transmissibility(
                 z_ijk[:, :, :-1],
                 z_ijk[:, :, 1:],
                 gravity,
-                rho_w,
-                rho_o,
+                _rf(None if rw_ijk is None else rw_ijk[:, :, :-1], None if rw_ijk is None else rw_ijk[:, :, 1:], rho_w),
+                _rf(None if ro_ijk is None else ro_ijk[:, :, :-1], None if ro_ijk is None else ro_ijk[:, :, 1:], rho_o),
+                None if lg_ijk is None else lg_ijk[:, :, :-1],
+                None if lg_ijk is None else lg_ijk[:, :, 1:],
+                _rf(None if rg_ijk is None else rg_ijk[:, :, :-1], None if rg_ijk is None else rg_ijk[:, :, 1:], rho_g),
+                None if pc_ijk is None else pc_ijk[:, :, :-1],
+                None if pc_ijk is None else pc_ijk[:, :, 1:],
             )
         else:
             t_x = t_gx * 0.5 * (m_ijk[:, :, :-1] + m_ijk[:, :, 1:])
@@ -176,7 +227,7 @@ def interior_transmissibility(
 
     if ny > 1:
         if use_upwind:
-            t_y, g_y = _phase_face_ops(
+            t_y, g_y, qw_y, qo_y, qg_y = _phase_face_ops(
                 t_gy,
                 lw_ijk[:, :-1, :],
                 lw_ijk[:, 1:, :],
@@ -187,8 +238,13 @@ def interior_transmissibility(
                 z_ijk[:, :-1, :],
                 z_ijk[:, 1:, :],
                 gravity,
-                rho_w,
-                rho_o,
+                _rf(None if rw_ijk is None else rw_ijk[:, :-1, :], None if rw_ijk is None else rw_ijk[:, 1:, :], rho_w),
+                _rf(None if ro_ijk is None else ro_ijk[:, :-1, :], None if ro_ijk is None else ro_ijk[:, 1:, :], rho_o),
+                None if lg_ijk is None else lg_ijk[:, :-1, :],
+                None if lg_ijk is None else lg_ijk[:, 1:, :],
+                _rf(None if rg_ijk is None else rg_ijk[:, :-1, :], None if rg_ijk is None else rg_ijk[:, 1:, :], rho_g),
+                None if pc_ijk is None else pc_ijk[:, :-1, :],
+                None if pc_ijk is None else pc_ijk[:, 1:, :],
             )
         else:
             t_y = t_gy * 0.5 * (m_ijk[:, :-1, :] + m_ijk[:, 1:, :])
@@ -199,7 +255,7 @@ def interior_transmissibility(
 
     if nz > 1:
         if use_upwind:
-            t_z, g_z = _phase_face_ops(
+            t_z, g_z, qw_z, qo_z, qg_z = _phase_face_ops(
                 t_gz,
                 lw_ijk[:-1, :, :],
                 lw_ijk[1:, :, :],
@@ -210,8 +266,13 @@ def interior_transmissibility(
                 z_ijk[:-1, :, :],
                 z_ijk[1:, :, :],
                 gravity,
-                rho_w,
-                rho_o,
+                _rf(None if rw_ijk is None else rw_ijk[:-1, :, :], None if rw_ijk is None else rw_ijk[1:, :, :], rho_w),
+                _rf(None if ro_ijk is None else ro_ijk[:-1, :, :], None if ro_ijk is None else ro_ijk[1:, :, :], rho_o),
+                None if lg_ijk is None else lg_ijk[:-1, :, :],
+                None if lg_ijk is None else lg_ijk[1:, :, :],
+                _rf(None if rg_ijk is None else rg_ijk[:-1, :, :], None if rg_ijk is None else rg_ijk[1:, :, :], rho_g),
+                None if pc_ijk is None else pc_ijk[:-1, :, :],
+                None if pc_ijk is None else pc_ijk[1:, :, :],
             )
         else:
             t_z = t_gz * 0.5 * (m_ijk[:-1, :, :] + m_ijk[1:, :, :])
@@ -219,6 +280,8 @@ def interior_transmissibility(
     else:
         t_z = np.zeros((0, ny, nx), dtype=float)
         g_z = np.zeros((0, ny, nx), dtype=float)
+    if return_phases:
+        return t_x, t_y, t_z, g_x, g_y, g_z, qw_x, qw_y, qw_z, qo_x, qo_y, qo_z, qg_x, qg_y, qg_z
     return t_x, t_y, t_z, g_x, g_y, g_z
 
 
@@ -315,9 +378,12 @@ def assemble_pressure(
     mult_z: NDArray[np.float64] | None = None,
     lw: NDArray[np.float64] | None = None,
     lo: NDArray[np.float64] | None = None,
+    lg: NDArray[np.float64] | None = None,
     gravity: float = 0.0,
     rho_w: float = 1000.0,
     rho_o: float = 800.0,
+    rho_g: float = 1.0,
+    pc: NDArray[np.float64] | None = None,
 ) -> TpfaSystem:
     """Assemble ∇·(λ K ∇Φ) = q + s (p − p_prev)."""
     n = grid.n_cells
@@ -334,10 +400,13 @@ def assemble_pressure(
         mult_z=mult_z,
         lw=lw,
         lo=lo,
+        lg=lg,
         pressure=pressure_prev,
         gravity=gravity,
         rho_w=rho_w,
         rho_o=rho_o,
+        rho_g=rho_g,
+        pc=pc,
     )
     nx, ny, nz = grid.nx, grid.ny, grid.nz
     chunks_r: list[NDArray] = []
@@ -496,3 +565,74 @@ def face_fluxes(
             t = kz_ijk[-1, :, :] * m_ijk[-1, :, :] * (grid.dy[:, None] * grid.dx[None, :]) / (0.5 * grid.dz[-1])
             fz[-1, :, :] = t * (p[-1, :, :] - face_dirichlet["top"])
     return fx, fy, fz
+
+
+def phase_interior_fluxes(
+    grid: CartesianGrid,
+    pressure: NDArray[np.float64],
+    k: NDArray[np.float64],
+    lw: NDArray[np.float64],
+    lo: NDArray[np.float64],
+    *,
+    lg: NDArray[np.float64] | None = None,
+    kz: NDArray[np.float64] | None = None,
+    mult_x: NDArray[np.float64] | None = None,
+    mult_y: NDArray[np.float64] | None = None,
+    mult_z: NDArray[np.float64] | None = None,
+    gravity: float = 0.0,
+    rho_w: float = 1000.0,
+    rho_o: float = 800.0,
+    rho_g: float = 1.0,
+    pc: NDArray[np.float64] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Interior phase fluxes on the same faces as ``face_fluxes`` (zeros on the domain skin)."""
+    n = grid.n_cells
+    packed = interior_transmissibility(
+        grid,
+        k,
+        lw + lo + (np.zeros(n) if lg is None else lg),
+        kz=kz,
+        mult_x=mult_x,
+        mult_y=mult_y,
+        mult_z=mult_z,
+        lw=lw,
+        lo=lo,
+        lg=lg,
+        pressure=pressure,
+        gravity=gravity,
+        rho_w=rho_w,
+        rho_o=rho_o,
+        rho_g=rho_g,
+        pc=pc,
+        return_phases=True,
+    )
+    _tx, _ty, _tz, _gx, _gy, _gz, qw_i, qw_j, qw_k, qo_i, qo_j, qo_k, qg_i, qg_j, qg_k = packed
+    nz, ny, nx = grid.nz, grid.ny, grid.nx
+    qw_x = np.zeros((nz, ny, nx + 1), dtype=float)
+    qw_y = np.zeros((nz, ny + 1, nx), dtype=float)
+    qw_z = np.zeros((nz + 1, ny, nx), dtype=float)
+    qo_x = np.zeros_like(qw_x)
+    qo_y = np.zeros_like(qw_y)
+    qo_z = np.zeros_like(qw_z)
+    qg_x = np.zeros_like(qw_x)
+    qg_y = np.zeros_like(qw_y)
+    qg_z = np.zeros_like(qw_z)
+    if qw_i is not None and nx > 1:
+        qw_x[:, :, 1:-1] = qw_i
+    if qw_j is not None and ny > 1:
+        qw_y[:, 1:-1, :] = qw_j
+    if qw_k is not None and nz > 1:
+        qw_z[1:-1, :, :] = qw_k
+    if qo_i is not None and nx > 1:
+        qo_x[:, :, 1:-1] = qo_i
+    if qo_j is not None and ny > 1:
+        qo_y[:, 1:-1, :] = qo_j
+    if qo_k is not None and nz > 1:
+        qo_z[1:-1, :, :] = qo_k
+    if qg_i is not None and nx > 1:
+        qg_x[:, :, 1:-1] = qg_i
+    if qg_j is not None and ny > 1:
+        qg_y[:, 1:-1, :] = qg_j
+    if qg_k is not None and nz > 1:
+        qg_z[1:-1, :, :] = qg_k
+    return qw_x, qw_y, qw_z, qo_x, qo_y, qo_z, qg_x, qg_y, qg_z

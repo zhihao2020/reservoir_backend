@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 
 from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor, column_sensors
 from reservoir_backend.grid.cartesian import CartesianGrid
-from reservoir_backend.inverse.parameterization import RegionParameterization
+from reservoir_backend.inverse.parameterization import ContrastParameterization, RegionParameterization
 from reservoir_backend.physics.rock import Rock, log_permeability
 from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec, stack_observations
@@ -38,6 +38,11 @@ def channel_permeability(
 def two_layer_regions(grid: CartesianGrid, z_cut: float) -> NDArray[np.int64]:
     z = grid.cell_centers()[:, 2]
     return (z >= float(z_cut)).astype(np.int64)
+
+
+def channel_regions(grid: CartesianGrid, y0: float, half_width: float) -> NDArray[np.int64]:
+    y = grid.cell_centers()[:, 1]
+    return (np.abs(y - float(y0)) <= float(half_width)).astype(np.int64)
 
 
 @dataclass
@@ -102,10 +107,10 @@ def make_two_layer_waterflood(
     ]
     z_bot, z_top = size_m[2] * 0.22, size_m[2] * 0.78
     sensors = []
-    sensors += column_sensors("Pin", "pressure", size_m[0] * 0.30, size_m[1] * 0.50, [z_bot, z_top], sigma=noise_p, labels=("bot", "top"))
-    sensors += column_sensors("Pout", "pressure", size_m[0] * 0.70, size_m[1] * 0.50, [z_bot, z_top], sigma=noise_p, labels=("bot", "top"))
-    sensors += column_sensors("Sin", "saturation", size_m[0] * 0.38, size_m[1] * 0.50, [z_bot, z_top], sigma=noise_s, labels=("bot", "top"))
-    sensors += column_sensors("Sout", "saturation", size_m[0] * 0.62, size_m[1] * 0.50, [z_bot, z_top], sigma=noise_s, labels=("bot", "top"))
+    sensors += column_sensors("Pin", "pressure", size_m[0] * 0.30, size_m[1] * 0.50, [z_bot, z_top], sigma=noise_p, probe_diameter_m=0.006, labels=("bot", "top"))
+    sensors += column_sensors("Pout", "pressure", size_m[0] * 0.70, size_m[1] * 0.50, [z_bot, z_top], sigma=noise_p, probe_diameter_m=0.006, labels=("bot", "top"))
+    sensors += column_sensors("Sin", "saturation", size_m[0] * 0.38, size_m[1] * 0.50, [z_bot, z_top], sigma=noise_s, probe_diameter_m=0.006, labels=("bot", "top"))
+    sensors += column_sensors("Sout", "saturation", size_m[0] * 0.62, size_m[1] * 0.50, [z_bot, z_top], sigma=noise_s, probe_diameter_m=0.006, labels=("bot", "top"))
     sensors.append(
         Sensor("Pinj", "pressure", float(grid.dx[0] * 0.5), size_m[1] * 0.50, size_m[2] * 0.50, sigma=noise_p)
     )
@@ -124,6 +129,126 @@ def make_two_layer_waterflood(
         dt_max=10.0,
         max_cfl=0.40,
         max_ds=0.12,
+        implicit_transport=True,
+    )
+    twin = DigitalTwin(
+        grid,
+        experiment,
+        [inj, prod],
+        physics,
+        param,
+        inverse=InverseSpec(
+            n_ensemble=16,
+            n_assimilations=4,
+            prior_mean=float(np.log(5.0e-13)),
+            prior_std=1.0,
+            seed=7,
+            inflation=1.01,
+        ),
+    )
+    truth_rock = Rock(k_true, np.full(grid.n_cells, phi))
+    traj = twin.simulate(truth_rock, t_end=t_end, report_times=times)
+    rng = np.random.default_rng(seed)
+    observations: list[ObservationSeries] = []
+    for sensor in sensors:
+        vals = []
+        for t in times:
+            st = traj.state_at(t)
+            idx = int(np.argmin(np.abs(traj.times_s - t)))
+            rates = traj.port_rates[idx]
+            vals.append(twin.operator.sample(sensor, st, port_rates=rates))
+        vals_a = np.asarray(vals, dtype=float)
+        noise = rng.normal(0.0, sensor.sigma, size=vals_a.size)
+        observations.append(
+            ObservationSeries(
+                sensor_name=sensor.name,
+                kind=sensor.kind,
+                times_s=times,
+                values=vals_a + noise,
+                sigma=np.full(times.size, sensor.sigma),
+                holdout=sensor.name in holdout_sensors,
+            )
+        )
+    experiment.observations = observations
+    return SyntheticCase(grid=grid, twin=twin, k_true=k_true, theta_true=theta_true)
+
+
+def make_channel_waterflood(
+    *,
+    n: tuple[int, int, int] = (8, 6, 4),
+    size_m: tuple[float, float, float] = (0.24, 0.18, 0.12),
+    k_bg: float = 2.0e-13,
+    k_ch: float = 2.0e-12,
+    phi: float = 0.20,
+    q_inj: float = 1.5e-7,
+    p_prod: float = 1.0e5,
+    t_end: float = 700.0,
+    n_times: int = 6,
+    noise_p: float = 2.0e3,
+    noise_s: float = 0.03,
+    seed: int = 5,
+    holdout_sensors: tuple[str, ...] = ("Pmx_out", "Sch"),
+    history_frac: float = 0.85,
+) -> SyntheticCase:
+    """Known high-K strip in y. Structure is the region map; magnitudes are inverted."""
+    nx, ny, nz = n
+    grid = CartesianGrid(
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        dx=np.full(nx, size_m[0] / nx),
+        dy=np.full(ny, size_m[1] / ny),
+        dz=np.full(nz, size_m[2] / nz),
+    )
+    y0 = size_m[1] * 0.50
+    half = size_m[1] * 0.16
+    k_true = channel_permeability(grid, k_bg, k_ch, y0, half)
+    regions = channel_regions(grid, y0, half)
+    param = ContrastParameterization(regions, phi=phi, log_contrast_mean=float(np.log(10.0)))
+    theta_true = np.array([float(np.log(k_bg)), float(np.log(k_ch / k_bg))])
+
+    inj = FlowPort.column(grid, "INJ", "injector", "rate", float(grid.dx[0] * 0.5), y0, sw_inj=0.85)
+    prod = FlowPort.column(
+        grid,
+        "PROD",
+        "producer",
+        "pressure",
+        size_m[0] - float(grid.dx[-1] * 0.5),
+        y0,
+    )
+    times = np.linspace(0.0, float(t_end), int(n_times) + 1)[1:]
+    controls = [
+        ControlSeries("INJ", "rate", times, np.full(times.size, q_inj)),
+        ControlSeries("INJ", "composition", times, np.full(times.size, 0.85)),
+        ControlSeries("PROD", "pressure", times, np.full(times.size, p_prod)),
+    ]
+    y_mx = size_m[1] * 0.14
+    zmid = size_m[2] * 0.50
+    xin, xmid, xout = size_m[0] * 0.28, size_m[0] * 0.50, size_m[0] * 0.72
+    sensors = [
+        Sensor("Pch_in", "pressure", xin, y0, zmid, probe_diameter_m=0.006, sigma=noise_p),
+        Sensor("Pch_out", "pressure", xout, y0, zmid, probe_diameter_m=0.006, sigma=noise_p),
+        Sensor("Pmx_in", "pressure", xin, y_mx, zmid, probe_diameter_m=0.006, sigma=noise_p),
+        Sensor("Pmx_out", "pressure", xout, y_mx, zmid, probe_diameter_m=0.006, sigma=noise_p),
+        Sensor("Sch", "saturation", xmid, y0, zmid, probe_diameter_m=0.006, sigma=noise_s),
+        Sensor("Smx", "saturation", xmid, y_mx, zmid, probe_diameter_m=0.006, sigma=noise_s),
+    ]
+    experiment = Experiment(
+        size_m=size_m,
+        sensors=sensors,
+        controls=controls,
+        observations=[],
+        history_end_s=float(t_end) * float(history_frac),
+    )
+    physics = PhysicsSpec(
+        sw_init=0.20,
+        p_init=p_prod + 5.0e4,
+        dt_init=2.0,
+        dt_min=1.0e-6,
+        dt_max=10.0,
+        max_cfl=0.40,
+        max_ds=0.12,
+        implicit_transport=True,
     )
     twin = DigitalTwin(
         grid,
@@ -175,14 +300,16 @@ def evaluate_synthetic(case: SyntheticCase, posterior) -> dict[str, float]:
     prior_theta = np.full(case.twin.parameterization.n_params, np.log(1.0e-12))
     d_prior = case.twin._forward_vector(prior_theta, assim)
     d_post = case.twin._forward_vector(posterior.esmda.theta_mean, assim)
-    def nrmse(pred):
-        return float(np.sqrt(np.mean(((pred - d.values) / d.sigma) ** 2)))
+    d_true = case.twin._forward_vector(case.theta_true, assim)
+    def nrmse(pred, target=None):
+        ref = d.values if target is None else target
+        return float(np.sqrt(np.mean(((pred - ref) / d.sigma) ** 2)))
     k_prior = case.twin.parameterization.expand(prior_theta)
     k_post = posterior.esmda.k_mean
     def k_err(k):
         return float(np.sqrt(np.mean((np.log(k) - np.log(case.k_true)) ** 2)))
     rid = case.twin.parameterization.region_id
-    log_std = posterior.esmda.theta_std[rid]
+    log_std = np.asarray(posterior.esmda.k_std, dtype=float) / np.maximum(k_post, 1.0e-30)
     k_lo_post = float(np.mean(k_post[rid == 0]))
     k_hi_post = float(np.mean(k_post[rid == 1]))
     k_lo_true = float(np.mean(case.k_true[rid == 0]))
@@ -190,13 +317,18 @@ def evaluate_synthetic(case: SyntheticCase, posterior) -> dict[str, float]:
     return {
         "prior_data_nrmse": nrmse(d_prior),
         "posterior_data_nrmse": nrmse(d_post),
+        "forward_match_nrmse": nrmse(d_post, d_true),
         "prior_logk_rmse": k_err(k_prior),
         "posterior_logk_rmse": k_err(k_post),
         "holdout_nrmse": float(posterior.holdout_rmse),
         "assimilate_nrmse": float(posterior.assimilate_rmse),
         "contrast_true": float(k_hi_true / max(k_lo_true, 1.0e-30)),
         "contrast_post": float(k_hi_post / max(k_lo_post, 1.0e-30)),
-        "theta_rmse": float(np.sqrt(np.mean((posterior.esmda.theta_mean - case.theta_true) ** 2))),
+        "theta_rmse": (
+            float(np.sqrt(np.mean((posterior.esmda.theta_mean - case.theta_true) ** 2)))
+            if posterior.esmda.theta_mean.size == case.theta_true.size
+            else float("nan")
+        ),
         "k_true_in_2std_frac": float(
             np.mean(np.abs(np.log(k_post) - np.log(case.k_true)) <= 2.0 * np.maximum(log_std, 1.0e-12))
         ),

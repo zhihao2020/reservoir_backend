@@ -25,12 +25,10 @@ from cmg_io.grid_parse import psi_to_pa
 from reservoir_backend.domain.types import ControlSeries, Experiment
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.inverse.parameterization import RegionParameterization
-from reservoir_backend.physics.capillary import NoCapillary
-from reservoir_backend.physics.relperm import CoreyTwoPhase
 from reservoir_backend.physics.rock import Rock, log_permeability
 from reservoir_backend.ports.flow import FlowPort
-from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec
-from run_invert_eval import DAY_S, MD_TO_M2, _make_obs_from_traj, _score_k, diverse_sensors
+from reservoir_backend.twin.offline import DigitalTwin, InverseSpec
+from run_invert_eval import DAY_S, MD_TO_M2, _make_obs_from_traj, _physics, _score_k, diverse_sensors
 
 FIG = HERE / "figures"
 REPORT = HERE / "grid_compare_report.json"
@@ -68,7 +66,7 @@ def _region(grid: CartesianGrid) -> np.ndarray:
 
 def _ports(grid: CartesianGrid) -> tuple[FlowPort, FlowPort]:
     lx, ly, lz = grid.size_m()
-    inj = FlowPort.at_point(grid, "INJ", "injector", "pressure", (0.04 * lx, 0.50 * ly, 0.45 * lz), sw_inj=0.80)
+    inj = FlowPort.at_point(grid, "INJ", "injector", "pressure", (0.04 * lx, 0.50 * ly, 0.45 * lz), sw_inj=1.0)
     prod = FlowPort.at_point(grid, "PROD", "producer", "pressure", (0.96 * lx, 0.50 * ly, 0.45 * lz))
     return inj, prod
 
@@ -89,7 +87,7 @@ def invert_one(spec: dict) -> dict:
         sensors=sensors,
         controls=[
             ControlSeries("INJ", "pressure", times, np.full(times.size, p_inj)),
-            ControlSeries("INJ", "composition", times, np.full(times.size, 0.85)),
+            ControlSeries("INJ", "composition", times, np.full(times.size, 1.0)),
             ControlSeries("PROD", "pressure", times, np.full(times.size, p_prod)),
         ],
         observations=[],
@@ -99,17 +97,7 @@ def invert_one(spec: dict) -> dict:
         grid,
         experiment,
         [inj, prod],
-        PhysicsSpec(
-            relperm=CoreyTwoPhase(mu_w=1.0e-3, mu_o=1.0e-3),
-            capillary=NoCapillary(),
-            sw_init=0.20,
-            p_init=psi_to_pa(3000.0),
-            dt_init=30.0,
-            dt_min=0.5,
-            dt_max=120.0,
-            max_cfl=0.50,
-            max_ds=0.18,
-        ),
+        _physics(p_init=psi_to_pa(3000.0), sw_init=0.20),
         param,
         inverse=InverseSpec(
             n_ensemble=10,
@@ -121,9 +109,8 @@ def invert_one(spec: dict) -> dict:
         ),
     )
     print(f"{spec['name']} {grid.nx}x{grid.ny}x{grid.nz} n={grid.n_cells} ...", flush=True)
-    rock = Rock(k_true, np.full(grid.n_cells, 0.30))
     t0 = time.perf_counter()
-    traj = twin.simulate(rock, t_end=float(times[-1]), report_times=times)
+    traj = twin.simulate(twin.rock_from_k(k_true), t_end=float(times[-1]), report_times=times)
     twin.experiment.observations = _make_obs_from_traj(twin, sensors, hold, times, traj, seed=4)
     post = twin.calibrate()
     elapsed = time.perf_counter() - t0

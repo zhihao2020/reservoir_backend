@@ -14,6 +14,7 @@ physics:
   p_init: 1.0e5
   dt_init: 2.0
   dt_max: 20.0
+  transport: implicit
 
 rock:
   porosity: 0.20
@@ -22,16 +23,19 @@ ports:
   - name: INJ
     role: injector
     control: rate
+    perforation: column
     x: 0.005
     y: 0.15
-    z: 0.15
     sw_inj: 0.85
   - name: PROD
     role: producer
     control: pressure
+    perforation: column
     x: 0.295
     y: 0.15
-    z: 0.15
+
+sensors_defaults:
+  probe_diameter_m: 0.006
 
 # Same (x, y) column, different z: real probes / well gauges are not mid-plane.
 sensors:
@@ -75,8 +79,9 @@ sensors:
 inverse:
   algorithm: esmda
   preset: balanced
-  parameterization: coarse_field
-  coarse_n: [6, 6, 6]
+  parameterization: region
+  region_axis: z
+  n_regions: 2
   seed: 7
   n_workers: null
 
