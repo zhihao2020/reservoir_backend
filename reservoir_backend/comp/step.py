@@ -1,9 +1,10 @@
-"""Explicit closed-domain component mole update (one Picard optional).
+"""Explicit component mole update (closed domain, or closed except injectors).
 
 Not a pressure solver and not the FIM residual. Pressure and temperature
 are prescribed; moles are transported, ``z`` is renormalized, cells re-flash.
 
-Closed domain (no wells / no-flow outer faces): ``Σ_cells n_i`` is conserved.
+Without wells, ``Σ_cells n_i`` is conserved. A rate-controlled injector
+adds specified moles to its cell.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from numpy.typing import NDArray
 
 from reservoir_backend.comp.accumulation import CellFlash, component_moles, flash_cell
 from reservoir_backend.comp.flux import EXAMPLE_MU_LIQUID, EXAMPLE_MU_VAPOR, interior_faces, phase_molar_flux
+from reservoir_backend.comp.well import RateInjector, injection_moles
 from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
 
@@ -95,8 +97,13 @@ def explicit_step(
     mu_liquid: float = EXAMPLE_MU_LIQUID,
     mu_vapor: float = EXAMPLE_MU_VAPOR,
     picard: bool = False,
+    injectors: tuple[RateInjector, ...] | list[RateInjector] | None = None,
 ) -> CompFields:
-    """Advance cell moles by ``dt`` [s] on a closed Cartesian domain.
+    """Advance cell moles by ``dt`` [s].
+
+    Without ``injectors`` the domain is closed (no-flow outer faces).
+    Rate-controlled injectors add specified moles to the well cell;
+    totals change only by that source. Not a BHP producer.
 
     If ``picard`` is true, fluxes are re-evaluated after one explicit
     predictor and averaged (one Picard correction).
@@ -131,4 +138,23 @@ def explicit_step(
             mu_vapor=mu_vapor,
         )
         n_pred = _apply_divergence(fields.n, 0.5 * (flux + flux2), faces, dt)
+    if injectors:
+        n_pred = _apply_injectors(n_pred, injectors, dt)
     return _fields_from_moles(n_pred, T, p, mixture)
+
+
+def _apply_injectors(
+    n: NDArray[np.float64],
+    injectors: tuple[RateInjector, ...] | list[RateInjector],
+    dt: float,
+) -> NDArray[np.float64]:
+    out = n.copy()
+    n_cells, n_comp = out.shape
+    for inj in injectors:
+        if not 0 <= int(inj.cell) < n_cells:
+            raise ValueError(f"injector cell {inj.cell} out of range")
+        added = injection_moles(inj, dt)
+        if added.size != n_comp:
+            raise ValueError("injector stream size != n_components")
+        out[int(inj.cell)] += added
+    return out
