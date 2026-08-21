@@ -1,8 +1,9 @@
 """Isothermal two-phase VLE flash (successive substitution + Rachford–Rice).
 
-Wilson K-value start, bracketed Newton RR, damped successive substitution
-on fugacity equality ``φ_i^L x_i = φ_i^V y_i``. Single-phase when RR has
-no root in (0, 1) or the K-values collapse to the trivial solution K = 1.
+Wilson K-value start, Michelsen TPD stability (before / after), bracketed
+Newton RR, and damped successive substitution on fugacity equality
+``φ_i^L x_i = φ_i^V y_i``. Single-phase when the feed is TPD-stable, when
+RR has no root in (0, 1), or when K collapses to the trivial solution K = 1.
 
 Units: T in K, p in Pa. Standalone; not wired into the reservoir residual.
 """
@@ -18,10 +19,11 @@ from reservoir_backend.eos.peng_robinson import (
     EosMixture,
     _g_res_over_rt,
     _normalize_composition,
+    compressibility_roots,
     fugacity_coefficients,
     ln_fugacity,
     mixture_AB,
-    select_z,
+    phase_zv_rho,
 )
 
 _TRIVIAL_K = 1.0e-8
@@ -43,6 +45,13 @@ class FlashResult:
     n_iter: int
     converged: bool
     phase_state: str  # "two-phase" | "liquid" | "vapor"
+    tpd_min: float | None = None
+    Z_liquid: float | None = None
+    Z_vapor: float | None = None
+    v_liquid: float | None = None  # m³/mol
+    v_vapor: float | None = None
+    rho_liquid: float | None = None  # kg/m³
+    rho_vapor: float | None = None
 
     @property
     def L(self) -> float:
@@ -144,11 +153,35 @@ def _phase_compositions(
 
 def _single_phase_by_gibbs(z: NDArray[np.float64], T: float, p: float, mixture: EosMixture) -> str:
     A, B, *_ = mixture_AB(z, T, p, mixture)
-    z_liq = select_z(A, B, "liquid")
-    z_vap = select_z(A, B, "vapor")
+    roots = compressibility_roots(A, B)
+    if roots.size == 1:
+        return "vapor" if float(roots[0]) >= 0.35 else "liquid"
+    z_liq = float(roots[0])
+    z_vap = float(roots[-1])
     g_l = _g_res_over_rt(z_liq, A, B)
     g_v = _g_res_over_rt(z_vap, A, B)
     return "liquid" if g_l <= g_v else "vapor"
+
+
+def _phase_densities(
+    T: float,
+    p: float,
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    phase_state: str,
+    mixture: EosMixture | None,
+) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
+    if mixture is None or mixture.Mw is None:
+        return None, None, None, None, None, None
+    z_l = v_l = rho_l = z_v = v_v = rho_v = None
+    try:
+        if phase_state in ("two-phase", "liquid"):
+            z_l, v_l, rho_l = phase_zv_rho(x, T, p, mixture, phase="liquid")
+        if phase_state in ("two-phase", "vapor"):
+            z_v, v_v, rho_v = phase_zv_rho(y, T, p, mixture, phase="vapor")
+    except ValueError:
+        return None, None, None, None, None, None
+    return z_l, z_v, v_l, v_v, rho_l, rho_v
 
 
 def _result(
@@ -162,11 +195,15 @@ def _result(
     n_iter: int,
     converged: bool,
     phase_state: str,
+    *,
+    mixture: EosMixture | None = None,
+    tpd_min: float | None = None,
 ) -> FlashResult:
     if phase_state != "two-phase":
         V = 0.0 if phase_state == "liquid" else 1.0
         x = z.copy()
         y = z.copy()
+    z_l, z_v, v_l, v_v, rho_l, rho_v = _phase_densities(T, p, x, y, phase_state, mixture)
     return FlashResult(
         T=float(T),
         p=float(p),
@@ -178,6 +215,13 @@ def _result(
         n_iter=int(n_iter),
         converged=bool(converged),
         phase_state=phase_state,
+        tpd_min=tpd_min,
+        Z_liquid=z_l,
+        Z_vapor=z_v,
+        v_liquid=v_l,
+        v_vapor=v_v,
+        rho_liquid=rho_l,
+        rho_vapor=rho_v,
     )
 
 
@@ -197,8 +241,19 @@ def flash_tp(
     Material balance: ``z = (1−V) x + V y``. Out-of-range / negative-flash
     ``V`` is never labelled two-phase.
     """
+    from reservoir_backend.eos.stability import michelsen_stability
+
     z_arr = _normalize_composition(z, mixture.n_components)
-    K = np.clip(wilson_k(mixture, T, p), _K_MIN, _K_MAX)
+    stab = michelsen_stability(z_arr, T, p, mixture)
+    pack = dict(mixture=mixture, tpd_min=stab.tpd_min)
+    if stab.stable:
+        state = _single_phase_by_gibbs(z_arr, T, p, mixture)
+        return _result(T, p, z_arr, z_arr, z_arr, 0.0, wilson_k(mixture, T, p), 0, True, state, **pack)
+
+    if (not stab.trivial_vapor) and (not stab.trivial_liquid):
+        K = np.clip(stab.w_vapor / np.clip(stab.w_liquid, 1.0e-16, None), _K_MIN, _K_MAX)
+    else:
+        K = np.clip(wilson_k(mixture, T, p), _K_MIN, _K_MAX)
     damp = float(np.clip(damping, 0.05, 1.0))
     best_res = np.inf
     x = z_arr.copy()
@@ -210,14 +265,14 @@ def flash_tp(
     for it in range(1, max_iter + 1):
         if float(np.max(np.abs(K - 1.0))) < _TRIVIAL_K:
             state = _single_phase_by_gibbs(z_arr, T, p, mixture)
-            return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, it, True, state)
+            return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, it, True, state, **pack)
 
         V, state = solve_rachford_rice(z_arr, K)
         x, y = _phase_compositions(z_arr, K, V, state)
         if state != "two-phase":
             # Wilson already single-phase, or a damped step still left (0, 1).
             if it == 1 or damp <= 0.16:
-                return _result(T, p, z_arr, x, y, V, K, it, True, state)
+                return _result(T, p, z_arr, x, y, V, K, it, True, state, **pack)
             K = K_prev.copy()
             damp = max(0.15, 0.5 * damp)
             continue
@@ -228,7 +283,7 @@ def flash_tp(
         ln_f_v = np.log(phi_v) + np.log(np.clip(y, 1.0e-16, None))
         residual = float(np.max(np.abs(ln_f_l - ln_f_v)))
         if residual < tol:
-            return _result(T, p, z_arr, x, y, V, K, it, True, "two-phase")
+            return _result(T, p, z_arr, x, y, V, K, it, True, "two-phase", **pack)
 
         K_ss = np.clip(phi_l / np.clip(phi_v, 1.0e-30, None), _K_MIN, _K_MAX)
         if residual > best_res * 1.01:
@@ -248,6 +303,6 @@ def flash_tp(
         ln_f_l = ln_fugacity(x, T, p, mixture, phase="liquid")
         ln_f_v = ln_fugacity(y, T, p, mixture, phase="vapor")
         if float(np.max(np.abs(ln_f_l - ln_f_v))) < 50.0 * tol:
-            return _result(T, p, z_arr, x, y, V, K, max_iter, True, "two-phase")
+            return _result(T, p, z_arr, x, y, V, K, max_iter, True, "two-phase", **pack)
     state = _single_phase_by_gibbs(z_arr, T, p, mixture)
-    return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, max_iter, False, state)
+    return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, max_iter, False, state, **pack)

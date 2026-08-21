@@ -28,16 +28,18 @@ EXAMPLE_LIBRARY_MARKER = (
 
 # Poling, Prausnitz, O'Connell, The Properties of Gases and Liquids, 5th ed.
 # (2001) and NIST Chemistry WebBook. Pc in Pa, Tc in K.
-_EXAMPLE_SPECIES: tuple[tuple[str, float, float, float], ...] = (
-    ("C1", 190.564, 4.5992e6, 0.01142),
-    ("C2", 305.32, 4.8722e6, 0.0995),
-    ("C3", 369.83, 4.2471e6, 0.1523),
-    ("nC4", 425.12, 3.7960e6, 0.2002),
-    ("nC5", 469.70, 3.3700e6, 0.2515),
-    ("nC6", 507.60, 3.0250e6, 0.3013),
+# Mw_g is g/mol (NIST / IUPAC public); stored on the mixture as kg/mol.
+# name, Tc, Pc, omega, Mw_g
+_EXAMPLE_SPECIES: tuple[tuple[str, float, float, float, float], ...] = (
+    ("C1", 190.564, 4.5992e6, 0.01142, 16.0425),
+    ("C2", 305.32, 4.8722e6, 0.0995, 30.0690),
+    ("C3", 369.83, 4.2471e6, 0.1523, 44.0956),
+    ("nC4", 425.12, 3.7960e6, 0.2002, 58.1222),
+    ("nC5", 469.70, 3.3700e6, 0.2515, 72.1488),
+    ("nC6", 507.60, 3.0250e6, 0.3013, 86.1754),
     # Published n-decane as an EXAMPLE C7+ stand-in (not Jiyang crude).
-    ("example_C7plus", 617.70, 2.1030e6, 0.4884),
-    ("CO2", 304.1282, 7.3773e6, 0.2236),
+    ("example_C7plus", 617.70, 2.1030e6, 0.4884, 142.2817),
+    ("CO2", 304.1282, 7.3773e6, 0.2236, 44.0095),
 )
 
 # EXAMPLE published typical CO2–alkane k_ij. Index matches _EXAMPLE_SPECIES.
@@ -71,6 +73,7 @@ def example_eight_component_mixture() -> EosMixture:
     tc = np.array([row[1] for row in _EXAMPLE_SPECIES], dtype=float)
     pc = np.array([row[2] for row in _EXAMPLE_SPECIES], dtype=float)
     omega = np.array([row[3] for row in _EXAMPLE_SPECIES], dtype=float)
+    mw = np.array([row[4] for row in _EXAMPLE_SPECIES], dtype=float) / 1000.0  # kg/mol
     nc = len(names)
     kij = np.zeros((nc, nc), dtype=float)
     index = {name: i for i, name in enumerate(names)}
@@ -79,7 +82,15 @@ def example_eight_component_mixture() -> EosMixture:
         j = index[name]
         kij[i_co2, j] = k
         kij[j, i_co2] = k
-    return EosMixture(names=names, Tc=tc, Pc=pc, omega=omega, kij=kij, marker=EXAMPLE_LIBRARY_MARKER)
+    return EosMixture(
+        names=names,
+        Tc=tc,
+        Pc=pc,
+        omega=omega,
+        kij=kij,
+        Mw=mw,
+        marker=EXAMPLE_LIBRARY_MARKER,
+    )
 
 
 def example_feed_z() -> np.ndarray:

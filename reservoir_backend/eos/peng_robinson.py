@@ -43,6 +43,7 @@ class EosMixture:
     Pc: NDArray[np.float64]
     omega: NDArray[np.float64]
     kij: NDArray[np.float64]
+    Mw: NDArray[np.float64] | None = None  # kg/mol, EXAMPLE public values when set
     marker: str = ""
 
     def __post_init__(self) -> None:
@@ -51,10 +52,14 @@ class EosMixture:
         object.__setattr__(self, "Pc", np.asarray(self.Pc, dtype=float).ravel())
         object.__setattr__(self, "omega", np.asarray(self.omega, dtype=float).ravel())
         object.__setattr__(self, "kij", np.asarray(self.kij, dtype=float))
+        if self.Mw is not None:
+            object.__setattr__(self, "Mw", np.asarray(self.Mw, dtype=float).ravel())
         if self.Tc.size != nc or self.Pc.size != nc or self.omega.size != nc:
             raise ValueError("Tc, Pc, omega must match the component list")
         if self.kij.shape != (nc, nc):
             raise ValueError(f"kij must be ({nc}, {nc}), got {self.kij.shape}")
+        if self.Mw is not None and self.Mw.size != nc:
+            raise ValueError("Mw must match the component list")
 
     @property
     def n_components(self) -> int:
@@ -62,12 +67,14 @@ class EosMixture:
 
     def subset(self, names: tuple[str, ...] | list[str]) -> EosMixture:
         idx = [self.names.index(n) for n in names]
+        mw = None if self.Mw is None else self.Mw[idx].copy()
         return EosMixture(
             names=tuple(names),
             Tc=self.Tc[idx].copy(),
             Pc=self.Pc[idx].copy(),
             omega=self.omega[idx].copy(),
             kij=self.kij[np.ix_(idx, idx)].copy(),
+            Mw=mw,
             marker=self.marker,
         )
 
@@ -238,3 +245,67 @@ def ln_fugacity(
     x_arr = _normalize_composition(x, mixture.n_components)
     phi = fugacity_coefficients(x_arr, T, p, mixture, phase=phase)
     return np.log(phi) + np.log(np.clip(x_arr, 1.0e-16, None)) + np.log(p)
+
+
+def compressibility_factor(
+    x: NDArray[np.float64] | float,
+    T: float,
+    p: float,
+    mixture: EosMixture,
+    *,
+    phase: str | None = None,
+) -> float:
+    """PR compressibility ``Z`` for composition ``x`` at ``T`` [K], ``p`` [Pa]."""
+    A, B, *_ = mixture_AB(x, T, p, mixture)
+    return select_z(A, B, phase)
+
+
+def molar_volume(
+    x: NDArray[np.float64] | float,
+    T: float,
+    p: float,
+    mixture: EosMixture,
+    *,
+    phase: str | None = None,
+) -> float:
+    """Molar volume ``v = Z R T / p`` in m³/mol."""
+    z_val = compressibility_factor(x, T, p, mixture, phase=phase)
+    return z_val * GAS_CONSTANT * T / p
+
+
+def molar_mass(x: NDArray[np.float64] | float, mixture: EosMixture) -> float:
+    """Mixture molar mass in kg/mol. Requires EXAMPLE / supplied ``mixture.Mw``."""
+    if mixture.Mw is None:
+        raise ValueError("mixture.Mw (kg/mol) is required for mass properties")
+    x_arr = _normalize_composition(x, mixture.n_components)
+    return float(x_arr @ mixture.Mw)
+
+
+def mass_density(
+    x: NDArray[np.float64] | float,
+    T: float,
+    p: float,
+    mixture: EosMixture,
+    *,
+    phase: str | None = None,
+) -> float:
+    """Mass density ``ρ = M / v`` in kg/m³."""
+    vol = molar_volume(x, T, p, mixture, phase=phase)
+    if vol <= 0.0 or not np.isfinite(vol):
+        raise ValueError("molar volume must be positive and finite")
+    return molar_mass(x, mixture) / vol
+
+
+def phase_zv_rho(
+    x: NDArray[np.float64] | float,
+    T: float,
+    p: float,
+    mixture: EosMixture,
+    *,
+    phase: str | None = None,
+) -> tuple[float, float, float]:
+    """Return ``(Z, v [m³/mol], ρ [kg/m³])`` for one phase composition."""
+    z_val = compressibility_factor(x, T, p, mixture, phase=phase)
+    vol = z_val * GAS_CONSTANT * T / p
+    rho = molar_mass(x, mixture) / vol
+    return z_val, vol, rho
