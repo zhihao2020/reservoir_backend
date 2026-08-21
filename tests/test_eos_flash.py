@@ -14,14 +14,15 @@ from reservoir_backend.eos import (
 
 
 def test_binary_co2_c1_two_phase_fugacity_and_balance() -> None:
-    """CO2–C1 VLE at 250 K, 5 MPa, z_CO2=0.40.
+    """CO2–C1 VLE at 250 K, 5 MPa, z_CO2=0.60.
 
-    Qualitative two-phase check in the published CH4–CO2 envelope
-    (Davalos et al., J. Chem. Eng. Data 1976, 250.00 K isotherm;
-    Donnelly & Katz, Ind. Eng. Chem. 1954). Not a GEM / Jiyang match.
+    Interior point of the published CH4–CO2 envelope on the 250.00 K
+    isotherm (Davalos et al., J. Chem. Eng. Data 1976; Donnelly & Katz,
+    Ind. Eng. Chem. 1954). A 40 mol% CO2 feed at this (T, p) sits on the
+    vapor side of the dew curve. Not a GEM / Jiyang match.
     """
     mix = example_eight_component_mixture().subset(["C1", "CO2"])
-    z = np.array([0.60, 0.40])
+    z = np.array([0.40, 0.60])
     T, p = 250.0, 5.0e6
     result = flash_tp(z, T, p, mix)
     assert result.converged

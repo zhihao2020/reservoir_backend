@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 
 from reservoir_backend.eos.peng_robinson import (
     EosMixture,
+    _g_res_over_rt,
     _normalize_composition,
     fugacity_coefficients,
     ln_fugacity,
@@ -145,8 +146,6 @@ def _single_phase_by_gibbs(z: NDArray[np.float64], T: float, p: float, mixture: 
     A, B, *_ = mixture_AB(z, T, p, mixture)
     z_liq = select_z(A, B, "liquid")
     z_vap = select_z(A, B, "vapor")
-    from reservoir_backend.eos.peng_robinson import _g_res_over_rt
-
     g_l = _g_res_over_rt(z_liq, A, B)
     g_v = _g_res_over_rt(z_vap, A, B)
     return "liquid" if g_l <= g_v else "vapor"
@@ -206,6 +205,7 @@ def flash_tp(
     y = z_arr.copy()
     V = 0.5
     state = "vapor"
+    K_prev = K.copy()
 
     for it in range(1, max_iter + 1):
         if float(np.max(np.abs(K - 1.0))) < _TRIVIAL_K:
@@ -215,7 +215,12 @@ def flash_tp(
         V, state = solve_rachford_rice(z_arr, K)
         x, y = _phase_compositions(z_arr, K, V, state)
         if state != "two-phase":
-            return _result(T, p, z_arr, x, y, V, K, it, True, state)
+            # Wilson already single-phase, or a damped step still left (0, 1).
+            if it == 1 or damp <= 0.16:
+                return _result(T, p, z_arr, x, y, V, K, it, True, state)
+            K = K_prev.copy()
+            damp = max(0.15, 0.5 * damp)
+            continue
 
         phi_l = fugacity_coefficients(x, T, p, mixture, phase="liquid")
         phi_v = fugacity_coefficients(y, T, p, mixture, phase="vapor")
@@ -231,6 +236,7 @@ def flash_tp(
         else:
             damp = min(1.0, damp * 1.1)
             best_res = residual
+        K_prev = K.copy()
         ln_k = np.log(K) + damp * (np.log(K_ss) - np.log(K))
         K = np.clip(np.exp(np.clip(ln_k, np.log(_K_MIN), np.log(_K_MAX))), _K_MIN, _K_MAX)
 
