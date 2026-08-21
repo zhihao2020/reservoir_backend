@@ -10,11 +10,17 @@ EXAMPLE fluids only. Not field-validated.
 
 from reservoir_backend.comp.accumulation import CellFlash, component_moles, flash_cell
 from reservoir_backend.comp.flux import InteriorFace, interior_faces, phase_molar_flux
-from reservoir_backend.comp.cycle import CycleLedger, run_inject_soak_produce
+from reservoir_backend.comp.cycle import (
+    CycleLedger,
+    injector_well_cell_z_co2,
+    produced_stream_z_co2,
+    run_inject_soak_produce,
+)
 from reservoir_backend.comp.step import CompFields, StepReport, WellLedger, accumulate_system, explicit_step, run_steps
 from reservoir_backend.comp.well import (
     RateInjector,
     RateProducer,
+    example_co2_rich_stream,
     example_producer,
     example_rate_injector,
     peaceman_wi,
@@ -32,13 +38,16 @@ __all__ = [
     "WellLedger",
     "accumulate_system",
     "component_moles",
+    "example_co2_rich_stream",
     "example_producer",
     "example_rate_injector",
     "explicit_step",
     "flash_cell",
+    "injector_well_cell_z_co2",
     "interior_faces",
     "peaceman_wi",
     "phase_molar_flux",
+    "produced_stream_z_co2",
     "run_inject_soak_produce",
     "run_steps",
     "well_cell_molar_z",

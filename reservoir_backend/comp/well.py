@@ -77,6 +77,23 @@ def peaceman_wi(
     return float(wi), r_e, rw
 
 
+def example_co2_rich_stream(mixture: EosMixture) -> NDArray[np.float64]:
+    """EXAMPLE CO2-rich injectate: z_CO2=0.85, remainder C1. Not a field card."""
+    if "CO2" not in mixture.names:
+        raise ValueError("EXAMPLE stream needs CO2 in the mixture")
+    z = np.zeros(mixture.n_components, dtype=float)
+    z[mixture.names.index("CO2")] = 0.85
+    if "C1" in mixture.names:
+        z[mixture.names.index("C1")] = 0.15
+    else:
+        others = [i for i, name in enumerate(mixture.names) if name != "CO2"]
+        if not others:
+            z[mixture.names.index("CO2")] = 1.0
+        else:
+            z[others[0]] = 0.15
+    return z / z.sum()
+
+
 def example_rate_injector(
     grid: CartesianGrid,
     cell: int,
@@ -85,16 +102,25 @@ def example_rate_injector(
     *,
     rate: float,
     stream: str = "CO2",
+    z_stream: NDArray[np.float64] | None = None,
     r_w: float | None = None,
     skin: float = 0.0,
 ) -> RateInjector:
-    """Rate-controlled injector of an EXAMPLE library stream (pure CO2 or named)."""
+    """Rate-controlled injector of an EXAMPLE stream (pure named, or ``z_stream``)."""
     if rate < 0.0:
         raise ValueError("injection rate must be non-negative (mol/s)")
-    if stream not in mixture.names:
-        raise ValueError(f"{stream!r} is not in the EXAMPLE mixture")
-    z_inj = np.zeros(mixture.n_components, dtype=float)
-    z_inj[mixture.names.index(stream)] = 1.0
+    if z_stream is not None:
+        z_inj = np.asarray(z_stream, dtype=float).ravel()
+        if z_inj.size != mixture.n_components:
+            raise ValueError("z_stream size != n_components")
+        if float(z_inj.sum()) <= 0.0:
+            raise ValueError("z_stream sums to zero")
+        z_inj = z_inj / z_inj.sum()
+    else:
+        if stream not in mixture.names:
+            raise ValueError(f"{stream!r} is not in the EXAMPLE mixture")
+        z_inj = np.zeros(mixture.n_components, dtype=float)
+        z_inj[mixture.names.index(stream)] = 1.0
     wi, r_e, rw = peaceman_wi(grid, cell, permeability, r_w=r_w, skin=skin)
     return RateInjector(
         cell=int(cell),
