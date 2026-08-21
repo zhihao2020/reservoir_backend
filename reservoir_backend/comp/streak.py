@@ -45,11 +45,10 @@ def example_drive_pressure(
 ) -> NDArray[np.float64]:
     """Prescribed p decreasing with Manhattan distance from the well.
 
-    Not a pressure solve. Gives both streak and matrix a driving force so
-    the k contrast (not a missing Δp) decides where injected CO2 goes.
+    Not a pressure solve. ``drop_pa > 0`` makes the well a source;
+    ``drop_pa < 0`` makes it a sink (produce drawdown).
     """
-    if drop_pa < 0.0:
-        raise ValueError("drop_pa must be non-negative (Pa)")
+    # drop_pa > 0: well is a source (p highest). drop_pa < 0: well is a sink.
     iw, jw, kw = grid.ijk(int(well_cell))
     p = np.empty(grid.n_cells, dtype=float)
     for c in range(grid.n_cells):

@@ -12,9 +12,12 @@ from reservoir_backend.comp.accumulation import CellFlash, component_moles, flas
 from reservoir_backend.comp.flux import InteriorFace, interior_faces, phase_molar_flux
 from reservoir_backend.comp.cycle import (
     CycleLedger,
+    CycleRecord,
+    MultiCycleLedger,
     injector_well_cell_z_co2,
     produced_stream_z_co2,
     run_huff_and_puff,
+    run_huff_and_puff_cycles,
     run_inject_soak_produce,
 )
 from reservoir_backend.comp.streak import (
@@ -40,9 +43,11 @@ __all__ = [
     "CellFlash",
     "CompFields",
     "CycleLedger",
+    "CycleRecord",
     "InteriorFace",
     "K_MATRIX_M2",
     "K_STREAK_M2",
+    "MultiCycleLedger",
     "RateInjector",
     "RateProducer",
     "StepReport",
@@ -64,6 +69,7 @@ __all__ = [
     "phase_molar_flux",
     "produced_stream_z_co2",
     "run_huff_and_puff",
+    "run_huff_and_puff_cycles",
     "run_inject_soak_produce",
     "run_steps",
     "well_cell_molar_z",

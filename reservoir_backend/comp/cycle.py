@@ -79,6 +79,41 @@ class CycleLedger:
         return self.inject.produced + self.soak.produced + self.produce.produced
 
 
+@dataclass
+class CycleRecord:
+    """One huff-n-puff cycle plus the mole inventory at its start and end."""
+
+    ledger: CycleLedger
+    n_start: NDArray[np.float64]
+    n_end: NDArray[np.float64]
+
+    @property
+    def delta_n(self) -> NDArray[np.float64]:
+        return self.n_end.sum(axis=0) - self.n_start.sum(axis=0)
+
+
+@dataclass
+class MultiCycleLedger:
+    """Repeated single-well huff-n-puff. ``cycles`` is per-cycle, in order."""
+
+    cycles: list[CycleRecord]
+    underflow: bool
+
+    @property
+    def injected(self) -> NDArray[np.float64]:
+        out = np.zeros_like(self.cycles[0].ledger.injected)
+        for rec in self.cycles:
+            out = out + rec.ledger.injected
+        return out
+
+    @property
+    def produced(self) -> NDArray[np.float64]:
+        out = np.zeros_like(self.cycles[0].ledger.produced)
+        for rec in self.cycles:
+            out = out + rec.ledger.produced
+        return out
+
+
 def _n_steps(days: float, step_days: float) -> tuple[int, float]:
     dt = float(step_days) * SECONDS_PER_DAY
     if float(days) <= 0.0:
@@ -233,3 +268,56 @@ def run_huff_and_puff(
         pressure_produce=pressure_produce,
     )
     return fields, replace(ledger, wellhead_z_definition=HNP_WELLHEAD_Z_DEFINITION)
+
+
+def run_huff_and_puff_cycles(
+    fields: CompFields,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injector: RateInjector,
+    producer: RateProducer,
+    *,
+    n_cycles: int = 2,
+    inject_days: float = INJECT_DAYS,
+    soak_days: float = SOAK_DAYS,
+    produce_days: float = PRODUCE_DAYS,
+    step_days: float = STEP_DAYS,
+    picard: bool = True,
+    gravity: float = 0.0,
+    pressure_produce: NDArray[np.float64] | float | None = None,
+) -> tuple[CompFields, MultiCycleLedger]:
+    """Repeat single-well huff-and-puff ``n_cycles`` times (default 2).
+
+    Each cycle is the documented 2 d / 2 d / 3 d schedule. Per-cycle
+    well-cell z_CO2 and ``Δn = injected − produced`` live on ``CycleRecord``.
+    """
+    if int(n_cycles) < 1:
+        raise ValueError("n_cycles must be >= 1")
+    records: list[CycleRecord] = []
+    underflow = False
+    current = fields
+    for _ in range(int(n_cycles)):
+        n_start = current.n.copy()
+        current, ledger = run_huff_and_puff(
+            current,
+            T,
+            pressure,
+            mixture,
+            grid,
+            permeability,
+            injector,
+            producer,
+            inject_days=inject_days,
+            soak_days=soak_days,
+            produce_days=produce_days,
+            step_days=step_days,
+            picard=picard,
+            gravity=gravity,
+            pressure_produce=pressure_produce,
+        )
+        records.append(CycleRecord(ledger=ledger, n_start=n_start, n_end=current.n.copy()))
+        underflow = underflow or ledger.underflow
+    return current, MultiCycleLedger(cycles=records, underflow=underflow)
