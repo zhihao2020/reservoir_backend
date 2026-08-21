@@ -37,7 +37,7 @@
 | Ensemble 并行正演 | MVP | `inverse.parallel.map_members` | `tests/test_parallel.py` |
 | 限时 HPO（搜算法旋钮） | MVP | `inverse.hpo.run_hpo` | `tests/test_hpo.py` |
 | 自洽两层 K 收回 | 已验证 | `make_two_layer_waterflood` | `tests/test_synthetic_twin.py` |
-| 独立 PR 两相闪蒸（示例参数，未接入求解器） | MVP | `eos.flash_tp` | `tests/test_eos_*.py`；standalone example flash, not wired, example PR params |
+| 独立 PR 两相闪蒸（示例参数，未接入求解器） | MVP | `eos.flash_tp` | `tests/test_eos_*.py`；standalone example flash, not wired, example PR params; negative-flash + failed-SSI fallback |
 | 独立组分质量守恒 + TPFA（示例闪蒸，未接入 FIM） | MVP | `comp.explicit_step` | `tests/test_comp_*.py`；standalone, not wired, example PR params; HnP + HZ well along EXAMPLE streak, not industrial-grade |
 
 ## 排除
