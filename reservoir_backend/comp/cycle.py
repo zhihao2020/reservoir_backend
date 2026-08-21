@@ -1,11 +1,15 @@
-"""Day-scale inject–soak–produce for one EXAMPLE injector and one producer.
+"""Day-scale inject–soak–produce for EXAMPLE wells.
 
 Documented first-cut schedule (not years, not 30-year, not 1-inject-4-produce):
 
-    inject  2 days   rate-controlled EXAMPLE stream (pure CO2 or CO2-rich mix),
-                     producer shut in
-    soak    2 days   both wells shut in; flash + TPFA only
-    produce 3 days   producer on, injector shut in
+    inject  2 days   rate-controlled EXAMPLE stream (pure CO2 or CO2-rich mix)
+    soak    2 days   well(s) shut in; flash + TPFA only
+    produce 3 days   producer on
+
+Two documented well patterns (do not mix them):
+
+    1+1     one injector cell and a different producer cell
+    HnP     one well: same cell injects, soaks, then produces
 
 ``dt`` defaults to 0.5 day. Production is capped to available moles so
 ``dt`` is not chopped to zero. Standalone; not wired into FIM.
@@ -13,7 +17,7 @@ Documented first-cut schedule (not years, not 30-year, not 1-inject-4-produce):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,6 +39,12 @@ WELLHEAD_Z_DEFINITION = (
     "injector well-cell overall z (n_i / sum n_i in the injector cell); "
     "produced-stream z = produce.produced / produce.produced.sum() "
     "(well-cell molar phase mix of the producer, cycle-integrated)"
+)
+
+HNP_WELLHEAD_Z_DEFINITION = (
+    "single-well well-cell overall z (n_i / sum n_i in the huff-n-puff cell); "
+    "produced-stream z = produce.produced / produce.produced.sum() "
+    "(same well-cell molar phase mix, cycle-integrated)"
 )
 
 
@@ -175,3 +185,49 @@ def run_inject_soak_produce(
         z_co2_well_cell_after_produce=z_after_produce,
         z_co2_produced_stream=produced_stream_z_co2(led_prod, mixture),
     )
+
+
+def run_huff_and_puff(
+    fields: CompFields,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injector: RateInjector,
+    producer: RateProducer,
+    *,
+    inject_days: float = INJECT_DAYS,
+    soak_days: float = SOAK_DAYS,
+    produce_days: float = PRODUCE_DAYS,
+    step_days: float = STEP_DAYS,
+    picard: bool = True,
+    gravity: float = 0.0,
+    pressure_produce: NDArray[np.float64] | float | None = None,
+) -> tuple[CompFields, CycleLedger]:
+    """One-well huff-and-puff: inject, soak (shut in), produce. Same cell.
+
+    Not a 1-inj + 1-prod pair and not 1-inject-4-produce. ``pressure_produce``
+    is optional produce-period Δp so neighbor fluid can enter the well cell
+    and well-cell z_CO2 can fall from the post-inject peak.
+    """
+    if int(injector.cell) != int(producer.cell):
+        raise ValueError("huff-and-puff uses one well; injector.cell must equal producer.cell")
+    fields, ledger = run_inject_soak_produce(
+        fields,
+        T,
+        pressure,
+        mixture,
+        grid,
+        permeability,
+        injector,
+        producer,
+        inject_days=inject_days,
+        soak_days=soak_days,
+        produce_days=produce_days,
+        step_days=step_days,
+        picard=picard,
+        gravity=gravity,
+        pressure_produce=pressure_produce,
+    )
+    return fields, replace(ledger, wellhead_z_definition=HNP_WELLHEAD_Z_DEFINITION)

@@ -14,6 +14,7 @@ from reservoir_backend.comp.cycle import (
     CycleLedger,
     injector_well_cell_z_co2,
     produced_stream_z_co2,
+    run_huff_and_puff,
     run_inject_soak_produce,
 )
 from reservoir_backend.comp.step import CompFields, StepReport, WellLedger, accumulate_system, explicit_step, run_steps
@@ -21,6 +22,7 @@ from reservoir_backend.comp.well import (
     RateInjector,
     RateProducer,
     example_co2_rich_stream,
+    example_huff_n_puff_well,
     example_producer,
     example_rate_injector,
     peaceman_wi,
@@ -39,6 +41,7 @@ __all__ = [
     "accumulate_system",
     "component_moles",
     "example_co2_rich_stream",
+    "example_huff_n_puff_well",
     "example_producer",
     "example_rate_injector",
     "explicit_step",
@@ -48,6 +51,7 @@ __all__ = [
     "peaceman_wi",
     "phase_molar_flux",
     "produced_stream_z_co2",
+    "run_huff_and_puff",
     "run_inject_soak_produce",
     "run_steps",
     "well_cell_molar_z",

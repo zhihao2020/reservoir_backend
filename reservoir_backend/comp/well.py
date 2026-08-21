@@ -170,6 +170,33 @@ def well_cell_molar_z(cell: CellFlash) -> NDArray[np.float64]:
     return num / den
 
 
+def example_huff_n_puff_well(
+    grid: CartesianGrid,
+    cell: int,
+    permeability: float,
+    mixture: EosMixture,
+    *,
+    inject_rate: float,
+    produce_rate: float,
+    z_stream: NDArray[np.float64] | None = None,
+    r_w: float | None = None,
+    skin: float = 0.0,
+) -> tuple[RateInjector, RateProducer]:
+    """One EXAMPLE well used first as injector, then as producer (huff-n-puff).
+
+    Default injectate is the CO2-rich EXAMPLE stream. Same cell, same WI.
+    Not a 1-inj + 1-prod pair.
+    """
+    z = example_co2_rich_stream(mixture) if z_stream is None else z_stream
+    inj = example_rate_injector(
+        grid, cell, permeability, mixture, rate=inject_rate, z_stream=z, r_w=r_w, skin=skin
+    )
+    prod = example_producer(
+        grid, cell, permeability, mixture, molar_rate=produce_rate, r_w=r_w, skin=skin
+    )
+    return inj, prod
+
+
 def example_producer(
     grid: CartesianGrid,
     cell: int,
