@@ -6,10 +6,12 @@ Documented first-cut schedule (not years, not 30-year, not 1-inject-4-produce):
     soak    2 days   well(s) shut in; flash + TPFA only
     produce 3 days   producer on
 
-Two documented well patterns (do not mix them):
+Documented well patterns (do not mix them):
 
     1+1     one injector cell and a different producer cell
     HnP     one well: same cell injects, soaks, then produces
+    HZ      one horizontal well: several streak perforations, same cells
+            inject then produce (not 1-inject-4-produce)
 
 ``dt`` defaults to 0.5 day. Production is capped to available moles so
 ``dt`` is not chopped to zero. Standalone; not wired into FIM.
@@ -45,6 +47,12 @@ HNP_WELLHEAD_Z_DEFINITION = (
     "single-well well-cell overall z (n_i / sum n_i in the huff-n-puff cell); "
     "produced-stream z = produce.produced / produce.produced.sum() "
     "(same well-cell molar phase mix, cycle-integrated)"
+)
+
+HZ_WELLHEAD_Z_DEFINITION = (
+    "horizontal-well perforated-cell overall z "
+    "(sum n_i over perforations / sum n); "
+    "produced-stream z = produce.produced / produce.produced.sum()"
 )
 
 
@@ -129,6 +137,20 @@ def injector_well_cell_z_co2(
 ) -> float:
     """Overall CO2 mole fraction in one cell (injector well-cell metric)."""
     n = np.asarray(fields.n[int(cell)], dtype=float)
+    total = float(n.sum())
+    if total <= 0.0:
+        return float("nan")
+    return float(n[list(mixture.names).index("CO2")] / total)
+
+
+def perforated_z_co2(
+    fields: CompFields,
+    mixture: EosMixture,
+    cells: list[int] | tuple[int, ...],
+) -> float:
+    """Overall CO2 mole fraction of the perforated cells together."""
+    idx = np.asarray(cells, dtype=int).ravel()
+    n = np.asarray(fields.n[idx], dtype=float).sum(axis=0)
     total = float(n.sum())
     if total <= 0.0:
         return float("nan")
@@ -321,3 +343,72 @@ def run_huff_and_puff_cycles(
         records.append(CycleRecord(ledger=ledger, n_start=n_start, n_end=current.n.copy()))
         underflow = underflow or ledger.underflow
     return current, MultiCycleLedger(cycles=records, underflow=underflow)
+
+
+def run_horizontal_huff_and_puff(
+    fields: CompFields,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injectors: tuple[RateInjector, ...] | list[RateInjector],
+    producers: tuple[RateProducer, ...] | list[RateProducer],
+    *,
+    inject_days: float = INJECT_DAYS,
+    soak_days: float = SOAK_DAYS,
+    produce_days: float = PRODUCE_DAYS,
+    step_days: float = STEP_DAYS,
+    picard: bool = True,
+    gravity: float = 0.0,
+    pressure_produce: NDArray[np.float64] | float | None = None,
+) -> tuple[CompFields, CycleLedger]:
+    """One horizontal well: inject, soak, produce on the same perforated cells.
+
+    Not a 1-inject-4-produce pattern. Connections must match and number > 1.
+    """
+    inj = tuple(injectors)
+    prod = tuple(producers)
+    inj_cells = tuple(int(w.cell) for w in inj)
+    prod_cells = tuple(int(w.cell) for w in prod)
+    if len(set(inj_cells)) < 2:
+        raise ValueError("horizontal well needs at least two perforations")
+    if sorted(inj_cells) != sorted(prod_cells):
+        raise ValueError("horizontal HnP uses the same perforated cells for inject and produce")
+    z0 = perforated_z_co2(fields, mixture, inj_cells)
+    common = dict(
+        T=T,
+        mixture=mixture,
+        grid=grid,
+        permeability=permeability,
+        picard=picard,
+        gravity=gravity,
+    )
+    n_inj, dt = _n_steps(inject_days, step_days)
+    fields, led_inj = run_steps(
+        fields, pressure=pressure, **common, dt=dt, n_steps=n_inj, injectors=inj, producers=None
+    )
+    z_after_inject = perforated_z_co2(fields, mixture, inj_cells)
+    n_soak, dt = _n_steps(soak_days, step_days)
+    fields, led_soak = run_steps(
+        fields, pressure=pressure, **common, dt=dt, n_steps=n_soak, injectors=None, producers=None
+    )
+    z_after_soak = perforated_z_co2(fields, mixture, inj_cells)
+    n_prod, dt = _n_steps(produce_days, step_days)
+    p_prod = pressure if pressure_produce is None else pressure_produce
+    fields, led_prod = run_steps(
+        fields, pressure=p_prod, **common, dt=dt, n_steps=n_prod, injectors=None, producers=prod
+    )
+    underflow = led_inj.underflow or led_soak.underflow or led_prod.underflow
+    return fields, CycleLedger(
+        inject=led_inj,
+        soak=led_soak,
+        produce=led_prod,
+        underflow=underflow,
+        z_co2_well_cell_initial=z0,
+        z_co2_well_cell_after_inject=z_after_inject,
+        z_co2_well_cell_after_soak=z_after_soak,
+        z_co2_well_cell_after_produce=perforated_z_co2(fields, mixture, inj_cells),
+        z_co2_produced_stream=produced_stream_z_co2(led_prod, mixture),
+        wellhead_z_definition=HZ_WELLHEAD_Z_DEFINITION,
+    )
