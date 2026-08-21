@@ -1,15 +1,16 @@
-"""Peaceman-style rate-controlled injector for the standalone comp kernel.
+"""Peaceman-style 1 injector + 1 producer for the standalone comp kernel.
 
 Well index (vertical well, isotropic Cartesian cell, skin ``s``):
 
     r_e = 0.14 * sqrt(dx² + dy²)     Peaceman, SPEJ 1983
     WI  = 2 π k h / (ln(r_e / r_w) + s)
 
-``k`` in m², ``h = dz`` in m, so ``WI`` is m³ (same convention as the lab
-ports: ``WI λ Δp`` would be m³/s). First cut is **rate-controlled
-injection** only: specified molar rate of an EXAMPLE stream is added to
-the well cell. Not BHP-controlled, not a producer, not industrial-grade,
-not a GEM well. Do not import from ``solver/fi.py``.
+``k`` in m², ``h = dz`` in m, so ``WI`` is m³ (``WI λ Δp`` would be m³/s).
+Injector: rate-controlled EXAMPLE stream. Producer: rate or BHP-style
+outflow ``q = ξ_mix WI λ_t max(p − p_bhp, 0)`` with produced composition
+equal to the well-cell molar phase mix. One injector and one producer —
+not a 1-inject-4-produce pattern. Not industrial-grade, not GEM.
+Do not import from ``solver/fi.py``.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from reservoir_backend.comp.accumulation import CellFlash
 from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
 
@@ -114,3 +116,84 @@ def injection_moles(injector: RateInjector, dt: float) -> NDArray[np.float64]:
     if total <= 0.0:
         raise ValueError("injector stream sums to zero")
     return float(injector.rate) * float(dt) * (z / total)
+
+
+@dataclass(frozen=True)
+class RateProducer:
+    """Outflow from one cell. Set ``molar_rate`` or ``bhp``, not both.
+
+    Produced composition is the well-cell molar phase mix
+    ``(ξ_L S_L x + ξ_V S_V y) / (ξ_L S_L + ξ_V S_V)``.
+    """
+
+    cell: int
+    well_index: float
+    r_e: float
+    r_w: float
+    marker: str = ""
+    molar_rate: float | None = None  # mol/s
+    bhp: float | None = None  # Pa
+
+
+def well_cell_molar_z(cell: CellFlash) -> NDArray[np.float64]:
+    """Overall molar composition of the flashed well cell (phase mix)."""
+    num = cell.xi_liquid * cell.S_liquid * cell.x + cell.xi_vapor * cell.S_vapor * cell.y
+    den = float(num.sum())
+    if den <= 0.0:
+        return cell.z.copy()
+    return num / den
+
+
+def example_producer(
+    grid: CartesianGrid,
+    cell: int,
+    permeability: float,
+    mixture: EosMixture,
+    *,
+    molar_rate: float | None = None,
+    bhp: float | None = None,
+    r_w: float | None = None,
+    skin: float = 0.0,
+) -> RateProducer:
+    """Single EXAMPLE producer (rate or BHP). Not a multi-well pattern."""
+    if (molar_rate is None) == (bhp is None):
+        raise ValueError("set exactly one of molar_rate (mol/s) or bhp (Pa)")
+    if molar_rate is not None and molar_rate < 0.0:
+        raise ValueError("producer molar_rate must be non-negative (mol/s)")
+    wi, r_e, rw = peaceman_wi(grid, cell, permeability, r_w=r_w, skin=skin)
+    return RateProducer(
+        cell=int(cell),
+        well_index=wi,
+        r_e=r_e,
+        r_w=rw,
+        marker=mixture.marker,
+        molar_rate=None if molar_rate is None else float(molar_rate),
+        bhp=None if bhp is None else float(bhp),
+    )
+
+
+def production_moles(
+    producer: RateProducer,
+    cell: CellFlash,
+    p_cell: float,
+    dt: float,
+    *,
+    mu_liquid: float,
+    mu_vapor: float,
+) -> NDArray[np.float64]:
+    """Component moles removed in ``dt`` seconds (uncapped)."""
+    if dt < 0.0:
+        raise ValueError("dt must be non-negative (s)")
+    z_prod = well_cell_molar_z(cell)
+    if producer.molar_rate is not None:
+        q = float(producer.molar_rate)
+    else:
+        if producer.bhp is None:
+            raise ValueError("producer needs molar_rate or bhp")
+        xi_mix = cell.xi_liquid * cell.S_liquid + cell.xi_vapor * cell.S_vapor
+        lam = max(cell.S_liquid, 0.0) / max(mu_liquid, 1.0e-30) + max(cell.S_vapor, 0.0) / max(
+            mu_vapor, 1.0e-30
+        )
+        q_vol = producer.well_index * lam * max(float(p_cell) - float(producer.bhp), 0.0)
+        q = xi_mix * q_vol
+    return q * float(dt) * z_prod

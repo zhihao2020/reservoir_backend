@@ -4,9 +4,12 @@ import numpy as np
 
 from reservoir_backend.comp import (
     accumulate_system,
+    example_producer,
     example_rate_injector,
     explicit_step,
     peaceman_wi,
+    run_steps,
+    well_cell_molar_z,
 )
 from reservoir_backend.eos import EXAMPLE_LIBRARY_MARKER, example_eight_component_mixture
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -87,3 +90,80 @@ def test_injector_carries_example_marker() -> None:
     assert "NOT a Jiyang GEM card" in inj.marker
     assert inj.z_inj[mix.names.index("CO2")] == 1.0
     assert inj.z_inj[mix.names.index("C1")] == 0.0
+
+
+def test_one_injector_one_producer_inventory_and_no_underflow() -> None:
+    """1 inj + 1 prod (not 1-inject-4-produce). Δn = injected − produced.
+
+    Short Picard steps; dt is not chopped to zero.
+    """
+    mix = _example_binary()
+    grid = CartesianGrid.uniform((2.0, 1.0, 1.0), 1.0)
+    z = np.array([[0.40, 0.60], [0.40, 0.60]])
+    p = np.array([5.0e6, 5.0e6])
+    vp = 0.2 * grid.cell_volumes()
+    fields = accumulate_system(z, 250.0, p, mix, vp)
+    n0 = fields.n.copy()
+    z_prod0 = well_cell_molar_z(fields.cells[1])
+    assert np.allclose(z_prod0, fields.z[1], atol=1e-12)
+
+    k = 1.0e-12
+    inj = example_rate_injector(grid, 0, k, mix, rate=0.02, stream="CO2")
+    prod = example_producer(grid, 1, k, mix, molar_rate=0.01)
+    assert inj.well_index > 0.0 and prod.well_index > 0.0
+    assert "EXAMPLE" in prod.marker
+    assert prod.cell != inj.cell
+
+    n_steps, dt = 8, 0.25
+    fields, ledger = run_steps(
+        fields,
+        250.0,
+        p,
+        mix,
+        grid,
+        permeability=k,
+        dt=dt,
+        n_steps=n_steps,
+        picard=True,
+        injectors=(inj,),
+        producers=(prod,),
+    )
+    assert ledger.underflow is False
+    assert all(abs(d - dt) < 1e-15 for d in ledger.dt_used)
+    assert min(ledger.dt_used) > 0.0
+    assert np.allclose(fields.n.sum(axis=0) - n0.sum(axis=0), ledger.injected - ledger.produced, atol=1e-10)
+    i_co2 = mix.names.index("CO2")
+    assert np.isclose(ledger.injected[i_co2], 0.02 * dt * n_steps, atol=1e-12)
+    assert np.isclose(ledger.produced.sum(), 0.01 * dt * n_steps, atol=1e-12)
+
+
+def test_bhp_producer_uses_peaceman_wi() -> None:
+    """BHP-style outflow q = ξ WI λ max(p−bhp, 0); produced z is the cell mix."""
+    mix = _example_binary()
+    grid = CartesianGrid.uniform((2.0, 1.0, 1.0), 1.0)
+    z = np.array([[0.40, 0.60], [0.40, 0.60]])
+    p = np.array([5.0e6, 5.0e6])
+    vp = 0.2 * grid.cell_volumes()
+    fields = accumulate_system(z, 250.0, p, mix, vp)
+    n0 = fields.n.copy()
+    k = 1.0e-12
+    inj = example_rate_injector(grid, 0, k, mix, rate=0.02, stream="CO2")
+    # Small drawdown so Q stays a fraction of cell inventory (no dt collapse).
+    prod = example_producer(grid, 1, k, mix, bhp=5.0e6 - 10.0)
+    fields, ledger = run_steps(
+        fields,
+        250.0,
+        p,
+        mix,
+        grid,
+        permeability=k,
+        dt=0.25,
+        n_steps=6,
+        picard=True,
+        injectors=(inj,),
+        producers=(prod,),
+    )
+    assert ledger.underflow is False
+    assert min(ledger.dt_used) == 0.25
+    assert ledger.produced.sum() > 0.0
+    assert np.allclose(fields.n.sum(axis=0) - n0.sum(axis=0), ledger.injected - ledger.produced, atol=1e-10)
