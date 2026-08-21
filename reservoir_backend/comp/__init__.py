@@ -10,6 +10,7 @@ EXAMPLE fluids only. Not field-validated.
 
 from reservoir_backend.comp.accumulation import CellFlash, component_moles, flash_cell
 from reservoir_backend.comp.flux import InteriorFace, interior_faces, phase_molar_flux
+from reservoir_backend.comp.cycle import CycleLedger, run_inject_soak_produce
 from reservoir_backend.comp.step import CompFields, StepReport, WellLedger, accumulate_system, explicit_step, run_steps
 from reservoir_backend.comp.well import (
     RateInjector,
@@ -23,6 +24,7 @@ from reservoir_backend.comp.well import (
 __all__ = [
     "CellFlash",
     "CompFields",
+    "CycleLedger",
     "InteriorFace",
     "RateInjector",
     "RateProducer",
@@ -37,6 +39,7 @@ __all__ = [
     "interior_faces",
     "peaceman_wi",
     "phase_molar_flux",
+    "run_inject_soak_produce",
     "run_steps",
     "well_cell_molar_z",
 ]
