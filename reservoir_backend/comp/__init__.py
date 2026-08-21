@@ -17,6 +17,13 @@ from reservoir_backend.comp.cycle import (
     run_huff_and_puff,
     run_inject_soak_produce,
 )
+from reservoir_backend.comp.streak import (
+    K_MATRIX_M2,
+    K_STREAK_M2,
+    added_moles_per_pv,
+    example_drive_pressure,
+    example_two_region_k,
+)
 from reservoir_backend.comp.step import CompFields, StepReport, WellLedger, accumulate_system, explicit_step, run_steps
 from reservoir_backend.comp.well import (
     RateInjector,
@@ -34,14 +41,19 @@ __all__ = [
     "CompFields",
     "CycleLedger",
     "InteriorFace",
+    "K_MATRIX_M2",
+    "K_STREAK_M2",
     "RateInjector",
     "RateProducer",
     "StepReport",
     "WellLedger",
     "accumulate_system",
+    "added_moles_per_pv",
     "component_moles",
     "example_co2_rich_stream",
+    "example_drive_pressure",
     "example_huff_n_puff_well",
+    "example_two_region_k",
     "example_producer",
     "example_rate_injector",
     "explicit_step",

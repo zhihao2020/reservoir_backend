@@ -81,6 +81,8 @@ class CycleLedger:
 
 def _n_steps(days: float, step_days: float) -> tuple[int, float]:
     dt = float(step_days) * SECONDS_PER_DAY
+    if float(days) <= 0.0:
+        return 0, dt
     n = max(1, int(round(float(days) / float(step_days))))
     return n, dt
 
