@@ -51,6 +51,7 @@ from reservoir_backend.comp.implicit_p import (
 # still decades below the O(1) well residual at a cell-pressure first guess.
 NEWTON_TOL = 1.0e-6
 MAX_CHOPS_PER_PERIOD = 16
+MAX_ACCEPTED_PER_PERIOD = 64
 from reservoir_backend.comp.step import DT_MIN, CompFields, WellLedger, _fields_from_moles
 from reservoir_backend.comp.well import RateInjector, RateProducer, well_cell_molar_z
 from reservoir_backend.eos.peng_robinson import EosMixture
@@ -564,6 +565,10 @@ def run_implicit_period_bhp(
         dts.append(report.dt_used)
         residual_hists.append(list(report.residual_hist))
         n_accepted += 1
+        if n_accepted >= MAX_ACCEPTED_PER_PERIOD:
+            underflow = True
+            ledger.underflow = True
+            break
         dt = min(float(grow) * report.dt_used, float(dt_max))
     underflow = underflow or ledger.underflow
     out = ImplicitPeriodLedger(
