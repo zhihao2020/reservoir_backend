@@ -870,8 +870,8 @@ def run_five_spot_huff_and_puff(
     inject_days: float = INJECT_DAYS,
     soak_days: float = SOAK_DAYS,
     produce_days: float = PRODUCE_DAYS,
-    dt_init_days: float = 0.25,
-    dt_max_days: float = 1.0,
+    dt_init_days: float = 0.125,
+    dt_max_days: float = 0.25,
     gravity: float = 0.0,
 ) -> tuple[CompFields, CycleLedger]:
     """1-inject-4-produce EXAMPLE cycle. Opposite wells shut. Same 2/2/3.
@@ -880,8 +880,9 @@ def run_five_spot_huff_and_puff(
     Soak: all shut.
     Produce: four specified-BHP producers on, injector shut.
     Produce BHP is 1 Pa below the post-soak producer-cell pressures
-    (one Dirichlet value for all four). One residual ``(n_i, p)``;
-    injector ``p_wf`` is a Newton unknown only while injecting.
+    (one Dirichlet value for all four). ``dt`` is held (grow=1) so the
+    two-region 3×3 streak does not grow into a failed Newton. One residual
+    ``(n_i, p)``; injector ``p_wf`` is a Newton unknown only while injecting.
     See ``reservoir_backend.comp.implicit_bhp.FIVE_SPOT_CONTROL``.
     """
     inj = tuple(injectors)
@@ -911,6 +912,7 @@ def run_five_spot_huff_and_puff(
         dt_init=dt_init,
         dt_max=dt_max,
         pore_volume=pore_volume,
+        grow=1.0,
     )
     # Inject: producers shut.
     fields, per_inj = run_implicit_period_bhp(

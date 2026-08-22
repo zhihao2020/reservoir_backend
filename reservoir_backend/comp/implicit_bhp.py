@@ -203,15 +203,13 @@ def _apply_peaceman_bhp(
             lam = _mobility(cell, mu_liquid, mu_vapor)
             pwf_c = float(w.bhp) if getattr(w, "bhp", None) is not None else float(p_wf)
             q = max(xi, 0.0) * float(w.well_index) * lam * (float(p[c]) - pwf_c)
+            if q <= 0.0:
+                continue
             z = well_cell_molar_z(cell)
             dn = q * float(dt) * z
-            if q >= 0.0:
-                taken = np.minimum(dn, np.clip(out[c], 0.0, None))
-                out[c] -= taken
-                produced += taken
-            else:
-                out[c] += -dn
-                injected += -dn
+            taken = np.minimum(dn, np.clip(out[c], 0.0, None))
+            out[c] -= taken
+            produced += taken
     return out, injected, produced
 
 
@@ -515,6 +513,7 @@ def run_implicit_period_bhp(
     n_accepted = 0
     n_newton = 0
     n_chop = 0
+    n_chop_consec = 0
     underflow = False
     dts: list[float] = []
     residual_hists: list[list[float]] = []
@@ -543,13 +542,15 @@ def run_implicit_period_bhp(
         n_newton += report.n_newton
         if not report.newton_converged:
             n_chop += 1
+            n_chop_consec += 1
             next_dt = float(chop) * dt
-            if n_chop >= MAX_CHOPS_PER_PERIOD or next_dt < DT_MIN:
+            if n_chop_consec >= MAX_CHOPS_PER_PERIOD or next_dt < DT_MIN:
                 underflow = True
                 ledger.underflow = True
                 break
             dt = next_dt
             continue
+        n_chop_consec = 0
         current = report.fields
         if report.pressure is not None:
             p = np.asarray(report.pressure, dtype=float).ravel()
