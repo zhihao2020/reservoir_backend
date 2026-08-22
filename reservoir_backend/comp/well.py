@@ -346,7 +346,7 @@ def example_horizontal_well_mixed(
 def example_five_spot_layout(
     grid: CartesianGrid | None = None,
 ) -> tuple[CartesianGrid, int, tuple[int, ...], list[int]]:
-    """3×3 EXAMPLE plus: injector at center, 4 producers on the high-k arms.
+    """Tiny 3×3 2D EXAMPLE plus: injector at center, 4 producers on the arms.
 
     Corners stay matrix. Not industrial well spacing, not a field five-spot.
     Returns ``(grid, injector_cell, producer_cells, streak_cells)``.

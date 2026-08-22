@@ -14,7 +14,8 @@ Documented well patterns (do not mix them):
             inject then produce
     1+4     one injector + four producers (five-spot EXAMPLE); opposite
             wells shut (producers off while injecting, injector off
-            while producing); short 0.25/0.25/0.25 (not 2/2/3)
+            while producing); one Newton step per period on the
+            tiny 3×3 2D mesh (not 2/2/3, not 0.25/0.25/0.25)
 
 ``dt`` defaults to 0.5 day. Production is capped to available moles so
 ``dt`` is not chopped to zero. Standalone; not wired into FIM.
@@ -40,11 +41,13 @@ INJECT_DAYS = 2.0
 SOAK_DAYS = 2.0
 PRODUCE_DAYS = 3.0
 STEP_DAYS = 0.5
-# 1+4 on two-region 3×3: short day-scale cycle. 2/2/3 is too many
-# FD-Newton steps for this layout (dt must stay ≤ 0.125 d).
-FIVE_SPOT_INJECT_DAYS = 0.25
-FIVE_SPOT_SOAK_DAYS = 0.25
-FIVE_SPOT_PRODUCE_DAYS = 0.25
+# 1+4 on the tiny two-region 3×3 2D mesh: one accepted Newton step
+# per period. 0.25 d produce after inject chops to ~10 s and grows
+# back (17 FD-Newton steps, minutes). Produce is 20 s so dt stays
+# at the first successful size.
+FIVE_SPOT_INJECT_DAYS = 0.125
+FIVE_SPOT_SOAK_DAYS = 0.125
+FIVE_SPOT_PRODUCE_DAYS = 20.0 / SECONDS_PER_DAY
 
 # Wellhead z used by this cycle: injector well-cell overall composition.
 # Produced-stream z is defined only on the produce ledger.
@@ -879,16 +882,15 @@ def run_five_spot_huff_and_puff(
     dt_max_days: float = 0.125,
     gravity: float = 0.0,
 ) -> tuple[CompFields, CycleLedger]:
-    """1-inject-4-produce EXAMPLE cycle. Opposite wells shut. Short 0.25/0.25/0.25.
+    """1-inject-4-produce EXAMPLE cycle. Opposite wells shut.
 
-    Inject: specified-rate injector on, four producers shut.
-    Soak: all shut.
-    Produce: four specified-BHP producers on, injector shut.
-    Produce BHP is 1 Pa below the post-soak producer-cell pressures
-    (one Dirichlet value for all four). Soak is lagged-p (moles only);
-    inject/produce stay coupled. ``dt`` is capped at 0.125 d and may
-    grow back after a chop. Injector ``p_wf`` is a Newton unknown only
-    while injecting.
+    One Newton step per period on the tiny 3×3 2D mesh (0.125 d
+    inject, 0.125 d soak, 20 s produce). Inject: specified-rate
+    injector on, four producers shut. Soak: all shut. Produce: four
+    specified-BHP producers on, injector shut. Produce BHP is 1 Pa
+    below the post-soak producer-cell pressures (one Dirichlet value
+    for all four). Soak is lagged-p (moles only); inject/produce stay
+    coupled. Injector ``p_wf`` is a Newton unknown only while injecting.
     See ``reservoir_backend.comp.implicit_bhp.FIVE_SPOT_CONTROL``.
     """
     inj = tuple(injectors)
