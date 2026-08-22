@@ -1,0 +1,49 @@
+# EXAMPLE 1 HZ injector + 4 HZ producers, two-region K, two huff-n-puff cycles.
+# Fluids and permeabilities are EXAMPLE only — not a Jiyang GEM / field card.
+# Standalone comp kernel. Not wired into FIM, DigitalTwin, or the product CLI.
+
+name: hz_1inj4prod_two_cycle
+marker: EXAMPLE
+pattern: hz_1inj4prod
+n_cycles: 2
+note: >
+  Opposite wells shut (inject: 4 producers off; soak: all off;
+  produce: injector off). Same physics as tests/test_comp_hz_1inj4prod_two_cycle.py.
+
+grid:
+  size_m: [3.0, 5.0, 1.0]
+  spacing_m: 1.0
+  n_perf: 2
+  streak: injector
+
+fluid:
+  # Primary: YAML deck. Optional alternative (do not set both):
+  #   gem_deck: example_c1_c7plus_co2.gem
+  # See hz_1inj4prod_two_cycle_gem.yaml for the gem_deck variant.
+  # GEM text cards map to the same YAML EOS schema; neither invents criticals.
+  eos_yaml: example_c1_c7plus_co2.yaml
+  components: [C1, CO2]
+  z: [0.40, 0.60]
+  T: 250.0
+  note: EXAMPLE Peng-Robinson subset loaded from YAML, not a Jiyang PVT card
+
+rock:
+  porosity: 0.20
+  k_matrix_m2: 1.0e-18
+  k_streak_m2: 1.0e-12
+  note: EXAMPLE two-region contrast only, not a field measurement
+
+wells:
+  inject_rate_mol_s: 1.0e-4
+  p_init_pa: 5.0e6
+  produce_bhp_pa: 4999999.0
+
+schedule:
+  inject_days: 0.125
+  soak_days: 0.125
+  produce_seconds: 20.0
+  dt_init_days: 0.125
+  dt_max_days: 0.125
+
+output:
+  fields_csv: results/hz_1inj4prod_two_cycle_fields.csv
