@@ -19,6 +19,7 @@ from reservoir_backend.eos.load import mixture_from_deck_dict
 from reservoir_backend.eos.peng_robinson import EosMixture
 
 DEFAULT_EXAMPLE_GEM_CARD = Path(__file__).resolve().parent / "fluids" / "example_c1_co2.gem"
+EXAMPLE_C1_C7PLUS_CO2_GEM = Path(__file__).resolve().parent / "fluids" / "example_c1_c7plus_co2.gem"
 
 _GEM_SOURCE = "EXAMPLE GEM card"
 _MISSING_FILE = (

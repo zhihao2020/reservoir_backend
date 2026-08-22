@@ -8,6 +8,7 @@ not Jiyang GEM.
 
     python -m reservoir_backend.comp.case_run
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle.yaml --fields results/fields.csv
+    python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle_gem.yaml --fields results/fields.csv
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
 
 DEFAULT_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle.yaml"
+GEM_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle_gem.yaml"
 
 
 def load_case_mixture(fcfg: dict[str, Any]) -> EosMixture:

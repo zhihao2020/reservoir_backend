@@ -1,0 +1,29 @@
+** EXAMPLE eight-component GEM-like snippet (C1–C7+/CO2).
+** Same public-literature / NIST numbers as example_c1_c7plus_co2.yaml.
+** NOT a Jiyang / field GEM card. NOT site-calibrated. NOT field-validated.
+** *INUNIT *SI: *TCRIT in K, *PCRIT in kPa (GEM SI). Loader converts Pc to Pa.
+** Do not invent Tc, Pc, or omega. YAML remains the primary fluid path.
+
+*DESC EXAMPLE / public literature — standalone example flash, not wired, example PR params; NOT a Jiyang GEM card; NOT site-calibrated
+*EOS *PR
+*INUNIT *SI
+*NC 8
+*COMP
+  'C1' 'C2' 'C3' 'nC4' 'nC5' 'nC6' 'example_C7plus' 'CO2'
+*TCRIT
+  190.564  305.32  369.83  425.12  469.70  507.60  617.70  304.1282
+*PCRIT
+  4599.2  4872.2  4247.1  3796.0  3370.0  3025.0  2103.0  7377.3
+*ACENTRIC
+  0.01142  0.0995  0.1523  0.2002  0.2515  0.3013  0.4884  0.2236
+*MW
+  16.0425  30.0690  44.0956  58.1222  72.1488  86.1754  142.2817  44.0095
+*BIN
+** lower triangle, no diagonal; hydrocarbon–hydrocarbon 0; CO2–alkane from the YAML
+  0.0
+  0.0  0.0
+  0.0  0.0  0.0
+  0.0  0.0  0.0  0.0
+  0.0  0.0  0.0  0.0  0.0
+  0.0  0.0  0.0  0.0  0.0  0.0
+  0.105  0.130  0.125  0.115  0.115  0.115  0.100

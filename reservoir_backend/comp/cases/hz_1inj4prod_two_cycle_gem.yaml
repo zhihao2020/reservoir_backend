@@ -1,14 +1,16 @@
 # EXAMPLE 1 HZ injector + 4 HZ producers, two-region K, two huff-n-puff cycles.
-# Fluids and permeabilities are EXAMPLE only — not a Jiyang GEM / field card.
-# Standalone comp kernel. Not wired into FIM, DigitalTwin, or the product CLI.
+# Fluids from the EXAMPLE GEM-like text card (same numbers as the YAML deck).
+# NOT a Jiyang GEM / field card. Not wired into FIM, DigitalTwin, or the product CLI.
+# Same physics as hz_1inj4prod_two_cycle.yaml; fluid.gem_deck instead of fluid.eos_yaml.
 
-name: hz_1inj4prod_two_cycle
+name: hz_1inj4prod_two_cycle_gem
 marker: EXAMPLE
 pattern: hz_1inj4prod
 n_cycles: 2
 note: >
   Opposite wells shut (inject: 4 producers off; soak: all off;
   produce: injector off). Same physics as tests/test_comp_hz_1inj4prod_two_cycle.py.
+  Fluids via fluid.gem_deck (not eos_yaml).
 
 grid:
   size_m: [3.0, 5.0, 1.0]
@@ -17,15 +19,13 @@ grid:
   streak: injector
 
 fluid:
-  # Primary: YAML deck. Optional alternative (do not set both):
-  #   gem_deck: example_c1_c7plus_co2.gem
-  # See hz_1inj4prod_two_cycle_gem.yaml for the gem_deck variant.
-  # GEM text cards map to the same YAML EOS schema; neither invents criticals.
-  eos_yaml: example_c1_c7plus_co2.yaml
+  # GEM text card with the same Tc/Pc/ω as example_c1_c7plus_co2.yaml.
+  # Do not also set eos_yaml.
+  gem_deck: example_c1_c7plus_co2.gem
   components: [C1, CO2]
   z: [0.40, 0.60]
   T: 250.0
-  note: EXAMPLE Peng-Robinson subset loaded from YAML, not a Jiyang PVT card
+  note: EXAMPLE Peng-Robinson subset loaded from GEM-like text, not a Jiyang PVT card
 
 rock:
   porosity: 0.20
@@ -46,4 +46,4 @@ schedule:
   dt_max_days: 0.125
 
 output:
-  fields_csv: results/hz_1inj4prod_two_cycle_fields.csv
+  fields_csv: results/hz_1inj4prod_two_cycle_gem_fields.csv

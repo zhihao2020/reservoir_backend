@@ -11,6 +11,7 @@ from reservoir_backend.eos.example_library import (
 )
 from reservoir_backend.eos.gem_card import (
     DEFAULT_EXAMPLE_GEM_CARD,
+    EXAMPLE_C1_C7PLUS_CO2_GEM,
     load_eos_mixture_gem,
     parse_gem_card,
     resolve_gem_deck,
@@ -40,6 +41,7 @@ from reservoir_backend.eos.stability import StabilityResult, michelsen_stability
 __all__ = [
     "DEFAULT_EXAMPLE_FLUID_YAML",
     "DEFAULT_EXAMPLE_GEM_CARD",
+    "EXAMPLE_C1_C7PLUS_CO2_GEM",
     "EXAMPLE_LIBRARY_MARKER",
     "GAS_CONSTANT",
     "EosMixture",
