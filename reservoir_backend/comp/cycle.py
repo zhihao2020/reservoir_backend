@@ -14,7 +14,7 @@ Documented well patterns (do not mix them):
             inject then produce
     1+4     one injector + four producers (five-spot EXAMPLE); opposite
             wells shut (producers off while injecting, injector off
-            while producing)
+            while producing); short 0.25/0.25/0.25 (not 2/2/3)
 
 ``dt`` defaults to 0.5 day. Production is capped to available moles so
 ``dt`` is not chopped to zero. Standalone; not wired into FIM.
@@ -40,6 +40,11 @@ INJECT_DAYS = 2.0
 SOAK_DAYS = 2.0
 PRODUCE_DAYS = 3.0
 STEP_DAYS = 0.5
+# 1+4 on two-region 3×3: short day-scale cycle. 2/2/3 is too many
+# FD-Newton steps for this layout (dt must stay ≤ 0.125 d).
+FIVE_SPOT_INJECT_DAYS = 0.25
+FIVE_SPOT_SOAK_DAYS = 0.25
+FIVE_SPOT_PRODUCE_DAYS = 0.25
 
 # Wellhead z used by this cycle: injector well-cell overall composition.
 # Produced-stream z is defined only on the produce ledger.
@@ -867,14 +872,14 @@ def run_five_spot_huff_and_puff(
     producers: tuple[RateProducer, ...] | list[RateProducer],
     pore_volume: NDArray[np.float64] | float,
     *,
-    inject_days: float = INJECT_DAYS,
-    soak_days: float = SOAK_DAYS,
-    produce_days: float = PRODUCE_DAYS,
+    inject_days: float = FIVE_SPOT_INJECT_DAYS,
+    soak_days: float = FIVE_SPOT_SOAK_DAYS,
+    produce_days: float = FIVE_SPOT_PRODUCE_DAYS,
     dt_init_days: float = 0.125,
     dt_max_days: float = 0.25,
     gravity: float = 0.0,
 ) -> tuple[CompFields, CycleLedger]:
-    """1-inject-4-produce EXAMPLE cycle. Opposite wells shut. Same 2/2/3.
+    """1-inject-4-produce EXAMPLE cycle. Opposite wells shut. Short 0.25/0.25/0.25.
 
     Inject: specified-rate injector on, four producers shut.
     Soak: all shut.

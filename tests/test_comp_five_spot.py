@@ -85,7 +85,7 @@ def test_five_spot_produce_dirichlet_and_drops_residual() -> None:
 
 
 def test_five_spot_cycle_opposite_wells_shut() -> None:
-    """2/2/3: inject with prods shut, soak all shut, produce with inj shut."""
+    """Short cycle: inject with prods shut, soak all shut, produce with inj shut."""
     mix, grid, inj_cell, prod_cells, k, p0, vp, fields, inj, prod = _five_spot_setup()
     assert len(inj) == 1 and len(prod) == 4
     n0 = fields.n.copy()
