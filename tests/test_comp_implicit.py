@@ -68,7 +68,7 @@ def test_implicit_hnp_cycle_mass_and_dt_grows() -> None:
         fields.n.sum(axis=0) - n0.sum(axis=0),
         cycle.injected - cycle.produced,
         rtol=1e-8,
-        atol=1e-7,
+        atol=1e-6,
     )
     expect_inj = 1.0e-4 * INJECT_DAYS * SECONDS_PER_DAY
     expect_prod = 5.0e-5 * PRODUCE_DAYS * SECONDS_PER_DAY

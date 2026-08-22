@@ -47,6 +47,7 @@ class ImplicitStepReport:
     newton_converged: bool
     n_newton: int
     n_chop: int = 0
+    residual_hist: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -61,6 +62,7 @@ class ImplicitPeriodLedger:
     dt_init: float
     dt_max: float
     dt_used: list[float] = field(default_factory=list)
+    residual_hists: list[list[float]] = field(default_factory=list)
 
 
 def _pack(n: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -144,18 +146,20 @@ def implicit_newton_step(
         injectors=injectors,
         producers=producers,
     )
-    n_hat0, injected, produced = _rhs(
-        n_old, n_old, T, p, mixture, faces, z_center, dt, **kw
-    )
-    n_vec = _pack(n_hat0)
-    n_trial = _unpack(n_vec, shape)
+    # Start from n_old so the first residual is the implicit defect, not an
+    # explicit predictor (that would look like "a large explicit step").
+    n_trial = n_old.copy()
     n_hat, injected, produced = _rhs(n_trial, n_old, T, p, mixture, faces, z_center, dt, **kw)
+    n_vec = _pack(n_trial)
     R = _residual(n_trial, n_hat)
+    hist = [float(np.max(np.abs(R)))]
     scale = max(1.0, float(np.max(np.abs(n_old))))
     n_newton = 0
-    if dt == 0.0 or float(np.max(np.abs(R))) < tol * scale:
+    if dt == 0.0 or hist[0] < tol * scale:
         out = _fields_from_moles(n_trial, T, p, mixture)
-        return ImplicitStepReport(out, injected, produced, float(dt), underflow, True, 0)
+        return ImplicitStepReport(
+            out, injected, produced, float(dt), underflow, True, 0, residual_hist=hist
+        )
 
     dim = n_vec.size
     for it in range(1, int(max_iter) + 1):
@@ -171,7 +175,9 @@ def implicit_newton_step(
             dn = np.linalg.solve(J + 1.0e-14 * np.eye(dim), -R)
         except np.linalg.LinAlgError:
             out = _fields_from_moles(n_trial, T, p, mixture)
-            return ImplicitStepReport(out, injected, produced, float(dt), underflow, False, n_newton)
+            return ImplicitStepReport(
+                out, injected, produced, float(dt), underflow, False, n_newton, residual_hist=hist
+            )
         alpha = 1.0
         r0 = float(np.max(np.abs(R)))
         accepted = False
@@ -183,18 +189,25 @@ def implicit_newton_step(
                 n_vec = _pack(n_try)
                 n_trial = n_try
                 R = R_try
+                hist.append(float(np.max(np.abs(R))))
                 accepted = True
                 break
             alpha *= 0.5
         if not accepted:
             out = _fields_from_moles(n_trial, T, p, mixture)
-            return ImplicitStepReport(out, injected, produced, float(dt), underflow, False, n_newton)
+            return ImplicitStepReport(
+                out, injected, produced, float(dt), underflow, False, n_newton, residual_hist=hist
+            )
         if float(np.max(np.abs(R))) < tol * scale:
             out = _fields_from_moles(n_trial, T, p, mixture)
-            return ImplicitStepReport(out, injected, produced, float(dt), underflow, True, n_newton)
+            return ImplicitStepReport(
+                out, injected, produced, float(dt), underflow, True, n_newton, residual_hist=hist
+            )
 
     out = _fields_from_moles(n_trial, T, p, mixture)
-    return ImplicitStepReport(out, injected, produced, float(dt), underflow, False, n_newton)
+    return ImplicitStepReport(
+        out, injected, produced, float(dt), underflow, False, n_newton, residual_hist=hist
+    )
 
 
 def run_implicit_period(
@@ -229,6 +242,7 @@ def run_implicit_period(
     n_chop = 0
     underflow = False
     dts: list[float] = []
+    residual_hists: list[list[float]] = []
     while t < float(duration) - 1.0e-12:
         dt = min(dt, float(duration) - t, float(dt_max))
         if dt < DT_MIN:
@@ -260,6 +274,7 @@ def run_implicit_period(
         ledger.dt_used.append(report.dt_used)
         ledger.underflow = ledger.underflow or report.underflow
         dts.append(report.dt_used)
+        residual_hists.append(list(report.residual_hist))
         n_accepted += 1
         dt = min(float(grow) * report.dt_used, float(dt_max))
     underflow = underflow or ledger.underflow
@@ -272,4 +287,5 @@ def run_implicit_period(
         dt_init=float(dt_init),
         dt_max=float(dt_max),
         dt_used=dts,
+        residual_hists=residual_hists,
     )
