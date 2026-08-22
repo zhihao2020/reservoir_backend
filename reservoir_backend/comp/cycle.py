@@ -1,17 +1,20 @@
 """Day-scale inject–soak–produce for EXAMPLE wells.
 
-Documented first-cut schedule (not years, not 30-year, not 1-inject-4-produce):
+Documented first-cut schedule (not years, not 30-year):
 
     inject  2 days   rate-controlled EXAMPLE stream (pure CO2 or CO2-rich mix)
     soak    2 days   well(s) shut in; flash + TPFA only
-    produce 3 days   producer on
+    produce 3 days   producer(s) on
 
 Documented well patterns (do not mix them):
 
     1+1     one injector cell and a different producer cell
     HnP     one well: same cell injects, soaks, then produces
     HZ      one horizontal well: several streak perforations, same cells
-            inject then produce (not 1-inject-4-produce)
+            inject then produce
+    1+4     one injector + four producers (five-spot EXAMPLE); opposite
+            wells shut (producers off while injecting, injector off
+            while producing)
 
 ``dt`` defaults to 0.5 day. Production is capped to available moles so
 ``dt`` is not chopped to zero. Standalone; not wired into FIM.
@@ -56,6 +59,11 @@ HZ_WELLHEAD_Z_DEFINITION = (
     "horizontal-well perforated-cell overall z "
     "(sum n_i over perforations / sum n); "
     "produced-stream z = produce.produced / produce.produced.sum()"
+)
+
+FIVE_SPOT_WELLHEAD_Z_DEFINITION = (
+    "five-spot injector well-cell overall z; "
+    "produced-stream z = sum of 4 producers' produced / total produced"
 )
 
 
@@ -841,4 +849,93 @@ def run_horizontal_huff_and_puff_mixed(
         dt_init_days=dt_init_days,
         dt_max_days=dt_max_days,
         gravity=gravity,
+    )
+
+
+def run_five_spot_huff_and_puff(
+    fields: CompFields,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injectors: tuple[RateInjector, ...] | list[RateInjector],
+    producers: tuple[RateProducer, ...] | list[RateProducer],
+    pore_volume: NDArray[np.float64] | float,
+    *,
+    inject_days: float = INJECT_DAYS,
+    soak_days: float = SOAK_DAYS,
+    produce_days: float = PRODUCE_DAYS,
+    dt_init_days: float = 0.25,
+    dt_max_days: float = 1.0,
+    gravity: float = 0.0,
+) -> tuple[CompFields, CycleLedger]:
+    """1-inject-4-produce EXAMPLE cycle. Opposite wells shut. Same 2/2/3.
+
+    Inject: specified-rate injector on, four producers shut.
+    Soak: all shut.
+    Produce: four specified-BHP producers on, injector shut.
+    One residual ``(n_i, p)``; injector ``p_wf`` is a Newton unknown only
+    while injecting. See ``reservoir_backend.comp.implicit_bhp.FIVE_SPOT_CONTROL``.
+    """
+    inj = tuple(injectors)
+    prod = tuple(producers)
+    if len(inj) != 1:
+        raise ValueError("five-spot EXAMPLE needs exactly 1 injector")
+    if len(prod) != 4:
+        raise ValueError("five-spot EXAMPLE needs exactly 4 producers")
+    inj_cells = {int(w.cell) for w in inj}
+    prod_cells = tuple(int(w.cell) for w in prod)
+    if inj_cells & set(prod_cells):
+        raise ValueError("five-spot injector must be distinct from the 4 producers")
+    if any(getattr(w, "bhp", None) is not None for w in inj):
+        raise ValueError("five-spot inject is rate control; injector.bhp must be None")
+    if any(w.bhp is None or w.molar_rate is not None for w in prod):
+        raise ValueError("five-spot produce is specified-BHP; set producer.bhp and no molar_rate")
+    z0 = injector_well_cell_z_co2(fields, mixture, inj[0].cell)
+    dt_init = float(dt_init_days) * SECONDS_PER_DAY
+    dt_max = float(dt_max_days) * SECONDS_PER_DAY
+    p = np.asarray(pressure, dtype=float).ravel()
+    common = dict(
+        T=T,
+        mixture=mixture,
+        grid=grid,
+        permeability=permeability,
+        gravity=gravity,
+        dt_init=dt_init,
+        dt_max=dt_max,
+        pore_volume=pore_volume,
+    )
+    # Inject: producers shut.
+    fields, per_inj = run_implicit_period_bhp(
+        fields, pressure=p, duration=float(inject_days) * SECONDS_PER_DAY, injectors=inj, producers=None, **common
+    )
+    p = per_inj.pressure if per_inj.pressure is not None else p
+    z_after_inject = injector_well_cell_z_co2(fields, mixture, inj[0].cell)
+    # Soak: all shut.
+    fields, per_soak = run_implicit_period_bhp(
+        fields, pressure=p, duration=float(soak_days) * SECONDS_PER_DAY, injectors=None, producers=None, **common
+    )
+    p = per_soak.pressure if per_soak.pressure is not None else p
+    z_after_soak = injector_well_cell_z_co2(fields, mixture, inj[0].cell)
+    # Produce: injector shut.
+    fields, per_prod = run_implicit_period_bhp(
+        fields, pressure=p, duration=float(produce_days) * SECONDS_PER_DAY, injectors=None, producers=prod, **common
+    )
+    underflow = per_inj.underflow or per_soak.underflow or per_prod.underflow
+    return fields, CycleLedger(
+        inject=per_inj.ledger,
+        soak=per_soak.ledger,
+        produce=per_prod.ledger,
+        underflow=underflow,
+        z_co2_well_cell_initial=z0,
+        z_co2_well_cell_after_inject=z_after_inject,
+        z_co2_well_cell_after_soak=z_after_soak,
+        z_co2_well_cell_after_produce=injector_well_cell_z_co2(fields, mixture, inj[0].cell),
+        z_co2_produced_stream=produced_stream_z_co2(per_prod.ledger, mixture),
+        wellhead_z_definition=FIVE_SPOT_WELLHEAD_Z_DEFINITION,
+        accepted_steps=per_inj.n_accepted + per_soak.n_accepted + per_prod.n_accepted,
+        n_newton=per_inj.n_newton + per_soak.n_newton + per_prod.n_newton,
+        n_chop=per_inj.n_chop + per_soak.n_chop + per_prod.n_chop,
+        residual_hists=per_inj.residual_hists + per_soak.residual_hists + per_prod.residual_hists,
     )

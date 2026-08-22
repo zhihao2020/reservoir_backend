@@ -8,8 +8,9 @@ Well index (vertical well, isotropic Cartesian cell, skin ``s``):
 ``k`` in m², ``h = dz`` in m, so ``WI`` is m³ (``WI λ Δp`` would be m³/s).
 Injector: rate-controlled EXAMPLE stream. Producer: rate or BHP-style
 outflow ``q = ξ_mix WI λ_t max(p − p_bhp, 0)`` with produced composition
-equal to the well-cell molar phase mix. One injector and one producer —
-not a 1-inject-4-produce pattern. Not industrial-grade, not GEM.
+equal to the well-cell molar phase mix. Patterns: 1+1, single-well HnP,
+HZ (same cells inject then produce), and an EXAMPLE 1-inject-4-produce
+five-spot (opposite wells shut). Not industrial-grade, not GEM.
 Do not import from ``solver/fi.py``.
 """
 
@@ -340,6 +341,79 @@ def example_horizontal_well_mixed(
         for cell in perfs
     )
     return injectors, producers
+
+
+def example_five_spot_layout(
+    grid: CartesianGrid | None = None,
+) -> tuple[CartesianGrid, int, tuple[int, ...], list[int]]:
+    """3×3 EXAMPLE plus: injector at center, 4 producers on the high-k arms.
+
+    Corners stay matrix. Not industrial well spacing, not a field five-spot.
+    Returns ``(grid, injector_cell, producer_cells, streak_cells)``.
+    """
+    g = grid if grid is not None else CartesianGrid.uniform((3.0, 3.0, 1.0), 1.0)
+    if g.nx < 3 or g.ny < 3:
+        raise ValueError("five-spot EXAMPLE needs at least 3×3")
+    i0, j0 = g.nx // 2, g.ny // 2
+    inj = g.index(i0, j0, 0)
+    prods = (
+        g.index(i0, j0 - 1, 0),
+        g.index(i0 - 1, j0, 0),
+        g.index(i0 + 1, j0, 0),
+        g.index(i0, j0 + 1, 0),
+    )
+    return g, inj, prods, [inj, *prods]
+
+
+def example_five_spot_wells(
+    grid: CartesianGrid,
+    injector_cell: int,
+    producer_cells: list[int] | tuple[int, ...],
+    permeability: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    *,
+    inject_rate: float,
+    produce_bhp: float,
+    z_stream: NDArray[np.float64] | None = None,
+    r_w: float | None = None,
+    skin: float = 0.0,
+) -> tuple[tuple[RateInjector, ...], tuple[RateProducer, ...]]:
+    """EXAMPLE 1 injector + 4 specified-BHP producers. Distinct cells.
+
+    Injector is rate-controlled (CO2-rich stream by default). Each producer
+    has the same Dirichlet ``p_wf``. Not industrial spacing, not GEM.
+    """
+    prods = tuple(int(c) for c in producer_cells)
+    if len(prods) != 4:
+        raise ValueError("five-spot EXAMPLE needs exactly 4 producers")
+    if len(set(prods)) != 4:
+        raise ValueError("five-spot producer cells must be unique")
+    inj_c = int(injector_cell)
+    if inj_c in prods:
+        raise ValueError("injector cell must be distinct from the 4 producers")
+    if float(inject_rate) < 0.0:
+        raise ValueError("injection rate must be non-negative (mol/s)")
+    if float(produce_bhp) <= 0.0:
+        raise ValueError("produce BHP must be positive (Pa)")
+    k = np.asarray(permeability, dtype=float).ravel()
+    z = example_co2_rich_stream(mixture) if z_stream is None else z_stream
+    k_inj = float(k[inj_c]) if k.size > 1 else float(k[0])
+    injector = example_rate_injector(
+        grid, inj_c, k_inj, mixture, rate=float(inject_rate), z_stream=z, r_w=r_w, skin=skin
+    )
+    producers = tuple(
+        example_producer(
+            grid,
+            cell,
+            float(k[int(cell)]) if k.size > 1 else float(k[0]),
+            mixture,
+            bhp=float(produce_bhp),
+            r_w=r_w,
+            skin=skin,
+        )
+        for cell in prods
+    )
+    return (injector,), producers
 
 
 def example_huff_n_puff_well(

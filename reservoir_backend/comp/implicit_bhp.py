@@ -80,6 +80,13 @@ MIXED_CONTROL = (
     "Same perforated cells. Not 1-inject-4-produce."
 )
 
+FIVE_SPOT_CONTROL = (
+    "1 injector + 4 producers on one residual (n_i, p; injector p_wf on "
+    "rate inject only). Inject: specified-rate injector on, 4 producers shut. "
+    "Soak: all shut. Produce: 4 specified-BHP producers on, injector shut. "
+    "EXAMPLE layout, not industrial well spacing, not a Jiyang card."
+)
+
 Q_REF = 1.0e-8  # mol/s, floors the well-residual scale
 
 
@@ -193,7 +200,8 @@ def _apply_peaceman_bhp(
             cell = fld.cells[c]
             xi = cell.xi_liquid * cell.S_liquid + cell.xi_vapor * cell.S_vapor
             lam = _mobility(cell, mu_liquid, mu_vapor)
-            q = max(xi, 0.0) * float(w.well_index) * lam * (float(p[c]) - float(p_wf))
+            pwf_c = float(w.bhp) if getattr(w, "bhp", None) is not None else float(p_wf)
+            q = max(xi, 0.0) * float(w.well_index) * lam * (float(p[c]) - pwf_c)
             z = well_cell_molar_z(cell)
             dn = q * float(dt) * z
             if q >= 0.0:
