@@ -51,6 +51,8 @@ class ImplicitStepReport:
     pressure: NDArray[np.float64] | None = None
     has_pressure_unknown: bool = False
     n_unknowns: int = 0
+    has_bhp_unknown: bool = False
+    bhp: float | None = None  # p_wf [Pa]; set when BHP is a Newton unknown
 
 
 @dataclass
@@ -67,6 +69,7 @@ class ImplicitPeriodLedger:
     dt_used: list[float] = field(default_factory=list)
     residual_hists: list[list[float]] = field(default_factory=list)
     pressure: NDArray[np.float64] | None = None
+    bhp: float | None = None
 
 
 def _pack(n: NDArray[np.float64]) -> NDArray[np.float64]:
