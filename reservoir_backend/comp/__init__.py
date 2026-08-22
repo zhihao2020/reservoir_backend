@@ -34,6 +34,7 @@ from reservoir_backend.comp.streak import (
     K_MATRIX_M2,
     K_STREAK_M2,
     added_moles_per_pv,
+    moles_per_pv,
     example_drive_pressure,
     example_two_region_k,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "WellLedger",
     "accumulate_system",
     "added_moles_per_pv",
+    "moles_per_pv",
     "component_moles",
     "example_co2_rich_stream",
     "example_five_spot_layout",

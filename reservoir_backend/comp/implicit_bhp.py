@@ -94,8 +94,9 @@ HZ_1INJ4PROD_CONTROL = (
     "(n_i, p; injector p_wf on rate inject only). Each well is a lateral "
     "(multiple perfs along a line). Inject: specified-rate injector on, "
     "4 producers shut. Soak: all shut. Produce: 4 specified-BHP producers "
-    "on, injector shut. EXAMPLE well pattern inspired by 1-inj-4-prod, "
-    "not field-validated, not a Jiyang / GEM card."
+    "on, injector shut. Two-region EXAMPLE k: matrix 1e-18 m2, fracture "
+    "streak 1e-12 m2 (document contrast only). EXAMPLE well pattern "
+    "inspired by 1-inj-4-prod, not field-validated, not a Jiyang / GEM card."
 )
 
 Q_REF = 1.0e-8  # mol/s, floors the well-residual scale

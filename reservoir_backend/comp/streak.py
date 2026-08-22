@@ -58,6 +58,19 @@ def example_drive_pressure(
     return p
 
 
+def moles_per_pv(
+    n: NDArray[np.float64],
+    pore_volume: NDArray[np.float64],
+    comp_index: int,
+    cells: NDArray[np.int_] | list[int],
+) -> float:
+    """Mean ``n_i / Vp`` of one component over ``cells`` (inventory density)."""
+    idx = np.asarray(cells, dtype=int).ravel()
+    vp = np.asarray(pore_volume, dtype=float).ravel()[idx]
+    ni = np.asarray(n, dtype=float)[idx, int(comp_index)]
+    return float(np.mean(ni / vp))
+
+
 def added_moles_per_pv(
     n: NDArray[np.float64],
     n0: NDArray[np.float64],

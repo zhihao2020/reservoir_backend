@@ -419,18 +419,32 @@ def example_five_spot_wells(
 
 def example_hz_1inj4prod_layout(
     grid: CartesianGrid | None = None,
+    *,
+    n_perf: int | None = None,
+    streak: str = "laterals",
 ) -> tuple[CartesianGrid, tuple[int, ...], tuple[tuple[int, ...], ...], list[int]]:
-    """Tiny 5×2 2D EXAMPLE: 1 HZ injector + 4 HZ producers (laterals).
+    """Tiny 2D EXAMPLE: 1 HZ injector + 4 HZ producers (laterals).
 
     Default mesh is nx=2, ny=5 (two perfs per well). Injector is the
-    middle row; the other four rows are producer laterals. High-k streak
-    is the five laterals. Inspired by a 1-inj-4-prod well pattern;
-    EXAMPLE geometry only, not field-validated, not a Jiyang / GEM card.
+    middle row; the other four rows are producer laterals. Default
+    ``streak="laterals"`` marks every perforation as high-k (existing
+    5×2 tests). ``streak="injector"`` is the two-region fracture: the
+    full injector row is the high-k streak (``K_STREAK_M2`` = 1e-12 m²),
+    including any unperforated toe cells when ``nx > n_perf``; all other
+    cells are matrix (``K_MATRIX_M2`` = 1e-18 m²). ``n_perf`` defaults
+    to ``nx`` (all columns perforated). Inspired by a 1-inj-4-prod well
+    pattern; EXAMPLE geometry only, not field-validated, not a Jiyang /
+    GEM card.
     Returns ``(grid, injector_cells, producer_laterals, streak_cells)``.
     """
     g = grid if grid is not None else CartesianGrid.uniform((2.0, 5.0, 1.0), 1.0)
     if g.nx < 2 or g.ny < 5:
         raise ValueError("HZ 1+4 EXAMPLE needs at least nx=2, ny=5 (2 perfs × 5 laterals)")
+    n_use = g.nx if n_perf is None else int(n_perf)
+    if n_use < 2 or n_use > g.nx:
+        raise ValueError("HZ 1+4 n_perf must be in [2, nx]")
+    if streak not in ("laterals", "injector"):
+        raise ValueError("streak must be 'laterals' or 'injector'")
     inj_j = 2 if g.ny == 5 else g.ny // 2
     below = [j for j in range(g.ny) if j < inj_j]
     above = [j for j in range(g.ny) if j > inj_j]
@@ -441,13 +455,16 @@ def example_hz_1inj4prod_layout(
     if len(prod_js) != 4 or inj_j in prod_js:
         raise ValueError("HZ 1+4 EXAMPLE needs 4 producer laterals distinct from the injector")
 
-    def _row(j: int) -> tuple[int, ...]:
-        return tuple(g.index(i, j, 0) for i in range(g.nx))
+    def _perfs(j: int) -> tuple[int, ...]:
+        return tuple(g.index(i, j, 0) for i in range(n_use))
 
-    inj_cells = _row(inj_j)
-    prod_laterals = tuple(_row(j) for j in prod_js)
-    streak = [*inj_cells, *[c for lat in prod_laterals for c in lat]]
-    return g, inj_cells, prod_laterals, streak
+    inj_cells = _perfs(inj_j)
+    prod_laterals = tuple(_perfs(j) for j in prod_js)
+    if streak == "injector":
+        streak_cells = [g.index(i, inj_j, 0) for i in range(g.nx)]
+    else:
+        streak_cells = [*inj_cells, *[c for lat in prod_laterals for c in lat]]
+    return g, inj_cells, prod_laterals, streak_cells
 
 
 def example_hz_1inj4prod_wells(
