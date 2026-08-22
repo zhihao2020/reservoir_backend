@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 from numpy.typing import NDArray
 
+from reservoir_backend.comp.implicit import run_implicit_period
 from reservoir_backend.comp.step import CompFields, WellLedger, run_steps
 from reservoir_backend.comp.well import RateInjector, RateProducer
 from reservoir_backend.eos.peng_robinson import EosMixture
@@ -77,6 +78,9 @@ class CycleLedger:
     z_co2_well_cell_after_produce: float
     z_co2_produced_stream: float
     wellhead_z_definition: str = WELLHEAD_Z_DEFINITION
+    accepted_steps: int = 0
+    n_newton: int = 0
+    n_chop: int = 0
 
     @property
     def injected(self) -> NDArray[np.float64]:
@@ -411,4 +415,86 @@ def run_horizontal_huff_and_puff(
         z_co2_well_cell_after_produce=perforated_z_co2(fields, mixture, inj_cells),
         z_co2_produced_stream=produced_stream_z_co2(led_prod, mixture),
         wellhead_z_definition=HZ_WELLHEAD_Z_DEFINITION,
+    )
+
+
+def run_huff_and_puff_implicit(
+    fields: CompFields,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injector: RateInjector,
+    producer: RateProducer,
+    *,
+    inject_days: float = INJECT_DAYS,
+    soak_days: float = SOAK_DAYS,
+    produce_days: float = PRODUCE_DAYS,
+    dt_init_days: float = 0.25,
+    dt_max_days: float = 1.0,
+    gravity: float = 0.0,
+    pressure_produce: NDArray[np.float64] | float | None = None,
+) -> tuple[CompFields, CycleLedger]:
+    """Single-well HnP with implicit Newton steps (lagged p). Same 2/2/3 days.
+
+    ``dt`` may grow or hold after an accepted Newton step; failed Newton
+    chops ``dt``. Not 1-inject-4-produce. Not wired into FIM.
+    """
+    if int(injector.cell) != int(producer.cell):
+        raise ValueError("huff-and-puff uses one well; injector.cell must equal producer.cell")
+    z0 = injector_well_cell_z_co2(fields, mixture, injector.cell)
+    dt_init = float(dt_init_days) * SECONDS_PER_DAY
+    dt_max = float(dt_max_days) * SECONDS_PER_DAY
+    common = dict(
+        T=T,
+        mixture=mixture,
+        grid=grid,
+        permeability=permeability,
+        gravity=gravity,
+        dt_init=dt_init,
+        dt_max=dt_max,
+    )
+    fields, per_inj = run_implicit_period(
+        fields,
+        pressure=pressure,
+        duration=float(inject_days) * SECONDS_PER_DAY,
+        injectors=(injector,),
+        producers=None,
+        **common,
+    )
+    z_after_inject = injector_well_cell_z_co2(fields, mixture, injector.cell)
+    fields, per_soak = run_implicit_period(
+        fields,
+        pressure=pressure,
+        duration=float(soak_days) * SECONDS_PER_DAY,
+        injectors=None,
+        producers=None,
+        **common,
+    )
+    z_after_soak = injector_well_cell_z_co2(fields, mixture, injector.cell)
+    p_prod = pressure if pressure_produce is None else pressure_produce
+    fields, per_prod = run_implicit_period(
+        fields,
+        pressure=p_prod,
+        duration=float(produce_days) * SECONDS_PER_DAY,
+        injectors=None,
+        producers=(producer,),
+        **common,
+    )
+    underflow = per_inj.underflow or per_soak.underflow or per_prod.underflow
+    return fields, CycleLedger(
+        inject=per_inj.ledger,
+        soak=per_soak.ledger,
+        produce=per_prod.ledger,
+        underflow=underflow,
+        z_co2_well_cell_initial=z0,
+        z_co2_well_cell_after_inject=z_after_inject,
+        z_co2_well_cell_after_soak=z_after_soak,
+        z_co2_well_cell_after_produce=injector_well_cell_z_co2(fields, mixture, injector.cell),
+        z_co2_produced_stream=produced_stream_z_co2(per_prod.ledger, mixture),
+        wellhead_z_definition=HNP_WELLHEAD_Z_DEFINITION,
+        accepted_steps=per_inj.n_accepted + per_soak.n_accepted + per_prod.n_accepted,
+        n_newton=per_inj.n_newton + per_soak.n_newton + per_prod.n_newton,
+        n_chop=per_inj.n_chop + per_soak.n_chop + per_prod.n_chop,
     )
