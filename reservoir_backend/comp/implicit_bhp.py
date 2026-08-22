@@ -50,7 +50,7 @@ from reservoir_backend.comp.implicit_p import (
 # Combined (n, p, p_wf) system is stiffer than lagged-p (n, p); 1e-6 is
 # still decades below the O(1) well residual at a cell-pressure first guess.
 NEWTON_TOL = 1.0e-6
-from reservoir_backend.comp.step import DT_MIN, CompFields, WellLedger
+from reservoir_backend.comp.step import DT_MIN, CompFields, WellLedger, _fields_from_moles
 from reservoir_backend.comp.well import RateInjector, RateProducer, well_cell_molar_z
 from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -197,6 +197,18 @@ def _apply_peaceman_bhp(
                 out[c] += -dn
                 injected += -dn
     return out, injected, produced
+
+
+def _n_hat_from_residual(
+    n_trial: NDArray[np.float64], R: NDArray[np.float64], n_ref: float
+) -> NDArray[np.float64]:
+    """Implicit Euler state ``n_hat`` so inventory matches the well ledger."""
+    nc = n_trial.shape[1]
+    n_hat = np.empty_like(n_trial)
+    for c in range(n_trial.shape[0]):
+        i0 = c * (nc + 1)
+        n_hat[c] = n_trial[c] - np.asarray(R[i0 : i0 + nc], dtype=float) * n_ref
+    return np.clip(n_hat, 0.0, None)
 
 
 def _pack_bhp(n: NDArray[np.float64], p: NDArray[np.float64], p_wf: float | None) -> NDArray[np.float64]:
@@ -366,10 +378,14 @@ def implicit_newton_step_bhp(
             bhp=None if p_wf_trial is None else float(p_wf_trial),
         )
 
+    def _commit(fld_in: CompFields, R_now: NDArray[np.float64]) -> CompFields:
+        out = _fields_from_moles(_n_hat_from_residual(n_trial, R_now, n_ref), T, p_trial, mixture)
+        out.p = p_trial.copy()
+        return out
+
     if dt == 0.0 or hist[0] < tol:
-        fld.p = p_trial.copy()
         return ImplicitStepReport(
-            fld, injected, produced, float(dt), underflow, True, 0, residual_hist=hist, **_extra()
+            _commit(fld, R), injected, produced, float(dt), underflow, True, 0, residual_hist=hist, **_extra()
         )
 
     u = _pack_bhp(n_trial, p_trial, p_wf_trial if has_bhp else None)
@@ -433,9 +449,8 @@ def implicit_newton_step_bhp(
                 fld, injected, produced, float(dt), underflow, False, n_newton, residual_hist=hist, **_extra()
             )
         if float(np.max(np.abs(R))) < tol:
-            fld.p = p_trial.copy()
             return ImplicitStepReport(
-                fld, injected, produced, float(dt), underflow, True, n_newton, residual_hist=hist, **_extra()
+                _commit(fld, R), injected, produced, float(dt), underflow, True, n_newton, residual_hist=hist, **_extra()
             )
 
     fld.p = p_trial.copy()
