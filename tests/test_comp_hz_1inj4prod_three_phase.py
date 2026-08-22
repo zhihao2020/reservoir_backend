@@ -51,6 +51,9 @@ def test_three_phase_case_run_writes_sw_and_accepted_steps(tmp_path) -> None:
     r0, r1 = metrics["cycles"][0]["inject_R"]
     assert r0 > 0.0
     assert r1 < r0
+    rp0, rp1 = metrics["cycles"][0]["produce_R"]
+    assert rp0 >= 0.0
+    assert rp1 <= rp0 + 1e-15
     assert format_metrics(metrics) in text
     assert csv_path.is_file()
     with csv_path.open(encoding="utf-8", newline="") as fh:

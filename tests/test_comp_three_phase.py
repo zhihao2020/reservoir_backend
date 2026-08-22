@@ -6,7 +6,10 @@ from reservoir_backend.comp import (
     EXAMPLE_AQUEOUS_ASSUMPTIONS,
     EXAMPLE_AQUEOUS_MARKER,
     THREE_PHASE_VOLUME_CONSTRAINT,
+    THREE_PHASE_WELL_BHP_CONSTRAINT,
+    THREE_PHASE_WELL_RATE_CONSTRAINT,
     accumulate_three_phase,
+    example_producer,
     example_rate_injector,
     explicit_step_three_phase,
     flash_cell,
@@ -31,6 +34,7 @@ def test_aqueous_marker_is_example_not_gem() -> None:
     assert "immiscible" in EXAMPLE_AQUEOUS_ASSUMPTIONS
     assert "Newton" in EXAMPLE_AQUEOUS_ASSUMPTIONS
     assert "R_p" in EXAMPLE_AQUEOUS_ASSUMPTIONS
+    assert "p_wf" in EXAMPLE_AQUEOUS_ASSUMPTIONS
     assert "no Pc" in EXAMPLE_AQUEOUS_MARKER or "capillary-free" in EXAMPLE_AQUEOUS_ASSUMPTIONS
 
 
@@ -39,6 +43,15 @@ def test_three_phase_volume_constraint_is_documented() -> None:
     assert "n_w * v_w" in THREE_PHASE_VOLUME_CONSTRAINT
     assert "V_pore" in THREE_PHASE_VOLUME_CONSTRAINT
     assert "Newton unknown" in THREE_PHASE_VOLUME_CONSTRAINT
+
+
+def test_three_phase_well_constraints_are_documented() -> None:
+    assert "Q_spec" in THREE_PHASE_WELL_RATE_CONSTRAINT
+    assert "Newton unknown" in THREE_PHASE_WELL_RATE_CONSTRAINT
+    assert "dropped" in THREE_PHASE_WELL_RATE_CONSTRAINT
+    assert "Dirichlet" in THREE_PHASE_WELL_BHP_CONSTRAINT
+    assert "not a Newton unknown" in THREE_PHASE_WELL_BHP_CONSTRAINT
+    assert "Peaceman" in THREE_PHASE_WELL_BHP_CONSTRAINT or "q_PI" in THREE_PHASE_WELL_BHP_CONSTRAINT
 
 
 def test_three_phase_saturations_sum_to_one() -> None:
@@ -130,6 +143,8 @@ def test_three_phase_newton_equal_p_conserves_water_and_hc() -> None:
     report = implicit_newton_step_three_phase(state, 250.0, p, mix, grid, 1.0e-12, vp, dt=1.0)
     assert report.newton_converged
     assert report.has_pressure_unknown
+    assert report.has_bhp_unknown is False
+    assert report.bhp is None
     assert report.n_unknowns == 2 * (mix.n_components + 2)
     assert report.pressure is not None
     assert report.pressure.shape == (grid.n_cells,)
@@ -141,7 +156,7 @@ def test_three_phase_newton_equal_p_conserves_water_and_hc() -> None:
 
 
 def test_three_phase_newton_includes_p_and_drops_residual() -> None:
-    """Inject step: p is in the unknown vector; ||R|| drops by decades."""
+    """Rate-control inject: p and p_wf are Newton unknowns; ||R|| drops by decades."""
     mix = _example_binary()
     grid = CartesianGrid.uniform((2.0, 1.0, 1.0), 1.0)
     z = np.array([[0.40, 0.60], [0.40, 0.60]])
@@ -153,7 +168,10 @@ def test_three_phase_newton_includes_p_and_drops_residual() -> None:
         state, 250.0, p0, mix, grid, 1.0e-18, vp, 0.25 * SECONDS_PER_DAY, injectors=(inj,)
     )
     assert report.has_pressure_unknown
-    assert report.n_unknowns == grid.n_cells * (mix.n_components + 2)
+    assert report.has_bhp_unknown
+    assert report.bhp is not None
+    assert np.isfinite(report.bhp)
+    assert report.n_unknowns == grid.n_cells * (mix.n_components + 2) + 1
     assert report.pressure is not None
     assert report.pressure.shape == (grid.n_cells,)
     assert report.newton_converged
@@ -163,6 +181,35 @@ def test_three_phase_newton_includes_p_and_drops_residual() -> None:
     assert r0 > 0.0
     assert r1 < r0 / 100.0
     assert np.max(np.abs(report.pressure - p0)) > 1.0
+    out = report.state
+    assert np.allclose(out.s_oil + out.s_gas + out.s_water, 1.0, atol=1e-12)
+
+
+def test_three_phase_specified_bhp_produce_pwf_is_not_unknown() -> None:
+    """Specified-BHP produce: p_wf Dirichlet; unknowns (n_i, n_w, p); ||R|| drops."""
+    mix = _example_binary()
+    grid = CartesianGrid.uniform((2.0, 1.0, 1.0), 1.0)
+    z = np.array([[0.40, 0.60], [0.40, 0.60]])
+    p0 = np.array([5.0e6, 5.0e6])
+    vp = 0.2 * grid.cell_volumes()
+    state = accumulate_three_phase(z, 250.0, p0, mix, vp, np.array([0.25, 0.25]))
+    produce_bhp = 5.0e6 - 1.0
+    prod = example_producer(grid, 0, 1.0e-12, mix, bhp=produce_bhp)
+    report = implicit_newton_step_three_phase(
+        state, 250.0, p0, mix, grid, 1.0e-12, vp, 0.25 * SECONDS_PER_DAY, producers=(prod,)
+    )
+    assert report.has_pressure_unknown
+    assert report.has_bhp_unknown is False
+    assert report.bhp == produce_bhp
+    assert report.n_unknowns == grid.n_cells * (mix.n_components + 2)
+    assert report.newton_converged
+    assert report.n_newton >= 1
+    assert len(report.residual_hist) >= 2
+    r0, r1 = report.residual_hist[0], report.residual_hist[-1]
+    assert r0 > 0.0
+    assert r1 < r0 / 100.0
+    assert report.produced is not None
+    assert float(report.produced.sum()) > 0.0
     out = report.state
     assert np.allclose(out.s_oil + out.s_gas + out.s_water, 1.0, atol=1e-12)
 
@@ -180,6 +227,7 @@ def test_three_phase_newton_pressure_driven_residual_drops() -> None:
     report = implicit_newton_step_three_phase(state, 250.0, p, mix, grid, 1.0e-12, vp, dt=0.05)
     assert report.newton_converged
     assert report.has_pressure_unknown
+    assert report.has_bhp_unknown is False
     assert report.n_unknowns == grid.n_cells * (mix.n_components + 2)
     assert report.residual_hist[-1] < report.residual_hist[0]
     out = report.state

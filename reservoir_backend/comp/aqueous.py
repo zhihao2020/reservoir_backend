@@ -34,6 +34,8 @@ ASSUMPTIONS (EXAMPLE, not field-validated):
 - Incompressible water (constant ξ_w, ρ_w).
 - Pressure is a Newton unknown with ``n_i`` and ``n_w`` (same volume
   constraint style as ``implicit_p``, plus water). ``T`` is prescribed.
+  Rate-controlled inject adds ``p_wf`` (well residual). Specified-BHP
+  produce keeps ``p_wf`` Dirichlet; soak drops ``p_wf``.
 - Water moles ``n_w`` sit in the same implicit-Euler Newton residual as
   ``n_i`` (not a post-process). ``S_w = n_w / (V_pore ξ_w)``.
 - Water properties are textbook 20 °C liquid water, labeled EXAMPLE.
@@ -68,6 +70,14 @@ from reservoir_backend.comp.cycle import (
     produced_stream_z_co2,
 )
 from reservoir_backend.comp.implicit import DT_CHOP, DT_GROW, NEWTON_MAX
+from reservoir_backend.comp.implicit_bhp import (
+    Q_REF,
+    _bhp_from_wells,
+    _init_pwf,
+    _mobility,
+    _specified_rate,
+    _well_mode,
+)
 from reservoir_backend.comp.implicit_p import P_MAX, P_MIN, P_REF
 
 # Coupled (n_i, n_w, p) with incompressible water is stiffer than lagged-p;
@@ -99,6 +109,8 @@ EXAMPLE_AQUEOUS_ASSUMPTIONS = (
     "immiscible water; So+Sg+Sw=1 with So,Sg from PR flash scaled by (1-Sw); "
     "capillary-free TPFA mobility split; incompressible ξ_w; "
     "p is a Newton unknown with R_p = n_hc_tot*v_mix + n_w*v_w - V_pore; "
+    "rate-control inject: p_wf Newton unknown (R_wf = Q_spec - sum q_PI); "
+    "specified-BHP produce: p_wf Dirichlet, Peaceman rate; soak drops p_wf; "
     "n_w in the implicit-Euler Newton residual with n_i"
 )
 
@@ -107,6 +119,24 @@ THREE_PHASE_VOLUME_CONSTRAINT = (
     "v_mix = nu * v_V + (1 - nu) * v_L from flash_tp at the trial (T, p, z) "
     "and v_w = 1/ξ_w (EXAMPLE incompressible water). "
     "T is prescribed. p is a Newton unknown in the same vector as (n_i, n_w)."
+)
+
+THREE_PHASE_WELL_RATE_CONSTRAINT = (
+    "R_wf = Q_spec - sum_perfs q_PI(p_c, p_wf), with "
+    "q_PI = xi * WI * lambda_hc * Delta p (signed Peaceman / linear PI) "
+    "and lambda_hc = (1-Sw) * (S_L/mu_L + S_V/mu_V). "
+    "Rate control: p_wf is a Newton unknown in the same vector as (n_i, n_w, p). "
+    "Inject Delta p = p_wf - p_c (xi = injectate 1/v_mix at T, p_wf). "
+    "Specified BHP is Dirichlet (p_wf not unknown). "
+    "Shut-in (soak): p_wf is dropped from the unknown vector."
+)
+
+THREE_PHASE_WELL_BHP_CONSTRAINT = (
+    "Specified-BHP: p_wf is Dirichlet (not a Newton unknown). "
+    "Unknowns are (n_i, n_w, p) only. "
+    "Mass source is Peaceman q_PI(p_c, p_wf_spec). "
+    "Rate is the residual outcome, not an unknown. "
+    "Soak shuts the well (p_wf dropped)."
 )
 
 
@@ -291,7 +321,7 @@ def explicit_step_three_phase(
 
 @dataclass
 class ThreePhaseNewtonReport:
-    """One implicit Euler Newton step on ``(n_i, n_w, p)``."""
+    """One implicit Euler Newton step on ``(n_i, n_w, p[, p_wf])``."""
 
     state: ThreePhaseState
     newton_converged: bool
@@ -302,6 +332,8 @@ class ThreePhaseNewtonReport:
     produced: NDArray[np.float64] | None = None
     has_pressure_unknown: bool = True
     pressure: NDArray[np.float64] | None = None
+    has_bhp_unknown: bool = False
+    bhp: float | None = None
 
 
 def _state_from_moles(
@@ -354,6 +386,67 @@ def _unpack_nwp(
         n_w[c] = max(0.0, float(u[i0 + n_comp]))
         p[c] = float(np.clip(u[i0 + n_comp + 1] * P_REF, P_MIN, P_MAX))
     return n_hc, n_w, p
+
+
+def _pack_nwp_bhp(
+    n_hc: NDArray[np.float64],
+    n_water: NDArray[np.float64],
+    p: NDArray[np.float64],
+    p_wf: float | None,
+) -> NDArray[np.float64]:
+    u = _pack_nwp(n_hc, n_water, p)
+    if p_wf is not None:
+        u = np.append(u, float(p_wf) / P_REF)
+    return u
+
+
+def _unpack_nwp_bhp(
+    u: NDArray[np.float64], n_cells: int, n_comp: int, has_bhp: bool
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], float | None]:
+    n_np = n_cells * (n_comp + 2)
+    n_hc, n_w, p = _unpack_nwp(np.asarray(u[:n_np], dtype=float), n_cells, n_comp)
+    p_wf = float(np.clip(float(u[-1]) * P_REF, P_MIN, P_MAX)) if has_bhp else None
+    return n_hc, n_w, p, p_wf
+
+
+def _hc_mobility(cell: CellFlash, s_water: float, mu_liquid: float, mu_vapor: float) -> float:
+    """HC mobility on the remaining pore: ``(1−S_w)(S_L/μ_L + S_V/μ_V)``."""
+    return max(0.0, 1.0 - float(s_water)) * _mobility(cell, mu_liquid, mu_vapor)
+
+
+def _peaceman_rate_three_phase(
+    mode: str,
+    state: ThreePhaseState,
+    p: NDArray[np.float64],
+    p_wf: float,
+    T: float,
+    mixture: EosMixture,
+    injectors,
+    producers,
+    mu_liquid: float,
+    mu_vapor: float,
+) -> float:
+    """Total signed Peaceman HC molar rate [mol/s] at trial ``p_wf``."""
+    if mode == "inject":
+        z_inj = np.asarray(injectors[0].z_inj, dtype=float)
+        inj_flash = flash_cell(z_inj, T, float(p_wf), mixture)
+        xi_inj = 1.0 / max(_v_mix(inj_flash), 1.0e-30)
+        q = 0.0
+        for w in injectors:
+            c = int(w.cell)
+            lam = _hc_mobility(state.hc.cells[c], float(state.s_water[c]), mu_liquid, mu_vapor)
+            q += xi_inj * float(w.well_index) * lam * (float(p_wf) - float(p[c]))
+        return float(q)
+    if mode == "produce":
+        q = 0.0
+        for w in producers:
+            c = int(w.cell)
+            cell = state.hc.cells[c]
+            xi = cell.xi_liquid * cell.S_liquid + cell.xi_vapor * cell.S_vapor
+            lam = _hc_mobility(cell, float(state.s_water[c]), mu_liquid, mu_vapor)
+            q += max(xi, 0.0) * float(w.well_index) * lam * (float(p[c]) - float(p_wf))
+        return float(q)
+    return 0.0
 
 
 def _rhs_three_phase(
@@ -436,6 +529,38 @@ def _residual_nwp(
     return r
 
 
+def _residual_nwp_bhp(
+    n_hc: NDArray[np.float64],
+    n_water: NDArray[np.float64],
+    n_hc_hat: NDArray[np.float64],
+    n_w_hat: NDArray[np.float64],
+    state: ThreePhaseState,
+    pore_volume: NDArray[np.float64],
+    n_hc_ref: float,
+    n_w_ref: float,
+    *,
+    mode: str,
+    p_wf: float | None,
+    T: float,
+    mixture: EosMixture,
+    p_trial: NDArray[np.float64],
+    injectors,
+    producers,
+    mu_liquid: float,
+    mu_vapor: float,
+    has_bhp: bool,
+) -> NDArray[np.float64]:
+    r = _residual_nwp(n_hc, n_water, n_hc_hat, n_w_hat, state, pore_volume, n_hc_ref, n_w_ref)
+    if not has_bhp or p_wf is None:
+        return r
+    q_spec = _specified_rate(mode, injectors, producers)
+    q_pea = _peaceman_rate_three_phase(
+        mode, state, p_trial, float(p_wf), T, mixture, injectors, producers, mu_liquid, mu_vapor
+    )
+    r_wf = (q_spec - q_pea) / max(abs(q_spec), Q_REF)
+    return np.append(r, r_wf)
+
+
 def _three_phase_report(
     state: ThreePhaseState,
     newton_converged: bool,
@@ -445,6 +570,9 @@ def _three_phase_report(
     injected: NDArray[np.float64],
     produced: NDArray[np.float64],
     p: NDArray[np.float64],
+    *,
+    has_bhp_unknown: bool,
+    bhp: float | None,
 ) -> ThreePhaseNewtonReport:
     state.hc.p = np.asarray(p, dtype=float).ravel().copy()
     return ThreePhaseNewtonReport(
@@ -457,6 +585,8 @@ def _three_phase_report(
         produced=produced,
         has_pressure_unknown=True,
         pressure=np.asarray(p, dtype=float).ravel().copy(),
+        has_bhp_unknown=has_bhp_unknown,
+        bhp=None if bhp is None else float(bhp),
     )
 
 
@@ -476,15 +606,16 @@ def implicit_newton_step_three_phase(
     mu_water: float = EXAMPLE_WATER_MU_PA_S,
     injectors: tuple[RateInjector, ...] | list[RateInjector] | None = None,
     producers: tuple[RateProducer, ...] | list[RateProducer] | None = None,
+    p_wf: float | None = None,
     tol: float = NEWTON_TOL,
     max_iter: int = NEWTON_MAX,
 ) -> ThreePhaseNewtonReport:
-    """One implicit Euler Newton step. Unknowns are ``(n_i, n_w, p)`` per cell.
+    """One implicit Euler Newton step.
 
-    Volume constraint matches ``implicit_p`` plus water:
-    ``R_p = n_hc_tot * v_mix + n_w * v_w - V_pore``. ``T`` is prescribed.
-    Water accumulation is in the residual, not a post-process. Wells (if
-    any) add/remove HC moles only. EXAMPLE aqueous.
+    Rate control: unknowns ``(n_i, n_w, p, p_wf)``. Specified-BHP:
+    unknowns ``(n_i, n_w, p)`` only; ``p_wf`` is Dirichlet. Soak drops
+    ``p_wf``. Volume constraint matches ``implicit_p`` plus water.
+    Wells add/remove HC moles only. EXAMPLE aqueous.
     """
     if dt < 0.0:
         raise ValueError("dt must be non-negative (s)")
@@ -497,6 +628,12 @@ def implicit_newton_step_three_phase(
     vp = np.asarray(pore_volume, dtype=float).ravel()
     faces = interior_faces(grid, permeability)
     z_center = grid.cell_centers()[:, 2]
+    mode = _well_mode(injectors, producers)
+    has_bhp = mode in ("inject", "produce")
+    if mode in ("inject_bhp", "produce_bhp"):
+        p_wf_trial = _bhp_from_wells(mode, injectors, producers)
+    else:
+        p_wf_trial = _init_pwf(mode, p, p_wf)
     kw = dict(
         gravity=gravity,
         mu_liquid=mu_liquid,
@@ -504,6 +641,16 @@ def implicit_newton_step_three_phase(
         mu_water=mu_water,
         injectors=injectors,
         producers=producers,
+    )
+    rkw = dict(
+        mode=mode,
+        T=T,
+        mixture=mixture,
+        injectors=injectors,
+        producers=producers,
+        mu_liquid=mu_liquid,
+        mu_vapor=mu_vapor,
+        has_bhp=has_bhp,
     )
     n_hc_ref = max(1.0, float(np.mean(np.abs(n_hc_old))))
     n_w_ref = max(1.0, float(np.mean(np.abs(n_w_old))))
@@ -513,52 +660,85 @@ def implicit_newton_step_three_phase(
     n_hc_hat, n_w_hat, trial, injected, produced = _rhs_three_phase(
         n_hc, n_w, n_hc_old, n_w_old, T, p_trial, mixture, faces, z_center, dt, vp, **kw
     )
-    R = _residual_nwp(n_hc, n_w, n_hc_hat, n_w_hat, trial, vp, n_hc_ref, n_w_ref)
+    R = _residual_nwp_bhp(
+        n_hc, n_w, n_hc_hat, n_w_hat, trial, vp, n_hc_ref, n_w_ref, p_wf=p_wf_trial, p_trial=p_trial, **rkw
+    )
     hist = [float(np.max(np.abs(R)))]
-    n_unknowns = n_cells * (n_comp + 2)
-    if dt == 0.0 or hist[0] < tol:
-        return _three_phase_report(trial, True, 0, hist, n_unknowns, injected, produced, p_trial)
+    n_unknowns = n_cells * (n_comp + 2) + (1 if has_bhp else 0)
 
-    u = _pack_nwp(n_hc, n_w, p_trial)
+    def _rep(conv: bool, n_it: int) -> ThreePhaseNewtonReport:
+        return _three_phase_report(
+            trial, conv, n_it, hist, n_unknowns, injected, produced, p_trial,
+            has_bhp_unknown=has_bhp, bhp=p_wf_trial,
+        )
+
+    if dt == 0.0 or hist[0] < tol:
+        return _rep(True, 0)
+
+    u = _pack_nwp_bhp(n_hc, n_w, p_trial, p_wf_trial if has_bhp else None)
     n_newton = 0
     for it in range(1, int(max_iter) + 1):
         n_newton = it
         J = np.zeros((n_unknowns, n_unknowns), dtype=float)
         for j in range(n_unknowns):
-            eps = 1.0e-6 * max(1.0, abs(float(u[j])))
+            if has_bhp and j == n_unknowns - 1:
+                eps = 1.0e-8 * max(1.0, abs(float(u[j])))
+            else:
+                eps = 1.0e-6 * max(1.0, abs(float(u[j])))
             u_p = u.copy()
             u_p[j] += eps
-            n_p, w_p, p_p = _unpack_nwp(u_p, n_cells, n_comp)
+            n_p, w_p, p_p, wf_p = _unpack_nwp_bhp(u_p, n_cells, n_comp, has_bhp)
+            if not has_bhp:
+                wf_p = p_wf_trial
             hat_n, hat_w, st_p, _, _ = _rhs_three_phase(
                 n_p, w_p, n_hc_old, n_w_old, T, p_p, mixture, faces, z_center, dt, vp, **kw
             )
-            J[:, j] = (_residual_nwp(n_p, w_p, hat_n, hat_w, st_p, vp, n_hc_ref, n_w_ref) - R) / eps
+            J[:, j] = (
+                _residual_nwp_bhp(
+                    n_p, w_p, hat_n, hat_w, st_p, vp, n_hc_ref, n_w_ref, p_wf=wf_p, p_trial=p_p, **rkw
+                )
+                - R
+            ) / eps
         try:
             du = np.linalg.solve(J + 1.0e-12 * np.eye(n_unknowns), -R)
         except np.linalg.LinAlgError:
-            return _three_phase_report(trial, False, n_newton, hist, n_unknowns, injected, produced, p_trial)
+            return _rep(False, n_newton)
         alpha = 1.0
         r0 = float(np.max(np.abs(R)))
         accepted = False
         for _ in range(8):
-            n_try, w_try, p_try = _unpack_nwp(u + alpha * du, n_cells, n_comp)
+            n_try, w_try, p_try, wf_try = _unpack_nwp_bhp(u + alpha * du, n_cells, n_comp, has_bhp)
+            if not has_bhp:
+                wf_try = p_wf_trial
             n_hc_hat, n_w_hat, trial, injected, produced = _rhs_three_phase(
                 n_try, w_try, n_hc_old, n_w_old, T, p_try, mixture, faces, z_center, dt, vp, **kw
             )
-            R_try = _residual_nwp(n_try, w_try, n_hc_hat, n_w_hat, trial, vp, n_hc_ref, n_w_ref)
-            if float(np.max(np.abs(R_try))) <= r0 * (1.0 - 1.0e-4 * alpha) or alpha < 0.05:
-                u = _pack_nwp(n_try, w_try, p_try)
+            R_try = _residual_nwp_bhp(
+                n_try, w_try, n_hc_hat, n_w_hat, trial, vp, n_hc_ref, n_w_ref,
+                p_wf=wf_try, p_trial=p_try, **rkw
+            )
+            r_try = float(np.max(np.abs(R_try)))
+            r_np_try = float(np.max(np.abs(R_try[:-1]))) if has_bhp else r_try
+            r_np_0 = float(np.max(np.abs(R[:-1]))) if has_bhp else r0
+            if (
+                r_try <= r0 * (1.0 - 1.0e-4 * alpha)
+                or (has_bhp and r_np_try <= r_np_0 / 10.0)
+                or (alpha < 0.05 and r_try <= r0)
+            ):
+                u = _pack_nwp_bhp(n_try, w_try, p_try, wf_try if has_bhp else None)
                 n_hc, n_w, p_trial = n_try, w_try, p_try
+                if has_bhp:
+                    p_wf_trial = wf_try
                 R = R_try
                 hist.append(float(np.max(np.abs(R))))
                 accepted = True
                 break
             alpha *= 0.5
         if not accepted:
-            return _three_phase_report(trial, False, n_newton, hist, n_unknowns, injected, produced, p_trial)
+            return _rep(False, n_newton)
         if float(np.max(np.abs(R))) < tol:
-            return _three_phase_report(trial, True, n_newton, hist, n_unknowns, injected, produced, p_trial)
-    return _three_phase_report(trial, False, n_newton, hist, n_unknowns, injected, produced, p_trial)
+            return _rep(True, n_newton)
+    return _rep(False, n_newton)
 
 
 def run_implicit_period_three_phase(
@@ -576,10 +756,11 @@ def run_implicit_period_three_phase(
     gravity: float = 0.0,
     injectors: tuple[RateInjector, ...] | list[RateInjector] | None = None,
     producers: tuple[RateProducer, ...] | list[RateProducer] | None = None,
+    p_wf: float | None = None,
     grow: float = DT_GROW,
     chop: float = DT_CHOP,
 ) -> tuple[ThreePhaseState, WellLedger, list[list[float]], int]:
-    """Advance ``duration`` with coupled ``(n_i, n_w, p)`` Newton. Returns ledger, residual hists, n_accepted."""
+    """Advance ``duration`` with coupled ``(n_i, n_w, p[, p_wf])`` Newton. Returns ledger, residual hists, n_accepted."""
     n_comp = state.hc.n.shape[1]
     ledger = WellLedger(injected=np.zeros(n_comp, dtype=float), produced=np.zeros(n_comp, dtype=float))
     if float(duration) <= 0.0:
@@ -590,6 +771,7 @@ def run_implicit_period_three_phase(
     n_accepted = 0
     residual_hists: list[list[float]] = []
     p = np.asarray(pressure, dtype=float).ravel()
+    wf = p_wf
     while t < float(duration) - 1.0e-12:
         dt = min(dt, float(duration) - t, float(dt_max))
         report = implicit_newton_step_three_phase(
@@ -604,6 +786,7 @@ def run_implicit_period_three_phase(
             gravity=gravity,
             injectors=injectors,
             producers=producers,
+            p_wf=wf,
         )
         if not report.newton_converged:
             dt = float(chop) * dt
@@ -614,6 +797,7 @@ def run_implicit_period_three_phase(
         current = report.state
         if report.pressure is not None:
             p = np.asarray(report.pressure, dtype=float).ravel()
+        wf = report.bhp
         t += float(dt)
         inj = report.injected if report.injected is not None else np.zeros(n_comp, dtype=float)
         prd = report.produced if report.produced is not None else np.zeros(n_comp, dtype=float)
@@ -647,9 +831,10 @@ def run_hz_1inj4prod_three_phase(
 ) -> tuple[ThreePhaseState, MultiCycleLedger]:
     """Short HZ 1+4 huff-n-puff with immiscible water in the Newton residual.
 
-    Opposite wells shut. Coupled ``(n_i, n_w, p)``. Same tiny mesh /
-    schedule as the two-phase EXAMPLE cycle. Water is not injected or
-    produced (HC wells only). Not FIM, not a GEM aqueous card.
+    Opposite wells shut. Coupled ``(n_i, n_w, p)``; injector ``p_wf`` on
+    rate inject only. Specified-BHP produce is Dirichlet Peaceman.
+    Same tiny mesh / schedule as the two-phase EXAMPLE cycle. Water is
+    not injected or produced (HC wells only). Not FIM, not a GEM aqueous card.
     """
     if int(n_cycles) < 1:
         raise ValueError("n_cycles must be >= 1")
