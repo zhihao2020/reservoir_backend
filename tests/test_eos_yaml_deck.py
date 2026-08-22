@@ -63,7 +63,7 @@ def test_missing_feed_z_errors(tmp_path: Path) -> None:
 
 def test_eos_loader_does_not_import_fi_or_references() -> None:
     root = Path(__file__).resolve().parents[1] / "reservoir_backend" / "eos"
-    for rel in ("load.py", "example_library.py"):
+    for rel in ("load.py", "example_library.py", "gem_card.py"):
         tree = ast.parse((root / rel).read_text(encoding="utf-8"))
         names: list[str] = []
         for node in ast.walk(tree):

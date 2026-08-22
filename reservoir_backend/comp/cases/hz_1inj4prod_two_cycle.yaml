@@ -17,6 +17,9 @@ grid:
   streak: injector
 
 fluid:
+  # Primary: YAML deck. Optional alternative (do not set both):
+  #   gem_deck: example_c1_co2.gem
+  # GEM text cards map to the same YAML EOS schema; neither invents criticals.
   eos_yaml: example_c1_c7plus_co2.yaml
   components: [C1, CO2]
   z: [0.40, 0.60]

@@ -1,0 +1,22 @@
+** EXAMPLE synthetic GEM-like snippet (C1 + CO2).
+** Public literature / NIST textbook values matching example_c1_c7plus_co2.yaml.
+** NOT a Jiyang / field GEM card. NOT site-calibrated. NOT field-validated.
+** *INUNIT *SI: *TCRIT in K, *PCRIT in kPa (GEM SI). Loader converts Pc to Pa.
+** Optional input only — YAML remains the primary fluid path.
+
+*DESC EXAMPLE synthetic C1-CO2; NOT a Jiyang GEM card; NOT field-validated
+*EOS *PR
+*INUNIT *SI
+*NC 2
+*COMP
+  'C1' 'CO2'
+*TCRIT
+  190.564  304.1282
+*PCRIT
+  4599.2  7377.3
+*ACENTRIC
+  0.01142  0.2236
+*MW
+  16.0425  44.0095
+*BIN
+  0.105

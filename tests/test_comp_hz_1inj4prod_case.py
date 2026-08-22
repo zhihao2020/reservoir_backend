@@ -5,13 +5,17 @@ import csv
 import io
 from pathlib import Path
 
+import pytest
+
 from reservoir_backend.comp.case_run import (
     DEFAULT_CASE,
     format_metrics,
+    load_case_mixture,
     load_case_yaml,
     main,
     run_example_case,
 )
+from reservoir_backend.eos import DEFAULT_EXAMPLE_GEM_CARD
 
 
 def test_case_yaml_is_example_not_gem() -> None:
@@ -25,6 +29,31 @@ def test_case_yaml_is_example_not_gem() -> None:
     assert float(cfg["rock"]["k_matrix_m2"]) == 1.0e-18
     assert float(cfg["rock"]["k_streak_m2"]) == 1.0e-12
     assert cfg["fluid"]["eos_yaml"] == "example_c1_c7plus_co2.yaml"
+    assert "gem_deck" not in cfg["fluid"]
+    assert "gem_deck:" in text
+    assert "do not set both" in text
+
+
+def test_case_fluid_gem_deck_xor_yaml() -> None:
+    """Optional GEM card maps to the same mixture path; YAML stays primary."""
+    gem = load_case_mixture(
+        {"gem_deck": str(DEFAULT_EXAMPLE_GEM_CARD), "components": ["C1", "CO2"]}
+    )
+    yaml_mix = load_case_mixture(
+        {"eos_yaml": "example_c1_c7plus_co2.yaml", "components": ["C1", "CO2"]}
+    )
+    assert gem.names == yaml_mix.names == ("C1", "CO2")
+    assert "EXAMPLE" in gem.marker
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        load_case_mixture(
+            {
+                "eos_yaml": "example_c1_c7plus_co2.yaml",
+                "gem_deck": str(DEFAULT_EXAMPLE_GEM_CARD),
+                "components": ["C1", "CO2"],
+            }
+        )
+    with pytest.raises(ValueError, match="refusing to invent GEM/Jiyang criticals"):
+        load_case_mixture({"components": ["C1", "CO2"]})
 
 
 def test_case_run_module_does_not_import_fi_or_references() -> None:

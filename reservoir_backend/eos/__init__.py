@@ -9,10 +9,17 @@ from reservoir_backend.eos.example_library import (
     example_eight_component_mixture,
     example_feed_z,
 )
+from reservoir_backend.eos.gem_card import (
+    DEFAULT_EXAMPLE_GEM_CARD,
+    load_eos_mixture_gem,
+    parse_gem_card,
+    resolve_gem_deck,
+)
 from reservoir_backend.eos.load import (
     DEFAULT_EXAMPLE_FLUID_YAML,
     load_eos_mixture_yaml,
     load_feed_z_yaml,
+    mixture_from_deck_dict,
     resolve_fluid_yaml,
 )
 from reservoir_backend.eos.flash import FlashResult, flash_tp, solve_rachford_rice, wilson_k
@@ -32,6 +39,7 @@ from reservoir_backend.eos.stability import StabilityResult, michelsen_stability
 
 __all__ = [
     "DEFAULT_EXAMPLE_FLUID_YAML",
+    "DEFAULT_EXAMPLE_GEM_CARD",
     "EXAMPLE_LIBRARY_MARKER",
     "GAS_CONSTANT",
     "EosMixture",
@@ -43,9 +51,13 @@ __all__ = [
     "compressibility_roots",
     "example_eight_component_mixture",
     "example_feed_z",
+    "load_eos_mixture_gem",
     "load_eos_mixture_yaml",
     "load_feed_z_yaml",
+    "mixture_from_deck_dict",
+    "parse_gem_card",
     "resolve_fluid_yaml",
+    "resolve_gem_deck",
     "flash_tp",
     "fugacity_coefficients",
     "mass_density",

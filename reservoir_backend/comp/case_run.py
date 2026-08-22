@@ -1,8 +1,10 @@
 """Thin EXAMPLE case runner for the standalone comp kernel.
 
 Loads a YAML under ``reservoir_backend/comp/cases/`` and runs the
-already-tested 1 HZ inj + 4 HZ prod two-cycle schedule. Not FIM, not
-DigitalTwin, not the product CLI. Fluids/K are EXAMPLE, not Jiyang GEM.
+already-tested 1 HZ inj + 4 HZ prod two-cycle schedule. Fluids come
+from ``fluid.eos_yaml`` (primary) or optional ``fluid.gem_deck``.
+Not FIM, not DigitalTwin, not the product CLI. Fluids/K are EXAMPLE,
+not Jiyang GEM.
 
     python -m reservoir_backend.comp.case_run
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle.yaml --fields results/fields.csv
@@ -24,11 +26,40 @@ from reservoir_backend.comp.cycle import SECONDS_PER_DAY, run_hz_1inj4prod_cycle
 from reservoir_backend.comp.step import CompFields, accumulate_system
 from reservoir_backend.comp.streak import example_two_region_k
 from reservoir_backend.comp.well import example_co2_rich_stream, example_hz_1inj4prod_layout, example_hz_1inj4prod_wells
+from reservoir_backend.eos.gem_card import load_eos_mixture_gem, resolve_gem_deck
 from reservoir_backend.eos.load import load_eos_mixture_yaml, resolve_fluid_yaml
 from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
 
 DEFAULT_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle.yaml"
+
+
+def load_case_mixture(fcfg: dict[str, Any]) -> EosMixture:
+    """Load EXAMPLE fluids from ``eos_yaml`` (primary) or optional ``gem_deck``.
+
+    The two keys are mutually exclusive. GEM text cards map to the same
+    YAML deck schema; neither path invents Tc/Pc/ω.
+    """
+    yaml_path = fcfg.get("eos_yaml")
+    gem_path = fcfg.get("gem_deck")
+    if yaml_path and gem_path:
+        raise ValueError(
+            "case fluid.eos_yaml and fluid.gem_deck are mutually exclusive; "
+            "pick one (YAML is the primary path)"
+        )
+    if not fcfg.get("components"):
+        raise ValueError("case fluid.components is required")
+    names = list(fcfg["components"])
+    if gem_path:
+        mix = load_eos_mixture_gem(resolve_gem_deck(gem_path))
+    elif yaml_path:
+        mix = load_eos_mixture_yaml(resolve_fluid_yaml(yaml_path))
+    else:
+        raise ValueError(
+            "case fluid.eos_yaml or fluid.gem_deck is required; "
+            "refusing to invent GEM/Jiyang criticals"
+        )
+    return mix.subset(names)
 
 
 def load_case_yaml(path: str | Path) -> dict[str, Any]:
@@ -174,11 +205,7 @@ def run_example_case(
         k_matrix=float(rcfg["k_matrix_m2"]),
         k_streak=float(rcfg["k_streak_m2"]),
     )
-    if not fcfg.get("eos_yaml"):
-        raise ValueError(
-            "case fluid.eos_yaml is required; refusing to invent GEM/Jiyang criticals"
-        )
-    mix = load_eos_mixture_yaml(resolve_fluid_yaml(fcfg["eos_yaml"])).subset(list(fcfg["components"]))
+    mix = load_case_mixture(fcfg)
     p = np.full(grid.n_cells, float(wcfg["p_init_pa"]))
     z = np.tile(np.asarray(fcfg["z"], dtype=float), (grid.n_cells, 1))
     vp = float(rcfg["porosity"]) * grid.cell_volumes()
