@@ -9,6 +9,7 @@ not Jiyang GEM.
     python -m reservoir_backend.comp.case_run
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle.yaml --fields results/fields.csv
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle_gem.yaml --fields results/fields.csv
+    python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_30day.yaml --fields results/fields.csv
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import numpy as np
 import yaml
 
 from reservoir_backend.comp.cycle import SECONDS_PER_DAY, run_hz_1inj4prod_cycles
-from reservoir_backend.comp.step import CompFields, accumulate_system
+from reservoir_backend.comp.step import DT_MIN, CompFields, accumulate_system
 from reservoir_backend.comp.streak import example_two_region_k
 from reservoir_backend.comp.well import example_co2_rich_stream, example_hz_1inj4prod_layout, example_hz_1inj4prod_wells
 from reservoir_backend.eos.gem_card import load_eos_mixture_gem, resolve_gem_deck
@@ -34,6 +35,16 @@ from reservoir_backend.grid.cartesian import CartesianGrid
 
 DEFAULT_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle.yaml"
 GEM_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle_gem.yaml"
+CASE_30DAY = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_30day.yaml"
+
+
+def produce_days_from_schedule(scfg: dict[str, Any]) -> float:
+    """``produce_days`` or ``produce_seconds`` (existing short-cycle YAML)."""
+    if scfg.get("produce_days") is not None:
+        return float(scfg["produce_days"])
+    if scfg.get("produce_seconds") is not None:
+        return float(scfg["produce_seconds"]) / SECONDS_PER_DAY
+    raise ValueError("schedule.produce_days or schedule.produce_seconds is required")
 
 
 def load_case_mixture(fcfg: dict[str, Any]) -> EosMixture:
@@ -104,6 +115,7 @@ def metrics_from_multi(name: str, marker: str, multi) -> dict[str, Any]:
         "accepted_steps": int(sum(c["accepted_steps"] for c in cycles)),
         "underflow": bool(multi.underflow),
         "min_dt_s": float(min(all_dts)) if all_dts else None,
+        "dt_below_dt_min": bool(all_dts and min(all_dts) < DT_MIN),
         "cycles": cycles,
         "note": "EXAMPLE fluids/K, not a Jiyang GEM card",
     }
@@ -121,6 +133,7 @@ def format_metrics(metrics: dict[str, Any]) -> str:
         lines.append(f"cycle {i} produce ||R|| {rp0:.6e} -> {rp1:.6e}")
     lines.append(f"accepted nsteps {metrics['accepted_steps']}")
     lines.append(f"underflow {metrics['underflow']}")
+    lines.append(f"dt < DT_MIN {'yes' if metrics.get('dt_below_dt_min') else 'no'}")
     if metrics.get("fields_csv"):
         lines.append(f"fields csv {metrics['fields_csv']}")
     return "\n".join(lines)
@@ -222,7 +235,7 @@ def run_example_case(
         produce_bhp=float(wcfg["produce_bhp_pa"]),
         z_stream=example_co2_rich_stream(mix),
     )
-    produce_days = float(scfg["produce_seconds"]) / SECONDS_PER_DAY
+    produce_days = produce_days_from_schedule(scfg)
     fields, multi = run_hz_1inj4prod_cycles(
         fields,
         float(fcfg["T"]),

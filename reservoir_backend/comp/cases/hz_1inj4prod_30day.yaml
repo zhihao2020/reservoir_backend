@@ -1,0 +1,54 @@
+# EXAMPLE 1 HZ injector + 4 HZ producers, two-region K, one 30-day month.
+# Fluids and permeabilities are EXAMPLE only — not a Jiyang GEM / field card.
+# Standalone comp kernel. Not wired into FIM, DigitalTwin, or the product CLI.
+# Same tiny 3×5 mesh and EXAMPLE eos_yaml as hz_1inj4prod_two_cycle.yaml (no new Tc/Pc).
+#
+# Monthly stepping: dt_init = dt_max = 30 days (one calendar month).
+# Each period takes one accepted Newton step (dt clips to the period length).
+# inject 10 d + soak 20 d + produce 20 s = 30 days.
+# Produce stays 20 s: longer specified-BHP produce chops on this Newton path
+# (same limit as the short HZ case). Opposite wells shut as before.
+
+name: hz_1inj4prod_30day
+marker: EXAMPLE
+pattern: hz_1inj4prod
+n_cycles: 1
+note: >
+  30-day EXAMPLE month, monthly dt = 30 days, one accepted step per period.
+  Opposite wells shut (inject: 4 producers off; soak: all off;
+  produce: injector off).
+
+grid:
+  size_m: [3.0, 5.0, 1.0]
+  spacing_m: 1.0
+  n_perf: 2
+  streak: injector
+
+fluid:
+  eos_yaml: example_c1_c7plus_co2.yaml
+  components: [C1, CO2]
+  z: [0.40, 0.60]
+  T: 250.0
+  note: EXAMPLE Peng-Robinson subset loaded from YAML, not a Jiyang PVT card
+
+rock:
+  porosity: 0.20
+  k_matrix_m2: 1.0e-18
+  k_streak_m2: 1.0e-12
+  note: EXAMPLE two-region contrast only, not a field measurement
+
+wells:
+  inject_rate_mol_s: 1.0e-4
+  p_init_pa: 5.0e6
+  produce_bhp_pa: 4999999.0
+
+schedule:
+  inject_days: 10.0
+  soak_days: 20.0
+  produce_seconds: 20.0
+  dt_init_days: 30.0
+  dt_max_days: 30.0
+  note: monthly dt 30 d; one Newton step per period; produce 20 s (Newton-safe)
+
+output:
+  fields_csv: results/hz_1inj4prod_30day_fields.csv
