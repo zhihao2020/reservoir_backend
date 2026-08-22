@@ -9,8 +9,9 @@ Well index (vertical well, isotropic Cartesian cell, skin ``s``):
 Injector: rate-controlled EXAMPLE stream. Producer: rate or BHP-style
 outflow ``q = ξ_mix WI λ_t max(p − p_bhp, 0)`` with produced composition
 equal to the well-cell molar phase mix. Patterns: 1+1, single-well HnP,
-HZ (same cells inject then produce), and an EXAMPLE 1-inject-4-produce
-five-spot (opposite wells shut). Not industrial-grade, not GEM.
+HZ (same cells inject then produce), an EXAMPLE 1-inject-4-produce
+five-spot (opposite wells shut), and an EXAMPLE 1 HZ injector +
+4 HZ producers (laterals, opposite wells shut). Not industrial-grade, not GEM.
 Do not import from ``solver/fi.py``.
 """
 
@@ -414,6 +415,106 @@ def example_five_spot_wells(
         for cell in prods
     )
     return (injector,), producers
+
+
+def example_hz_1inj4prod_layout(
+    grid: CartesianGrid | None = None,
+) -> tuple[CartesianGrid, tuple[int, ...], tuple[tuple[int, ...], ...], list[int]]:
+    """Tiny 5×2 2D EXAMPLE: 1 HZ injector + 4 HZ producers (laterals).
+
+    Default mesh is nx=2, ny=5 (two perfs per well). Injector is the
+    middle row; the other four rows are producer laterals. High-k streak
+    is the five laterals. Inspired by a 1-inj-4-prod well pattern;
+    EXAMPLE geometry only, not field-validated, not a Jiyang / GEM card.
+    Returns ``(grid, injector_cells, producer_laterals, streak_cells)``.
+    """
+    g = grid if grid is not None else CartesianGrid.uniform((2.0, 5.0, 1.0), 1.0)
+    if g.nx < 2 or g.ny < 5:
+        raise ValueError("HZ 1+4 EXAMPLE needs at least nx=2, ny=5 (2 perfs × 5 laterals)")
+    inj_j = 2 if g.ny == 5 else g.ny // 2
+    below = [j for j in range(g.ny) if j < inj_j]
+    above = [j for j in range(g.ny) if j > inj_j]
+    if len(below) >= 2 and len(above) >= 2:
+        prod_js = (below[0], below[-1], above[0], above[-1])
+    else:
+        prod_js = tuple(j for j in range(g.ny) if j != inj_j)[:4]
+    if len(prod_js) != 4 or inj_j in prod_js:
+        raise ValueError("HZ 1+4 EXAMPLE needs 4 producer laterals distinct from the injector")
+
+    def _row(j: int) -> tuple[int, ...]:
+        return tuple(g.index(i, j, 0) for i in range(g.nx))
+
+    inj_cells = _row(inj_j)
+    prod_laterals = tuple(_row(j) for j in prod_js)
+    streak = [*inj_cells, *[c for lat in prod_laterals for c in lat]]
+    return g, inj_cells, prod_laterals, streak
+
+
+def example_hz_1inj4prod_wells(
+    grid: CartesianGrid,
+    injector_cells: list[int] | tuple[int, ...],
+    producer_laterals: list[list[int] | tuple[int, ...]] | tuple[tuple[int, ...], ...],
+    permeability: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    *,
+    inject_rate: float,
+    produce_bhp: float,
+    z_stream: NDArray[np.float64] | None = None,
+    r_w: float | None = None,
+    skin: float = 0.0,
+) -> tuple[tuple[RateInjector, ...], tuple[RateProducer, ...]]:
+    """EXAMPLE 1 HZ injector + 4 HZ specified-BHP producers. Distinct laterals.
+
+    Each well has at least two perforations. Injector is rate-controlled
+    (CO2-rich stream by default; rate split across perfs). Each producer
+    connection shares the same Dirichlet ``p_wf``. Not field spacing, not GEM.
+    """
+    inj_perfs = tuple(int(c) for c in injector_cells)
+    laterals = tuple(tuple(int(c) for c in lat) for lat in producer_laterals)
+    if len(inj_perfs) < 2 or len(set(inj_perfs)) != len(inj_perfs):
+        raise ValueError("HZ injector needs at least two unique perforations")
+    if len(laterals) != 4:
+        raise ValueError("HZ 1+4 EXAMPLE needs exactly 4 producer laterals")
+    all_prod: list[int] = []
+    for lat in laterals:
+        if len(lat) < 2 or len(set(lat)) != len(lat):
+            raise ValueError("each HZ producer needs at least two unique perforations")
+        all_prod.extend(lat)
+    if set(inj_perfs) & set(all_prod):
+        raise ValueError("HZ injector laterals must be distinct from the 4 producers")
+    if float(inject_rate) < 0.0:
+        raise ValueError("injection rate must be non-negative (mol/s)")
+    if float(produce_bhp) <= 0.0:
+        raise ValueError("produce BHP must be positive (Pa)")
+    k = np.asarray(permeability, dtype=float).ravel()
+    z = example_co2_rich_stream(mixture) if z_stream is None else z_stream
+    n_inj = len(inj_perfs)
+    injectors = tuple(
+        example_rate_injector(
+            grid,
+            cell,
+            float(k[int(cell)]) if k.size > 1 else float(k[0]),
+            mixture,
+            rate=float(inject_rate) / n_inj,
+            z_stream=z,
+            r_w=r_w,
+            skin=skin,
+        )
+        for cell in inj_perfs
+    )
+    producers = tuple(
+        example_producer(
+            grid,
+            cell,
+            float(k[int(cell)]) if k.size > 1 else float(k[0]),
+            mixture,
+            bhp=float(produce_bhp),
+            r_w=r_w,
+            skin=skin,
+        )
+        for cell in all_prod
+    )
+    return injectors, producers
 
 
 def example_huff_n_puff_well(

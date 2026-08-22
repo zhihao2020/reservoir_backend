@@ -89,6 +89,15 @@ FIVE_SPOT_CONTROL = (
     "EXAMPLE layout, not industrial well spacing, not a Jiyang card."
 )
 
+HZ_1INJ4PROD_CONTROL = (
+    "1 horizontal injector + 4 horizontal producers on one residual "
+    "(n_i, p; injector p_wf on rate inject only). Each well is a lateral "
+    "(multiple perfs along a line). Inject: specified-rate injector on, "
+    "4 producers shut. Soak: all shut. Produce: 4 specified-BHP producers "
+    "on, injector shut. EXAMPLE well pattern inspired by 1-inj-4-prod, "
+    "not field-validated, not a Jiyang / GEM card."
+)
+
 Q_REF = 1.0e-8  # mol/s, floors the well-residual scale
 
 
