@@ -50,6 +50,7 @@ from reservoir_backend.comp.implicit_p import (
 # Combined (n, p, p_wf) system is stiffer than lagged-p (n, p); 1e-6 is
 # still decades below the O(1) well residual at a cell-pressure first guess.
 NEWTON_TOL = 1.0e-6
+MAX_CHOPS_PER_PERIOD = 16
 from reservoir_backend.comp.step import DT_MIN, CompFields, WellLedger, _fields_from_moles
 from reservoir_backend.comp.well import RateInjector, RateProducer, well_cell_molar_z
 from reservoir_backend.eos.peng_robinson import EosMixture
@@ -542,7 +543,12 @@ def run_implicit_period_bhp(
         n_newton += report.n_newton
         if not report.newton_converged:
             n_chop += 1
-            dt = float(chop) * dt
+            next_dt = float(chop) * dt
+            if n_chop >= MAX_CHOPS_PER_PERIOD or next_dt < DT_MIN:
+                underflow = True
+                ledger.underflow = True
+                break
+            dt = next_dt
             continue
         current = report.fields
         if report.pressure is not None:

@@ -92,6 +92,10 @@ class CycleLedger:
     n_newton: int = 0
     n_chop: int = 0
     residual_hists: list[list[float]] | None = None
+    inject_n_accepted: int = 0
+    produce_n_accepted: int = 0
+    inject_residual_hists: list[list[float]] | None = None
+    produce_residual_hists: list[list[float]] | None = None
 
     @property
     def injected(self) -> NDArray[np.float64]:
@@ -875,8 +879,10 @@ def run_five_spot_huff_and_puff(
     Inject: specified-rate injector on, four producers shut.
     Soak: all shut.
     Produce: four specified-BHP producers on, injector shut.
-    One residual ``(n_i, p)``; injector ``p_wf`` is a Newton unknown only
-    while injecting. See ``reservoir_backend.comp.implicit_bhp.FIVE_SPOT_CONTROL``.
+    Produce BHP is 1 Pa below the post-soak producer-cell pressures
+    (one Dirichlet value for all four). One residual ``(n_i, p)``;
+    injector ``p_wf`` is a Newton unknown only while injecting.
+    See ``reservoir_backend.comp.implicit_bhp.FIVE_SPOT_CONTROL``.
     """
     inj = tuple(injectors)
     prod = tuple(producers)
@@ -918,9 +924,15 @@ def run_five_spot_huff_and_puff(
     )
     p = per_soak.pressure if per_soak.pressure is not None else p
     z_after_soak = injector_well_cell_z_co2(fields, mixture, inj[0].cell)
+    # Specified BHP is 1 Pa below the current producer-cell pressures.
+    # Keeping the initial-p BHP after rate inject draws ~300 Pa on the
+    # streak and asks for more moles than a cell holds (Newton hangs).
+    p_arr = np.asarray(p, dtype=float).ravel()
+    p_prod = [float(p_arr[int(w.cell)] if p_arr.size > 1 else p_arr[0]) for w in prod]
+    produce_wells = tuple(replace(w, bhp=min(p_prod) - 1.0) for w in prod)
     # Produce: injector shut.
     fields, per_prod = run_implicit_period_bhp(
-        fields, pressure=p, duration=float(produce_days) * SECONDS_PER_DAY, injectors=None, producers=prod, **common
+        fields, pressure=p, duration=float(produce_days) * SECONDS_PER_DAY, injectors=None, producers=produce_wells, **common
     )
     underflow = per_inj.underflow or per_soak.underflow or per_prod.underflow
     return fields, CycleLedger(
@@ -938,4 +950,8 @@ def run_five_spot_huff_and_puff(
         n_newton=per_inj.n_newton + per_soak.n_newton + per_prod.n_newton,
         n_chop=per_inj.n_chop + per_soak.n_chop + per_prod.n_chop,
         residual_hists=per_inj.residual_hists + per_soak.residual_hists + per_prod.residual_hists,
+        inject_n_accepted=per_inj.n_accepted,
+        produce_n_accepted=per_prod.n_accepted,
+        inject_residual_hists=list(per_inj.residual_hists),
+        produce_residual_hists=list(per_prod.residual_hists),
     )

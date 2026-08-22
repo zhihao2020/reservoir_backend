@@ -108,3 +108,12 @@ def test_five_spot_cycle_opposite_wells_shut() -> None:
         rtol=1e-6,
         atol=1e-4,
     )
+    assert cycle.inject_n_accepted >= 1
+    assert cycle.produce_n_accepted >= 1
+    assert cycle.inject_residual_hists and cycle.produce_residual_hists
+    r_inj0 = cycle.inject_residual_hists[0][0]
+    r_inj1 = cycle.inject_residual_hists[0][-1]
+    r_prod0 = cycle.produce_residual_hists[0][0]
+    r_prod1 = cycle.produce_residual_hists[0][-1]
+    assert r_inj1 < r_inj0 / 100.0
+    assert r_prod1 < r_prod0 / 100.0
