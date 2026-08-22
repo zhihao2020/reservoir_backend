@@ -9,6 +9,19 @@ EXAMPLE fluids only. Not field-validated.
 """
 
 from reservoir_backend.comp.accumulation import CellFlash, component_moles, flash_cell
+from reservoir_backend.comp.aqueous import (
+    EXAMPLE_AQUEOUS_ASSUMPTIONS,
+    EXAMPLE_AQUEOUS_MARKER,
+    EXAMPLE_WATER_XI_MOL_M3,
+    ThreePhaseState,
+    accumulate_three_phase,
+    explicit_step_three_phase,
+    hydrocarbon_moles_with_water,
+    three_phase_saturations,
+    water_molar_density,
+    water_molar_flux,
+    water_moles,
+)
 from reservoir_backend.comp.flux import InteriorFace, interior_faces, phase_molar_flux
 from reservoir_backend.comp.cycle import (
     CycleLedger,
@@ -72,6 +85,10 @@ from reservoir_backend.comp.well import (
 __all__ = [
     "CellFlash",
     "CompFields",
+    "EXAMPLE_AQUEOUS_ASSUMPTIONS",
+    "EXAMPLE_AQUEOUS_MARKER",
+    "EXAMPLE_WATER_XI_MOL_M3",
+    "ThreePhaseState",
     "CycleLedger",
     "CycleRecord",
     "ImplicitPeriodLedger",
@@ -91,6 +108,13 @@ __all__ = [
     "WELL_RATE_CONSTRAINT",
     "WellLedger",
     "accumulate_system",
+    "accumulate_three_phase",
+    "explicit_step_three_phase",
+    "hydrocarbon_moles_with_water",
+    "three_phase_saturations",
+    "water_molar_density",
+    "water_molar_flux",
+    "water_moles",
     "added_moles_per_pv",
     "moles_per_pv",
     "component_moles",

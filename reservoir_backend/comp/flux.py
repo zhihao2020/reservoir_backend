@@ -99,8 +99,13 @@ def phase_molar_flux(
     gravity: float = 0.0,
     mu_liquid: float = EXAMPLE_MU_LIQUID,
     mu_vapor: float = EXAMPLE_MU_VAPOR,
+    s_water: NDArray[np.float64] | None = None,
 ) -> NDArray[np.float64]:
-    """Component molar rate L→R on each face, shape ``(n_faces, n_comp)``, mol/s."""
+    """Component molar rate L→R on each face, shape ``(n_faces, n_comp)``, mol/s.
+
+    Optional ``s_water`` scales HC saturations: ``S_o = S_L (1−S_w)``
+    (immiscible three-phase mobility split). ``None`` is two-phase (S_w=0).
+    """
     p = np.asarray(pressure, dtype=float).ravel()
     zc = np.asarray(z_center, dtype=float).ravel()
     if not cells:
@@ -110,6 +115,7 @@ def phase_molar_flux(
     g = float(gravity)
     mu_l = max(float(mu_liquid), 1.0e-30)
     mu_v = max(float(mu_vapor), 1.0e-30)
+    sw = None if s_water is None else np.asarray(s_water, dtype=float).ravel()
     for f_idx, face in enumerate(faces):
         left, right = face.left, face.right
         cell_l, cell_r = cells[left], cells[right]
@@ -123,6 +129,9 @@ def phase_molar_flux(
             rho = 0.5 * (float(rho_l) + float(rho_r))
             dphi = dp + rho * g * dz
             xi, sat, w = _upwind(cell_l, cell_r, dphi, phase)
+            if sw is not None:
+                sw_up = float(sw[left] if dphi >= 0.0 else sw[right])
+                sat = sat * (1.0 - sw_up)
             lam = max(sat, 0.0) / mu
             q += face.transmissibility * xi * lam * dphi * w
         flux[f_idx] = q
