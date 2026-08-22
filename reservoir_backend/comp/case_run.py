@@ -10,6 +10,7 @@ not Jiyang GEM.
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle.yaml --fields results/fields.csv
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle_gem.yaml --fields results/fields.csv
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_30day.yaml --fields results/fields.csv
+    python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_three_phase.yaml --fields results/fields.csv
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from typing import Any, TextIO
 import numpy as np
 import yaml
 
+from reservoir_backend.comp.aqueous import accumulate_three_phase, run_hz_1inj4prod_three_phase
 from reservoir_backend.comp.cycle import SECONDS_PER_DAY, run_hz_1inj4prod_cycles
 from reservoir_backend.comp.step import DT_MIN, CompFields, accumulate_system
 from reservoir_backend.comp.streak import example_two_region_k
@@ -36,6 +38,7 @@ from reservoir_backend.grid.cartesian import CartesianGrid
 DEFAULT_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle.yaml"
 GEM_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle_gem.yaml"
 CASE_30DAY = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_30day.yaml"
+CASE_THREE_PHASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_three_phase.yaml"
 
 
 def produce_days_from_schedule(scfg: dict[str, Any]) -> float:
@@ -139,7 +142,7 @@ def format_metrics(metrics: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-FIELD_CSV_COLUMNS = ("cell", "i", "j", "k", "p", "z_CO2")
+FIELD_CSV_COLUMNS = ("cell", "i", "j", "k", "p", "z_CO2", "Sw", "So", "Sg")
 
 
 def resolve_fields_csv_path(
@@ -161,13 +164,42 @@ def resolve_fields_csv_path(
     return Path("results") / f"{case_name}_fields.csv"
 
 
+def _sats_for_csv(
+    grid: CartesianGrid,
+    fields: CompFields,
+    s_water: np.ndarray | None,
+    s_oil: np.ndarray | None,
+    s_gas: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    n = grid.n_cells
+    if s_water is not None:
+        sw = np.asarray(s_water, dtype=float).ravel()
+        so = np.zeros(n, dtype=float) if s_oil is None else np.asarray(s_oil, dtype=float).ravel()
+        sg = np.zeros(n, dtype=float) if s_gas is None else np.asarray(s_gas, dtype=float).ravel()
+        if sw.size != n or so.size != n or sg.size != n:
+            raise ValueError("saturation arrays must match n_cells")
+        return sw, so, sg
+    sw = np.zeros(n, dtype=float)
+    so = np.zeros(n, dtype=float)
+    sg = np.zeros(n, dtype=float)
+    if fields.cells and len(fields.cells) == n:
+        for c, cell in enumerate(fields.cells):
+            so[c] = float(cell.S_liquid)
+            sg[c] = float(cell.S_vapor)
+    return sw, so, sg
+
+
 def write_fields_csv(
     path: str | Path,
     grid: CartesianGrid,
     fields: CompFields,
     mixture: EosMixture,
+    *,
+    s_water: np.ndarray | None = None,
+    s_oil: np.ndarray | None = None,
+    s_gas: np.ndarray | None = None,
 ) -> Path:
-    """Write one row per cell: cell, i, j, k, p [Pa], z_CO2. EXAMPLE fields only."""
+    """Write one row per cell: cell, i, j, k, p, z_CO2, Sw, So, Sg."""
     if "CO2" not in mixture.names:
         raise ValueError("EXAMPLE field CSV needs CO2 in the mixture")
     z = np.asarray(fields.z, dtype=float)
@@ -178,6 +210,7 @@ def write_fields_csv(
     p = np.asarray(fields.p, dtype=float).ravel()
     if p.size != grid.n_cells:
         raise ValueError("fields.p must match n_cells")
+    sw, so, sg = _sats_for_csv(grid, fields, s_water, s_oil, s_gas)
     i_co2 = list(mixture.names).index("CO2")
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +220,17 @@ def write_fields_csv(
         for cell in range(grid.n_cells):
             i, j, k = grid.ijk(cell)
             writer.writerow(
-                [cell, i, j, k, float(p[cell]), float(z[cell, i_co2])]
+                [
+                    cell,
+                    i,
+                    j,
+                    k,
+                    float(p[cell]),
+                    float(z[cell, i_co2]),
+                    float(sw[cell]),
+                    float(so[cell]),
+                    float(sg[cell]),
+                ]
             )
     return out
 
@@ -224,7 +267,6 @@ def run_example_case(
     p = np.full(grid.n_cells, float(wcfg["p_init_pa"]))
     z = np.tile(np.asarray(fcfg["z"], dtype=float), (grid.n_cells, 1))
     vp = float(rcfg["porosity"]) * grid.cell_volumes()
-    fields = accumulate_system(z, float(fcfg["T"]), p, mix, vp)
     inj, prod = example_hz_1inj4prod_wells(
         grid,
         inj_cells,
@@ -236,23 +278,28 @@ def run_example_case(
         z_stream=example_co2_rich_stream(mix),
     )
     produce_days = produce_days_from_schedule(scfg)
-    fields, multi = run_hz_1inj4prod_cycles(
-        fields,
-        float(fcfg["T"]),
-        p,
-        mix,
-        grid,
-        k,
-        inj,
-        prod,
-        vp,
-        n_cycles=int(cfg["n_cycles"]),
+    cycle_kw = dict(
         inject_days=float(scfg["inject_days"]),
         soak_days=float(scfg["soak_days"]),
         produce_days=produce_days,
         dt_init_days=float(scfg["dt_init_days"]),
         dt_max_days=float(scfg["dt_max_days"]),
+        n_cycles=int(cfg["n_cycles"]),
     )
+    sat_kw: dict[str, Any] = {}
+    if fcfg.get("s_water") is not None or cfg.get("aqueous"):
+        sw = 0.25 if fcfg.get("s_water") is None else float(fcfg["s_water"])
+        state = accumulate_three_phase(z, float(fcfg["T"]), p, mix, vp, sw)
+        state, multi = run_hz_1inj4prod_three_phase(
+            state, float(fcfg["T"]), p, mix, grid, k, inj, prod, vp, **cycle_kw
+        )
+        fields = state.hc
+        sat_kw = {"s_water": state.s_water, "s_oil": state.s_oil, "s_gas": state.s_gas}
+    else:
+        fields = accumulate_system(z, float(fcfg["T"]), p, mix, vp)
+        fields, multi = run_hz_1inj4prod_cycles(
+            fields, float(fcfg["T"]), p, mix, grid, k, inj, prod, vp, **cycle_kw
+        )
     if fields.p is None:
         fields.p = np.asarray(p, dtype=float).ravel()
     metrics = metrics_from_multi(str(cfg["name"]), str(cfg["marker"]), multi)
@@ -262,7 +309,7 @@ def run_example_case(
         json_path=json_path,
         case_name=str(cfg["name"]),
     )
-    write_fields_csv(csv_path, grid, fields, mix)
+    write_fields_csv(csv_path, grid, fields, mix, **sat_kw)
     metrics["fields_csv"] = str(csv_path)
     return metrics
 
@@ -280,7 +327,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> dict[st
         "--fields",
         dest="fields_csv",
         default=None,
-        help="optional per-cell p, z_CO2 CSV (default: results/<name>_fields.csv)",
+        help="optional per-cell p, z_CO2, Sw CSV (default: results/<name>_fields.csv)",
     )
     args = parser.parse_args(argv)
     metrics = run_example_case(args.case, fields_csv=args.fields_csv, json_path=args.json_path)

@@ -1,0 +1,53 @@
+# EXAMPLE 1 HZ injector + 4 HZ producers, two-region K, one short
+# huff-n-puff cycle with EXAMPLE immiscible aqueous Sw.
+# Same tiny 3×5 mesh, eos_yaml, and short schedule as
+# hz_1inj4prod_two_cycle.yaml (no new Tc/Pc).
+# Conservation is lagged-p Newton on (n_i, n_w). Water is not
+# injected or produced; hydrocarbon wells are unchanged.
+# Standalone comp kernel. Not wired into FIM, DigitalTwin, or the product CLI.
+# Fluids and permeabilities are EXAMPLE only — not a Jiyang GEM / field card.
+
+name: hz_1inj4prod_three_phase
+marker: EXAMPLE
+pattern: hz_1inj4prod
+n_cycles: 1
+aqueous: true
+note: >
+  Same short HZ 1+4 cycle with EXAMPLE aqueous Sw. Opposite wells shut
+  (inject: 4 producers off; soak: all off; produce: injector off).
+  Lagged-p Newton on (n_i, n_w). Water is not injected or produced.
+
+grid:
+  size_m: [3.0, 5.0, 1.0]
+  spacing_m: 1.0
+  n_perf: 2
+  streak: injector
+
+fluid:
+  eos_yaml: example_c1_c7plus_co2.yaml
+  components: [C1, CO2]
+  z: [0.40, 0.60]
+  T: 250.0
+  s_water: 0.25
+  note: EXAMPLE Peng-Robinson subset loaded from YAML, not a Jiyang PVT card
+
+rock:
+  porosity: 0.20
+  k_matrix_m2: 1.0e-18
+  k_streak_m2: 1.0e-12
+  note: EXAMPLE two-region contrast only, not a field measurement
+
+wells:
+  inject_rate_mol_s: 1.0e-4
+  p_init_pa: 5.0e6
+  produce_bhp_pa: 4999999.0
+
+schedule:
+  inject_days: 0.125
+  soak_days: 0.125
+  produce_seconds: 20.0
+  dt_init_days: 0.125
+  dt_max_days: 0.125
+
+output:
+  fields_csv: results/hz_1inj4prod_three_phase_fields.csv

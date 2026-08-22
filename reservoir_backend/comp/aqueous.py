@@ -55,8 +55,28 @@ from reservoir_backend.comp.flux import (
     interior_faces,
     phase_molar_flux,
 )
-from reservoir_backend.comp.implicit import NEWTON_MAX, NEWTON_TOL
-from reservoir_backend.comp.step import CompFields, _apply_divergence, _fields_from_moles
+from reservoir_backend.comp.cycle import (
+    HZ_1INJ4PROD_INJECT_DAYS,
+    HZ_1INJ4PROD_PRODUCE_DAYS,
+    HZ_1INJ4PROD_SOAK_DAYS,
+    HZ_1INJ4PROD_WELLHEAD_Z_DEFINITION,
+    SECONDS_PER_DAY,
+    CycleLedger,
+    CycleRecord,
+    MultiCycleLedger,
+    perforated_z_co2,
+    produced_stream_z_co2,
+)
+from reservoir_backend.comp.implicit import DT_CHOP, DT_GROW, NEWTON_MAX, NEWTON_TOL
+from reservoir_backend.comp.step import (
+    CompFields,
+    WellLedger,
+    _apply_divergence,
+    _apply_injectors,
+    _apply_producers,
+    _fields_from_moles,
+)
+from reservoir_backend.comp.well import RateInjector, RateProducer
 from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
 
@@ -265,6 +285,8 @@ class ThreePhaseNewtonReport:
     n_newton: int
     residual_hist: list[float]
     n_unknowns: int
+    injected: NDArray[np.float64] | None = None
+    produced: NDArray[np.float64] | None = None
 
 
 def _state_from_moles(
@@ -322,8 +344,10 @@ def _rhs_three_phase(
     mu_liquid: float,
     mu_vapor: float,
     mu_water: float,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], ThreePhaseState]:
-    """Implicit Euler hats: n_old − dt Div(flux) for HC and water."""
+    injectors,
+    producers,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], ThreePhaseState, NDArray[np.float64], NDArray[np.float64]]:
+    """Implicit Euler hats: n_old − dt Div(flux) + inject − produce (HC); water flux only."""
     state = _state_from_moles(n_hc, n_water, T, p, mixture, pore_volume)
     hc_flux = phase_molar_flux(
         faces,
@@ -340,7 +364,21 @@ def _rhs_three_phase(
     )
     n_hc_hat = _apply_divergence(n_hc_old, hc_flux, faces, dt)
     n_w_hat = _apply_divergence(n_w_old.reshape(-1, 1), w_flux.reshape(-1, 1), faces, dt).ravel()
-    return n_hc_hat, n_w_hat, state
+    injected = np.zeros(n_hc_old.shape[1], dtype=float)
+    produced = np.zeros(n_hc_old.shape[1], dtype=float)
+    if injectors:
+        n_hc_hat, injected = _apply_injectors(n_hc_hat, injectors, dt)
+    if producers:
+        n_hc_hat, produced = _apply_producers(
+            n_hc_hat,
+            state.hc.cells,
+            producers,
+            p,
+            dt,
+            mu_liquid=mu_liquid,
+            mu_vapor=mu_vapor,
+        )
+    return n_hc_hat, n_w_hat, state, injected, produced
 
 
 def _residual_nw(
@@ -376,13 +414,15 @@ def implicit_newton_step_three_phase(
     mu_liquid: float = EXAMPLE_MU_LIQUID,
     mu_vapor: float = EXAMPLE_MU_VAPOR,
     mu_water: float = EXAMPLE_WATER_MU_PA_S,
+    injectors: tuple[RateInjector, ...] | list[RateInjector] | None = None,
+    producers: tuple[RateProducer, ...] | list[RateProducer] | None = None,
     tol: float = NEWTON_TOL,
     max_iter: int = NEWTON_MAX,
 ) -> ThreePhaseNewtonReport:
     """One implicit Euler Newton step. Unknowns are ``(n_i, n_w)`` per cell.
 
     ``p`` is lagged. Water accumulation is in the residual, not a
-    post-process. Closed domain (no wells). EXAMPLE aqueous only.
+    post-process. Wells (if any) add/remove HC moles only. EXAMPLE aqueous.
     """
     if dt < 0.0:
         raise ValueError("dt must be non-negative (s)")
@@ -395,19 +435,26 @@ def implicit_newton_step_three_phase(
     vp = np.asarray(pore_volume, dtype=float).ravel()
     faces = interior_faces(grid, permeability)
     z_center = grid.cell_centers()[:, 2]
-    kw = dict(gravity=gravity, mu_liquid=mu_liquid, mu_vapor=mu_vapor, mu_water=mu_water)
+    kw = dict(
+        gravity=gravity,
+        mu_liquid=mu_liquid,
+        mu_vapor=mu_vapor,
+        mu_water=mu_water,
+        injectors=injectors,
+        producers=producers,
+    )
     n_hc_ref = max(1.0, float(np.mean(np.abs(n_hc_old))))
     n_w_ref = max(1.0, float(np.mean(np.abs(n_w_old))))
     n_hc = n_hc_old.copy()
     n_w = n_w_old.copy()
-    n_hc_hat, n_w_hat, trial = _rhs_three_phase(
+    n_hc_hat, n_w_hat, trial, injected, produced = _rhs_three_phase(
         n_hc, n_w, n_hc_old, n_w_old, T, p, mixture, faces, z_center, dt, vp, **kw
     )
     R = _residual_nw(n_hc, n_w, n_hc_hat, n_w_hat, n_hc_ref, n_w_ref)
     hist = [float(np.max(np.abs(R)))]
     n_unknowns = n_cells * (n_comp + 1)
     if dt == 0.0 or hist[0] < tol:
-        return ThreePhaseNewtonReport(trial, True, 0, hist, n_unknowns)
+        return ThreePhaseNewtonReport(trial, True, 0, hist, n_unknowns, injected, produced)
 
     u = _pack_nw(n_hc, n_w)
     n_newton = 0
@@ -419,20 +466,20 @@ def implicit_newton_step_three_phase(
             u_p = u.copy()
             u_p[j] += eps
             n_p, w_p = _unpack_nw(u_p, n_cells, n_comp)
-            hat_n, hat_w, _ = _rhs_three_phase(
+            hat_n, hat_w, _, _, _ = _rhs_three_phase(
                 n_p, w_p, n_hc_old, n_w_old, T, p, mixture, faces, z_center, dt, vp, **kw
             )
             J[:, j] = (_residual_nw(n_p, w_p, hat_n, hat_w, n_hc_ref, n_w_ref) - R) / eps
         try:
             du = np.linalg.solve(J + 1.0e-12 * np.eye(n_unknowns), -R)
         except np.linalg.LinAlgError:
-            return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns)
+            return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns, injected, produced)
         alpha = 1.0
         r0 = float(np.max(np.abs(R)))
         accepted = False
         for _ in range(8):
             n_try, w_try = _unpack_nw(u + alpha * du, n_cells, n_comp)
-            n_hc_hat, n_w_hat, trial = _rhs_three_phase(
+            n_hc_hat, n_w_hat, trial, injected, produced = _rhs_three_phase(
                 n_try, w_try, n_hc_old, n_w_old, T, p, mixture, faces, z_center, dt, vp, **kw
             )
             R_try = _residual_nw(n_try, w_try, n_hc_hat, n_w_hat, n_hc_ref, n_w_ref)
@@ -445,7 +492,156 @@ def implicit_newton_step_three_phase(
                 break
             alpha *= 0.5
         if not accepted:
-            return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns)
+            return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns, injected, produced)
         if float(np.max(np.abs(R))) < tol:
-            return ThreePhaseNewtonReport(trial, True, n_newton, hist, n_unknowns)
-    return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns)
+            return ThreePhaseNewtonReport(trial, True, n_newton, hist, n_unknowns, injected, produced)
+    return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns, injected, produced)
+
+
+def run_implicit_period_three_phase(
+    state: ThreePhaseState,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    pore_volume: NDArray[np.float64],
+    duration: float,
+    *,
+    dt_init: float,
+    dt_max: float,
+    gravity: float = 0.0,
+    injectors: tuple[RateInjector, ...] | list[RateInjector] | None = None,
+    producers: tuple[RateProducer, ...] | list[RateProducer] | None = None,
+    grow: float = DT_GROW,
+    chop: float = DT_CHOP,
+) -> tuple[ThreePhaseState, WellLedger, list[list[float]], int]:
+    """Advance ``duration`` with lagged-p three-phase Newton. Returns ledger, residual hists, n_accepted."""
+    n_comp = state.hc.n.shape[1]
+    ledger = WellLedger(injected=np.zeros(n_comp, dtype=float), produced=np.zeros(n_comp, dtype=float))
+    if float(duration) <= 0.0:
+        return state, ledger, [], 0
+    current = state
+    t = 0.0
+    dt = min(float(dt_init), float(duration), float(dt_max))
+    n_accepted = 0
+    residual_hists: list[list[float]] = []
+    p = np.asarray(pressure, dtype=float).ravel()
+    while t < float(duration) - 1.0e-12:
+        dt = min(dt, float(duration) - t, float(dt_max))
+        report = implicit_newton_step_three_phase(
+            current,
+            T,
+            p,
+            mixture,
+            grid,
+            permeability,
+            pore_volume,
+            dt,
+            gravity=gravity,
+            injectors=injectors,
+            producers=producers,
+        )
+        if not report.newton_converged:
+            dt = float(chop) * dt
+            if dt < 1.0e-18:
+                ledger.underflow = True
+                break
+            continue
+        current = report.state
+        t += float(dt)
+        inj = report.injected if report.injected is not None else np.zeros(n_comp, dtype=float)
+        prd = report.produced if report.produced is not None else np.zeros(n_comp, dtype=float)
+        ledger.injected += inj
+        ledger.produced += prd
+        ledger.dt_used.append(float(dt))
+        residual_hists.append(list(report.residual_hist))
+        n_accepted += 1
+        dt = min(float(grow) * dt, float(dt_max))
+    return current, ledger, residual_hists, n_accepted
+
+
+def run_hz_1inj4prod_three_phase(
+    state: ThreePhaseState,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injectors: tuple[RateInjector, ...] | list[RateInjector],
+    producers: tuple[RateProducer, ...] | list[RateProducer],
+    pore_volume: NDArray[np.float64] | float,
+    *,
+    n_cycles: int = 1,
+    inject_days: float = HZ_1INJ4PROD_INJECT_DAYS,
+    soak_days: float = HZ_1INJ4PROD_SOAK_DAYS,
+    produce_days: float = HZ_1INJ4PROD_PRODUCE_DAYS,
+    dt_init_days: float = 0.125,
+    dt_max_days: float = 0.125,
+    gravity: float = 0.0,
+) -> tuple[ThreePhaseState, MultiCycleLedger]:
+    """Short HZ 1+4 huff-n-puff with immiscible water in the Newton residual.
+
+    Opposite wells shut. Lagged ``p``. Same tiny mesh / schedule as the
+    two-phase EXAMPLE cycle. Water is not injected or produced (HC wells
+    only). Not FIM, not a GEM aqueous card.
+    """
+    if int(n_cycles) < 1:
+        raise ValueError("n_cycles must be >= 1")
+    inj = tuple(injectors)
+    prod = tuple(producers)
+    vp = np.asarray(pore_volume, dtype=float).ravel()
+    dt_init = float(dt_init_days) * SECONDS_PER_DAY
+    dt_max = float(dt_max_days) * SECONDS_PER_DAY
+    p = np.asarray(pressure, dtype=float).ravel()
+    records: list[CycleRecord] = []
+    underflow = False
+    current = state
+    common = dict(
+        T=T,
+        pressure=p,
+        mixture=mixture,
+        grid=grid,
+        permeability=permeability,
+        pore_volume=vp,
+        dt_init=dt_init,
+        dt_max=dt_max,
+        gravity=gravity,
+    )
+    for _ in range(int(n_cycles)):
+        n_start = current.hc.n.copy()
+        inj_cells = tuple(int(w.cell) for w in inj)
+        z0 = perforated_z_co2(current.hc, mixture, inj_cells)
+        current, led_inj, hist_inj, n_inj = run_implicit_period_three_phase(
+            current, duration=float(inject_days) * SECONDS_PER_DAY, injectors=inj, producers=None, **common
+        )
+        z_inj = perforated_z_co2(current.hc, mixture, inj_cells)
+        current, led_soak, hist_soak, n_soak = run_implicit_period_three_phase(
+            current, duration=float(soak_days) * SECONDS_PER_DAY, injectors=None, producers=None, **common
+        )
+        z_soak = perforated_z_co2(current.hc, mixture, inj_cells)
+        current, led_prod, hist_prod, n_prod = run_implicit_period_three_phase(
+            current, duration=float(produce_days) * SECONDS_PER_DAY, injectors=None, producers=prod, **common
+        )
+        uf = led_inj.underflow or led_soak.underflow or led_prod.underflow
+        underflow = underflow or uf
+        ledger = CycleLedger(
+            inject=led_inj,
+            soak=led_soak,
+            produce=led_prod,
+            underflow=uf,
+            z_co2_well_cell_initial=z0,
+            z_co2_well_cell_after_inject=z_inj,
+            z_co2_well_cell_after_soak=z_soak,
+            z_co2_well_cell_after_produce=perforated_z_co2(current.hc, mixture, inj_cells),
+            z_co2_produced_stream=produced_stream_z_co2(led_prod, mixture),
+            wellhead_z_definition=HZ_1INJ4PROD_WELLHEAD_Z_DEFINITION,
+            accepted_steps=n_inj + n_soak + n_prod,
+            residual_hists=hist_inj + hist_soak + hist_prod,
+            inject_n_accepted=n_inj,
+            produce_n_accepted=n_prod,
+            inject_residual_hists=list(hist_inj),
+            produce_residual_hists=list(hist_prod),
+        )
+        records.append(CycleRecord(ledger=ledger, n_start=n_start, n_end=current.hc.n.copy()))
+    return current, MultiCycleLedger(cycles=records, underflow=underflow)
