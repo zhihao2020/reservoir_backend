@@ -32,8 +32,10 @@ ASSUMPTIONS (EXAMPLE, not field-validated):
 - No capillary pressure; single pressure for o/g/w.
 - Linear relative permeability; no residual saturations.
 - Incompressible water (constant ξ_w, ρ_w).
-- Pressure remains prescribed on the explicit path (same as two-phase
-  ``explicit_step``). Volume constraint is not solved here.
+- Pressure is prescribed on this first Newton cut (lagged ``p``, same
+  as ``implicit_newton_step``). Volume constraint is not solved here.
+- Water moles ``n_w`` sit in the same implicit-Euler Newton residual as
+  ``n_i`` (not a post-process). ``S_w = n_w / (V_pore ξ_w)``.
 - Water properties are textbook 20 °C liquid water, labeled EXAMPLE.
   Not formation brine, not Jiyang / GEM aqueous.
 """
@@ -53,6 +55,7 @@ from reservoir_backend.comp.flux import (
     interior_faces,
     phase_molar_flux,
 )
+from reservoir_backend.comp.implicit import NEWTON_MAX, NEWTON_TOL
 from reservoir_backend.comp.step import CompFields, _apply_divergence, _fields_from_moles
 from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -69,7 +72,8 @@ EXAMPLE_AQUEOUS_MARKER = (
 )
 EXAMPLE_AQUEOUS_ASSUMPTIONS = (
     "immiscible water; So+Sg+Sw=1 with So,Sg from PR flash scaled by (1-Sw); "
-    "capillary-free TPFA mobility split; incompressible ξ_w; prescribed p"
+    "capillary-free TPFA mobility split; incompressible ξ_w; prescribed p; "
+    "n_w in the implicit-Euler Newton residual with n_i"
 )
 
 
@@ -250,3 +254,198 @@ def explicit_step_three_phase(
     sw = _sw_from_moles(n_w, vp)
     so, sg = _saturations_from_cells(hc.cells, sw)
     return ThreePhaseState(hc=hc, n_water=n_w, s_water=sw, s_oil=so, s_gas=sg)
+
+
+@dataclass
+class ThreePhaseNewtonReport:
+    """One implicit Euler Newton step on ``(n_i, n_w)``. Lagged ``p``."""
+
+    state: ThreePhaseState
+    newton_converged: bool
+    n_newton: int
+    residual_hist: list[float]
+    n_unknowns: int
+
+
+def _state_from_moles(
+    n_hc: NDArray[np.float64],
+    n_water: NDArray[np.float64],
+    T: float,
+    p: NDArray[np.float64],
+    mixture: EosMixture,
+    pore_volume: NDArray[np.float64],
+) -> ThreePhaseState:
+    hc = _fields_from_moles(n_hc, T, p, mixture)
+    hc.p = np.asarray(p, dtype=float).ravel().copy()
+    n_w = np.clip(np.asarray(n_water, dtype=float).ravel(), 0.0, None)
+    sw = _sw_from_moles(n_w, pore_volume)
+    so, sg = _saturations_from_cells(hc.cells, sw)
+    return ThreePhaseState(hc=hc, n_water=n_w, s_water=sw, s_oil=so, s_gas=sg)
+
+
+def _pack_nw(n_hc: NDArray[np.float64], n_water: NDArray[np.float64]) -> NDArray[np.float64]:
+    n_cells, n_comp = n_hc.shape
+    u = np.empty(n_cells * (n_comp + 1), dtype=float)
+    for c in range(n_cells):
+        i0 = c * (n_comp + 1)
+        u[i0 : i0 + n_comp] = n_hc[c]
+        u[i0 + n_comp] = float(n_water[c])
+    return u
+
+
+def _unpack_nw(
+    u: NDArray[np.float64], n_cells: int, n_comp: int
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    n_hc = np.zeros((n_cells, n_comp), dtype=float)
+    n_w = np.zeros(n_cells, dtype=float)
+    for c in range(n_cells):
+        i0 = c * (n_comp + 1)
+        n_hc[c] = np.clip(u[i0 : i0 + n_comp], 0.0, None)
+        n_w[c] = max(0.0, float(u[i0 + n_comp]))
+    return n_hc, n_w
+
+
+def _rhs_three_phase(
+    n_hc: NDArray[np.float64],
+    n_water: NDArray[np.float64],
+    n_hc_old: NDArray[np.float64],
+    n_w_old: NDArray[np.float64],
+    T: float,
+    p: NDArray[np.float64],
+    mixture: EosMixture,
+    faces,
+    z_center: NDArray[np.float64],
+    dt: float,
+    pore_volume: NDArray[np.float64],
+    *,
+    gravity: float,
+    mu_liquid: float,
+    mu_vapor: float,
+    mu_water: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], ThreePhaseState]:
+    """Implicit Euler hats: n_old − dt Div(flux) for HC and water."""
+    state = _state_from_moles(n_hc, n_water, T, p, mixture, pore_volume)
+    hc_flux = phase_molar_flux(
+        faces,
+        state.hc.cells,
+        p,
+        z_center,
+        gravity=gravity,
+        mu_liquid=mu_liquid,
+        mu_vapor=mu_vapor,
+        s_water=state.s_water,
+    )
+    w_flux = water_molar_flux(
+        faces, state.s_water, p, z_center, gravity=gravity, mu_water=mu_water
+    )
+    n_hc_hat = _apply_divergence(n_hc_old, hc_flux, faces, dt)
+    n_w_hat = _apply_divergence(n_w_old.reshape(-1, 1), w_flux.reshape(-1, 1), faces, dt).ravel()
+    return n_hc_hat, n_w_hat, state
+
+
+def _residual_nw(
+    n_hc: NDArray[np.float64],
+    n_water: NDArray[np.float64],
+    n_hc_hat: NDArray[np.float64],
+    n_w_hat: NDArray[np.float64],
+    n_hc_ref: float,
+    n_w_ref: float,
+) -> NDArray[np.float64]:
+    n_cells, n_comp = n_hc.shape
+    r = np.empty(n_cells * (n_comp + 1), dtype=float)
+    r_hc = (n_hc - n_hc_hat) / n_hc_ref
+    r_w = (n_water - n_w_hat) / n_w_ref
+    for c in range(n_cells):
+        i0 = c * (n_comp + 1)
+        r[i0 : i0 + n_comp] = r_hc[c]
+        r[i0 + n_comp] = r_w[c]
+    return r
+
+
+def implicit_newton_step_three_phase(
+    state: ThreePhaseState,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    pore_volume: NDArray[np.float64],
+    dt: float,
+    *,
+    gravity: float = 0.0,
+    mu_liquid: float = EXAMPLE_MU_LIQUID,
+    mu_vapor: float = EXAMPLE_MU_VAPOR,
+    mu_water: float = EXAMPLE_WATER_MU_PA_S,
+    tol: float = NEWTON_TOL,
+    max_iter: int = NEWTON_MAX,
+) -> ThreePhaseNewtonReport:
+    """One implicit Euler Newton step. Unknowns are ``(n_i, n_w)`` per cell.
+
+    ``p`` is lagged. Water accumulation is in the residual, not a
+    post-process. Closed domain (no wells). EXAMPLE aqueous only.
+    """
+    if dt < 0.0:
+        raise ValueError("dt must be non-negative (s)")
+    n_hc_old = np.asarray(state.hc.n, dtype=float)
+    n_w_old = np.asarray(state.n_water, dtype=float).ravel()
+    n_cells, n_comp = n_hc_old.shape
+    p = np.asarray(pressure, dtype=float).ravel()
+    if p.size == 1:
+        p = np.full(n_cells, float(p[0]), dtype=float)
+    vp = np.asarray(pore_volume, dtype=float).ravel()
+    faces = interior_faces(grid, permeability)
+    z_center = grid.cell_centers()[:, 2]
+    kw = dict(gravity=gravity, mu_liquid=mu_liquid, mu_vapor=mu_vapor, mu_water=mu_water)
+    n_hc_ref = max(1.0, float(np.mean(np.abs(n_hc_old))))
+    n_w_ref = max(1.0, float(np.mean(np.abs(n_w_old))))
+    n_hc = n_hc_old.copy()
+    n_w = n_w_old.copy()
+    n_hc_hat, n_w_hat, trial = _rhs_three_phase(
+        n_hc, n_w, n_hc_old, n_w_old, T, p, mixture, faces, z_center, dt, vp, **kw
+    )
+    R = _residual_nw(n_hc, n_w, n_hc_hat, n_w_hat, n_hc_ref, n_w_ref)
+    hist = [float(np.max(np.abs(R)))]
+    n_unknowns = n_cells * (n_comp + 1)
+    if dt == 0.0 or hist[0] < tol:
+        return ThreePhaseNewtonReport(trial, True, 0, hist, n_unknowns)
+
+    u = _pack_nw(n_hc, n_w)
+    n_newton = 0
+    for it in range(1, int(max_iter) + 1):
+        n_newton = it
+        J = np.zeros((n_unknowns, n_unknowns), dtype=float)
+        for j in range(n_unknowns):
+            eps = 1.0e-6 * max(1.0, abs(float(u[j])))
+            u_p = u.copy()
+            u_p[j] += eps
+            n_p, w_p = _unpack_nw(u_p, n_cells, n_comp)
+            hat_n, hat_w, _ = _rhs_three_phase(
+                n_p, w_p, n_hc_old, n_w_old, T, p, mixture, faces, z_center, dt, vp, **kw
+            )
+            J[:, j] = (_residual_nw(n_p, w_p, hat_n, hat_w, n_hc_ref, n_w_ref) - R) / eps
+        try:
+            du = np.linalg.solve(J + 1.0e-12 * np.eye(n_unknowns), -R)
+        except np.linalg.LinAlgError:
+            return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns)
+        alpha = 1.0
+        r0 = float(np.max(np.abs(R)))
+        accepted = False
+        for _ in range(8):
+            n_try, w_try = _unpack_nw(u + alpha * du, n_cells, n_comp)
+            n_hc_hat, n_w_hat, trial = _rhs_three_phase(
+                n_try, w_try, n_hc_old, n_w_old, T, p, mixture, faces, z_center, dt, vp, **kw
+            )
+            R_try = _residual_nw(n_try, w_try, n_hc_hat, n_w_hat, n_hc_ref, n_w_ref)
+            if float(np.max(np.abs(R_try))) <= r0 * (1.0 - 1.0e-4 * alpha) or alpha < 0.05:
+                u = _pack_nw(n_try, w_try)
+                n_hc, n_w = n_try, w_try
+                R = R_try
+                hist.append(float(np.max(np.abs(R))))
+                accepted = True
+                break
+            alpha *= 0.5
+        if not accepted:
+            return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns)
+        if float(np.max(np.abs(R))) < tol:
+            return ThreePhaseNewtonReport(trial, True, n_newton, hist, n_unknowns)
+    return ThreePhaseNewtonReport(trial, False, n_newton, hist, n_unknowns)

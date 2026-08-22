@@ -8,6 +8,7 @@ from reservoir_backend.comp import (
     accumulate_three_phase,
     explicit_step_three_phase,
     flash_cell,
+    implicit_newton_step_three_phase,
     three_phase_saturations,
     water_moles,
 )
@@ -25,6 +26,7 @@ def test_aqueous_marker_is_example_not_gem() -> None:
     assert "EXAMPLE" in EXAMPLE_AQUEOUS_MARKER
     assert "NOT a Jiyang GEM card" in EXAMPLE_AQUEOUS_MARKER
     assert "immiscible" in EXAMPLE_AQUEOUS_ASSUMPTIONS
+    assert "Newton" in EXAMPLE_AQUEOUS_ASSUMPTIONS
     assert "no Pc" in EXAMPLE_AQUEOUS_MARKER or "capillary-free" in EXAMPLE_AQUEOUS_ASSUMPTIONS
 
 
@@ -102,3 +104,45 @@ def test_three_phase_pressure_driven_water_and_hc_totals_hold() -> None:
     assert np.all(state.n_water >= -1e-14)
     assert np.all((state.s_water >= 0.0) & (state.s_water <= 1.0))
     assert np.allclose(state.s_oil + state.s_gas + state.s_water, 1.0, atol=1e-12)
+
+
+def test_three_phase_newton_equal_p_conserves_water_and_hc() -> None:
+    """Lagged-p Newton on (n_i, n_w): equal p holds totals; Sw exists; So+Sg+Sw=1."""
+    mix = _example_binary()
+    grid = CartesianGrid.uniform((2.0, 1.0, 1.0), 1.0)
+    z = np.array([[0.40, 0.60], [0.40, 0.60]])
+    p = np.array([5.0e6, 5.0e6])
+    vp = 0.2 * grid.cell_volumes()
+    state = accumulate_three_phase(z, 250.0, p, mix, vp, np.array([0.20, 0.20]))
+    n_hc0 = state.hc.n.copy()
+    n_w0 = state.n_water.copy()
+    report = implicit_newton_step_three_phase(state, 250.0, p, mix, grid, 1.0e-12, vp, dt=1.0)
+    assert report.newton_converged
+    assert report.n_unknowns == 2 * (mix.n_components + 1)
+    out = report.state
+    assert np.allclose(out.hc.n.sum(axis=0), n_hc0.sum(axis=0), atol=1e-9)
+    assert np.allclose(out.n_water.sum(), n_w0.sum(), atol=1e-9)
+    assert np.all((out.s_water >= 0.0) & (out.s_water <= 1.0))
+    assert np.allclose(out.s_oil + out.s_gas + out.s_water, 1.0, atol=1e-12)
+
+
+def test_three_phase_newton_pressure_driven_residual_drops() -> None:
+    """Water is in the Newton residual; ||R|| drops; mass and So+Sg+Sw=1 hold."""
+    mix = _example_binary()
+    grid = CartesianGrid.uniform((2.0, 1.0, 1.0), 1.0)
+    z = np.array([[0.70, 0.30], [0.25, 0.75]])
+    p = np.array([6.0e6, 4.0e6])
+    vp = 0.2 * grid.cell_volumes()
+    state = accumulate_three_phase(z, 250.0, p, mix, vp, np.array([0.40, 0.15]))
+    n_hc0 = state.hc.n.copy()
+    n_w0 = state.n_water.copy()
+    report = implicit_newton_step_three_phase(state, 250.0, p, mix, grid, 1.0e-12, vp, dt=0.05)
+    assert report.newton_converged
+    assert report.residual_hist[-1] < report.residual_hist[0]
+    out = report.state
+    assert out.n_water[0] < n_w0[0]
+    assert out.n_water[1] > n_w0[1]
+    assert np.allclose(out.hc.n.sum(axis=0), n_hc0.sum(axis=0), atol=1e-9)
+    assert np.allclose(out.n_water.sum(), n_w0.sum(), atol=1e-9)
+    assert np.all((out.s_water >= 0.0) & (out.s_water <= 1.0))
+    assert np.allclose(out.s_oil + out.s_gas + out.s_water, 1.0, atol=1e-12)
