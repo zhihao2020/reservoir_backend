@@ -2,7 +2,7 @@
 # huff-n-puff cycle with EXAMPLE immiscible aqueous Sw.
 # Same tiny 3×5 mesh, eos_yaml, and short schedule as
 # hz_1inj4prod_two_cycle.yaml (no new Tc/Pc).
-# Conservation is lagged-p Newton on (n_i, n_w). Water is not
+# Conservation is coupled Newton on (n_i, n_w, p). Water is not
 # injected or produced; hydrocarbon wells are unchanged.
 # Standalone comp kernel. Not wired into FIM, DigitalTwin, or the product CLI.
 # Fluids and permeabilities are EXAMPLE only — not a Jiyang GEM / field card.
@@ -15,7 +15,7 @@ aqueous: true
 note: >
   Same short HZ 1+4 cycle with EXAMPLE aqueous Sw. Opposite wells shut
   (inject: 4 producers off; soak: all off; produce: injector off).
-  Lagged-p Newton on (n_i, n_w). Water is not injected or produced.
+  Coupled Newton on (n_i, n_w, p). Water is not injected or produced.
 
 grid:
   size_m: [3.0, 5.0, 1.0]
