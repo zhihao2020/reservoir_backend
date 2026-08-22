@@ -33,6 +33,7 @@ class CompFields:
     z: NDArray[np.float64]
     n: NDArray[np.float64]
     cells: list[CellFlash]
+    p: NDArray[np.float64] | None = None  # Pa; set when p is a Newton unknown
 
 
 @dataclass

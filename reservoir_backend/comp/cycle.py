@@ -25,6 +25,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from reservoir_backend.comp.implicit import run_implicit_period
+from reservoir_backend.comp.implicit_p import run_implicit_period_np
 from reservoir_backend.comp.step import CompFields, WellLedger, run_steps
 from reservoir_backend.comp.well import RateInjector, RateProducer
 from reservoir_backend.eos.peng_robinson import EosMixture
@@ -570,6 +571,83 @@ def run_horizontal_huff_and_puff_implicit(
         injectors=None,
         producers=prod,
         **common,
+    )
+    underflow = per_inj.underflow or per_soak.underflow or per_prod.underflow
+    return fields, CycleLedger(
+        inject=per_inj.ledger,
+        soak=per_soak.ledger,
+        produce=per_prod.ledger,
+        underflow=underflow,
+        z_co2_well_cell_initial=z0,
+        z_co2_well_cell_after_inject=z_after_inject,
+        z_co2_well_cell_after_soak=z_after_soak,
+        z_co2_well_cell_after_produce=perforated_z_co2(fields, mixture, inj_cells),
+        z_co2_produced_stream=produced_stream_z_co2(per_prod.ledger, mixture),
+        wellhead_z_definition=HZ_WELLHEAD_Z_DEFINITION,
+        accepted_steps=per_inj.n_accepted + per_soak.n_accepted + per_prod.n_accepted,
+        n_newton=per_inj.n_newton + per_soak.n_newton + per_prod.n_newton,
+        n_chop=per_inj.n_chop + per_soak.n_chop + per_prod.n_chop,
+        residual_hists=per_inj.residual_hists + per_soak.residual_hists + per_prod.residual_hists,
+    )
+
+
+def run_horizontal_huff_and_puff_np(
+    fields: CompFields,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injectors: tuple[RateInjector, ...] | list[RateInjector],
+    producers: tuple[RateProducer, ...] | list[RateProducer],
+    pore_volume: NDArray[np.float64] | float,
+    *,
+    inject_days: float = INJECT_DAYS,
+    soak_days: float = SOAK_DAYS,
+    produce_days: float = PRODUCE_DAYS,
+    dt_init_days: float = 0.25,
+    dt_max_days: float = 1.0,
+    gravity: float = 0.0,
+) -> tuple[CompFields, CycleLedger]:
+    """HZ HnP with coupled ``(n_i, p)`` Newton. ``T`` prescribed. Same 2/2/3.
+
+    Pressure is a Newton unknown. Volume constraint: see
+    ``reservoir_backend.comp.implicit_p.VOLUME_CONSTRAINT``.
+    """
+    inj = tuple(injectors)
+    prod = tuple(producers)
+    inj_cells = tuple(int(w.cell) for w in inj)
+    prod_cells = tuple(int(w.cell) for w in prod)
+    if len(set(inj_cells)) < 2:
+        raise ValueError("horizontal well needs at least two perforations")
+    if sorted(inj_cells) != sorted(prod_cells):
+        raise ValueError("horizontal HnP uses the same perforated cells for inject and produce")
+    z0 = perforated_z_co2(fields, mixture, inj_cells)
+    dt_init = float(dt_init_days) * SECONDS_PER_DAY
+    dt_max = float(dt_max_days) * SECONDS_PER_DAY
+    p = np.asarray(pressure, dtype=float).ravel()
+    common = dict(
+        T=T,
+        mixture=mixture,
+        grid=grid,
+        permeability=permeability,
+        gravity=gravity,
+        dt_init=dt_init,
+        dt_max=dt_max,
+        pore_volume=pore_volume,
+    )
+    fields, per_inj = run_implicit_period_np(
+        fields, pressure=p, duration=float(inject_days) * SECONDS_PER_DAY, injectors=inj, producers=None, **common
+    )
+    p = per_inj.pressure if per_inj.pressure is not None else p
+    z_after_inject = perforated_z_co2(fields, mixture, inj_cells)
+    fields, per_soak = run_implicit_period_np(
+        fields, pressure=p, duration=float(soak_days) * SECONDS_PER_DAY, injectors=None, producers=None, **common
+    )
+    p = per_soak.pressure if per_soak.pressure is not None else p
+    z_after_soak = perforated_z_co2(fields, mixture, inj_cells)
+    fields, per_prod = run_implicit_period_np(
+        fields, pressure=p, duration=float(produce_days) * SECONDS_PER_DAY, injectors=None, producers=prod, **common
     )
     underflow = per_inj.underflow or per_soak.underflow or per_prod.underflow
     return fields, CycleLedger(

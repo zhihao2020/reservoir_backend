@@ -19,6 +19,7 @@ from reservoir_backend.comp.cycle import (
     produced_stream_z_co2,
     run_horizontal_huff_and_puff,
     run_horizontal_huff_and_puff_implicit,
+    run_horizontal_huff_and_puff_np,
     run_huff_and_puff,
     run_huff_and_puff_cycles,
     run_huff_and_puff_implicit,
@@ -32,6 +33,7 @@ from reservoir_backend.comp.streak import (
     example_two_region_k,
 )
 from reservoir_backend.comp.implicit import ImplicitPeriodLedger, ImplicitStepReport, implicit_newton_step, run_implicit_period
+from reservoir_backend.comp.implicit_p import VOLUME_CONSTRAINT, implicit_newton_step_np, run_implicit_period_np
 from reservoir_backend.comp.step import CompFields, StepReport, WellLedger, accumulate_system, explicit_step, run_steps
 from reservoir_backend.comp.well import (
     RateInjector,
@@ -59,6 +61,7 @@ __all__ = [
     "RateInjector",
     "RateProducer",
     "StepReport",
+    "VOLUME_CONSTRAINT",
     "WellLedger",
     "accumulate_system",
     "added_moles_per_pv",
@@ -73,6 +76,7 @@ __all__ = [
     "explicit_step",
     "flash_cell",
     "implicit_newton_step",
+    "implicit_newton_step_np",
     "injector_well_cell_z_co2",
     "interior_faces",
     "peaceman_wi",
@@ -81,6 +85,8 @@ __all__ = [
     "produced_stream_z_co2",
     "run_horizontal_huff_and_puff",
     "run_horizontal_huff_and_puff_implicit",
+    "run_horizontal_huff_and_puff_np",
+    "run_implicit_period_np",
     "run_huff_and_puff",
     "run_huff_and_puff_cycles",
     "run_huff_and_puff_implicit",

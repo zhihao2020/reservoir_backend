@@ -48,6 +48,9 @@ class ImplicitStepReport:
     n_newton: int
     n_chop: int = 0
     residual_hist: list[float] = field(default_factory=list)
+    pressure: NDArray[np.float64] | None = None
+    has_pressure_unknown: bool = False
+    n_unknowns: int = 0
 
 
 @dataclass
@@ -63,6 +66,7 @@ class ImplicitPeriodLedger:
     dt_max: float
     dt_used: list[float] = field(default_factory=list)
     residual_hists: list[list[float]] = field(default_factory=list)
+    pressure: NDArray[np.float64] | None = None
 
 
 def _pack(n: NDArray[np.float64]) -> NDArray[np.float64]:
