@@ -18,7 +18,8 @@ Documented well patterns (do not mix them):
             tiny 3×3 2D mesh (not 2/2/3, not 0.25/0.25/0.25)
     HZ 1+4  one horizontal injector + four horizontal producers
             (laterals, multiple perfs); opposite wells shut; one
-            Newton step per period on a tiny 5×2 2D mesh
+            Newton step per period on a tiny 5×2 / 3×5 2D mesh;
+            may be repeated for two day-scale cycles
 
 ``dt`` defaults to 0.5 day. Production is capped to available moles so
 ``dt`` is not chopped to zero. Standalone; not wired into FIM.
@@ -1122,3 +1123,61 @@ def run_hz_1inj4prod_huff_and_puff(
         inject_residual_hists=list(per_inj.residual_hists),
         produce_residual_hists=list(per_prod.residual_hists),
     )
+
+
+def run_hz_1inj4prod_cycles(
+    fields: CompFields,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injectors: tuple[RateInjector, ...] | list[RateInjector],
+    producers: tuple[RateProducer, ...] | list[RateProducer],
+    pore_volume: NDArray[np.float64] | float,
+    *,
+    n_cycles: int = 2,
+    inject_days: float = HZ_1INJ4PROD_INJECT_DAYS,
+    soak_days: float = HZ_1INJ4PROD_SOAK_DAYS,
+    produce_days: float = HZ_1INJ4PROD_PRODUCE_DAYS,
+    dt_init_days: float = 0.125,
+    dt_max_days: float = 0.125,
+    gravity: float = 0.0,
+) -> tuple[CompFields, MultiCycleLedger]:
+    """Repeat HZ 1+4 inject–soak–produce ``n_cycles`` times (default 2).
+
+    Each cycle is the short one-step-per-period EXAMPLE schedule.
+    Opposite wells shut. Per-cycle ``Δn = injected − produced`` lives
+    on ``CycleRecord``. Pressure carries forward via ``fields.p``.
+    Not a GEM/field card, not wired into FIM.
+    """
+    if int(n_cycles) < 1:
+        raise ValueError("n_cycles must be >= 1")
+    records: list[CycleRecord] = []
+    underflow = False
+    current = fields
+    p = np.asarray(pressure, dtype=float).ravel()
+    for _ in range(int(n_cycles)):
+        n_start = current.n.copy()
+        if current.p is not None:
+            p = np.asarray(current.p, dtype=float).ravel()
+        current, ledger = run_hz_1inj4prod_huff_and_puff(
+            current,
+            T,
+            p,
+            mixture,
+            grid,
+            permeability,
+            injectors,
+            producers,
+            pore_volume,
+            inject_days=inject_days,
+            soak_days=soak_days,
+            produce_days=produce_days,
+            dt_init_days=dt_init_days,
+            dt_max_days=dt_max_days,
+            gravity=gravity,
+        )
+        records.append(CycleRecord(ledger=ledger, n_start=n_start, n_end=current.n.copy()))
+        underflow = underflow or ledger.underflow
+    return current, MultiCycleLedger(cycles=records, underflow=underflow)
