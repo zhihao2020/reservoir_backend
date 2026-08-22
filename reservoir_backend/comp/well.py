@@ -30,7 +30,12 @@ _PEACEMAN_RE = 0.14
 
 @dataclass(frozen=True)
 class RateInjector:
-    """Specified molar injection into one cell. ``rate`` is mol/s (>0)."""
+    """Injection into one cell.
+
+    Rate control: ``rate`` is mol/s (>0) and ``bhp`` is None.
+    Specified-BHP: ``bhp`` is set (Pa); ``rate`` is unused by the coupled
+    Newton (Peaceman ``q(p_c, p_wf)`` is the mass source).
+    """
 
     cell: int
     rate: float
@@ -39,6 +44,7 @@ class RateInjector:
     r_e: float
     r_w: float
     marker: str = ""
+    bhp: float | None = None  # Pa; if set, specified-BHP (Dirichlet p_wf)
 
 
 def peaceman_equivalent_radius(dx: float, dy: float) -> float:
@@ -105,10 +111,13 @@ def example_rate_injector(
     z_stream: NDArray[np.float64] | None = None,
     r_w: float | None = None,
     skin: float = 0.0,
+    bhp: float | None = None,
 ) -> RateInjector:
-    """Rate-controlled injector of an EXAMPLE stream (pure named, or ``z_stream``)."""
+    """EXAMPLE injector: rate-controlled, or specified-BHP when ``bhp`` is set."""
     if rate < 0.0:
         raise ValueError("injection rate must be non-negative (mol/s)")
+    if bhp is not None and float(bhp) <= 0.0:
+        raise ValueError("injector bhp must be positive (Pa)")
     if z_stream is not None:
         z_inj = np.asarray(z_stream, dtype=float).ravel()
         if z_inj.size != mixture.n_components:
@@ -130,6 +139,7 @@ def example_rate_injector(
         r_e=r_e,
         r_w=rw,
         marker=mixture.marker,
+        bhp=None if bhp is None else float(bhp),
     )
 
 
@@ -214,6 +224,60 @@ def example_horizontal_well(
             permeability,
             mixture,
             molar_rate=float(produce_rate) / n_perf,
+            r_w=r_w,
+            skin=skin,
+        )
+        for cell in perfs
+    )
+    return injectors, producers
+
+
+def example_horizontal_well_bhp(
+    grid: CartesianGrid,
+    cells: list[int] | tuple[int, ...],
+    permeability: float,
+    mixture: EosMixture,
+    *,
+    inject_bhp: float,
+    produce_bhp: float,
+    z_stream: NDArray[np.float64] | None = None,
+    r_w: float | None = None,
+    skin: float = 0.0,
+) -> tuple[tuple[RateInjector, ...], tuple[RateProducer, ...]]:
+    """One EXAMPLE horizontal well on specified BHP. Same cells inject then produce.
+
+    ``p_wf`` is Dirichlet. Connection rate is Peaceman ``q(p_c, p_wf)``.
+    Not a 1-inject-4-produce pattern.
+    """
+    perfs = tuple(int(c) for c in cells)
+    if len(perfs) < 2:
+        raise ValueError("horizontal well needs at least two perforations")
+    if len(set(perfs)) != len(perfs):
+        raise ValueError("horizontal well perforations must be unique cells")
+    if float(inject_bhp) <= 0.0 or float(produce_bhp) <= 0.0:
+        raise ValueError("specified BHP must be positive (Pa)")
+    z = example_co2_rich_stream(mixture) if z_stream is None else z_stream
+    injectors = tuple(
+        example_rate_injector(
+            grid,
+            cell,
+            permeability,
+            mixture,
+            rate=0.0,
+            z_stream=z,
+            r_w=r_w,
+            skin=skin,
+            bhp=float(inject_bhp),
+        )
+        for cell in perfs
+    )
+    producers = tuple(
+        example_producer(
+            grid,
+            cell,
+            permeability,
+            mixture,
+            bhp=float(produce_bhp),
             r_w=r_w,
             skin=skin,
         )

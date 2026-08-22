@@ -19,6 +19,7 @@ from reservoir_backend.comp.cycle import (
     produced_stream_z_co2,
     run_horizontal_huff_and_puff,
     run_horizontal_huff_and_puff_bhp,
+    run_horizontal_huff_and_puff_bhp_spec,
     run_horizontal_huff_and_puff_implicit,
     run_horizontal_huff_and_puff_np,
     run_huff_and_puff,
@@ -34,7 +35,12 @@ from reservoir_backend.comp.streak import (
     example_two_region_k,
 )
 from reservoir_backend.comp.implicit import ImplicitPeriodLedger, ImplicitStepReport, implicit_newton_step, run_implicit_period
-from reservoir_backend.comp.implicit_bhp import WELL_RATE_CONSTRAINT, implicit_newton_step_bhp, run_implicit_period_bhp
+from reservoir_backend.comp.implicit_bhp import (
+    WELL_BHP_CONSTRAINT,
+    WELL_RATE_CONSTRAINT,
+    implicit_newton_step_bhp,
+    run_implicit_period_bhp,
+)
 from reservoir_backend.comp.implicit_p import VOLUME_CONSTRAINT, implicit_newton_step_np, run_implicit_period_np
 from reservoir_backend.comp.step import CompFields, StepReport, WellLedger, accumulate_system, explicit_step, run_steps
 from reservoir_backend.comp.well import (
@@ -42,6 +48,7 @@ from reservoir_backend.comp.well import (
     RateProducer,
     example_co2_rich_stream,
     example_horizontal_well,
+    example_horizontal_well_bhp,
     example_huff_n_puff_well,
     example_producer,
     example_rate_injector,
@@ -64,6 +71,7 @@ __all__ = [
     "RateProducer",
     "StepReport",
     "VOLUME_CONSTRAINT",
+    "WELL_BHP_CONSTRAINT",
     "WELL_RATE_CONSTRAINT",
     "WellLedger",
     "accumulate_system",
@@ -72,6 +80,7 @@ __all__ = [
     "example_co2_rich_stream",
     "example_drive_pressure",
     "example_horizontal_well",
+    "example_horizontal_well_bhp",
     "example_huff_n_puff_well",
     "example_two_region_k",
     "example_producer",
@@ -89,6 +98,7 @@ __all__ = [
     "produced_stream_z_co2",
     "run_horizontal_huff_and_puff",
     "run_horizontal_huff_and_puff_bhp",
+    "run_horizontal_huff_and_puff_bhp_spec",
     "run_horizontal_huff_and_puff_implicit",
     "run_horizontal_huff_and_puff_np",
     "run_implicit_period_bhp",

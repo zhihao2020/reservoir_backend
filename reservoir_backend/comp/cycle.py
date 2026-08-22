@@ -745,3 +745,52 @@ def run_horizontal_huff_and_puff_bhp(
         n_chop=per_inj.n_chop + per_soak.n_chop + per_prod.n_chop,
         residual_hists=per_inj.residual_hists + per_soak.residual_hists + per_prod.residual_hists,
     )
+
+
+def run_horizontal_huff_and_puff_bhp_spec(
+    fields: CompFields,
+    T: float,
+    pressure: NDArray[np.float64] | float,
+    mixture: EosMixture,
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64] | float,
+    injectors: tuple[RateInjector, ...] | list[RateInjector],
+    producers: tuple[RateProducer, ...] | list[RateProducer],
+    pore_volume: NDArray[np.float64] | float,
+    *,
+    inject_days: float = INJECT_DAYS,
+    soak_days: float = SOAK_DAYS,
+    produce_days: float = PRODUCE_DAYS,
+    dt_init_days: float = 0.25,
+    dt_max_days: float = 1.0,
+    gravity: float = 0.0,
+) -> tuple[CompFields, CycleLedger]:
+    """HZ HnP with specified-BHP (Dirichlet ``p_wf``). Same 2/2/3.
+
+    Unknowns are ``(n_i, p)`` only. Mass source is Peaceman
+    ``q(p_c, p_wf_spec)``. Soak shuts the well. See
+    ``reservoir_backend.comp.implicit_bhp.WELL_BHP_CONSTRAINT``.
+    """
+    inj = tuple(injectors)
+    prod = tuple(producers)
+    if any(getattr(w, "bhp", None) is None for w in inj):
+        raise ValueError("specified-BHP cycle needs injector.bhp")
+    if any(w.bhp is None or w.molar_rate is not None for w in prod):
+        raise ValueError("specified-BHP cycle needs producer.bhp and no molar_rate")
+    return run_horizontal_huff_and_puff_bhp(
+        fields,
+        T,
+        pressure,
+        mixture,
+        grid,
+        permeability,
+        inj,
+        prod,
+        pore_volume,
+        inject_days=inject_days,
+        soak_days=soak_days,
+        produce_days=produce_days,
+        dt_init_days=dt_init_days,
+        dt_max_days=dt_max_days,
+        gravity=gravity,
+    )

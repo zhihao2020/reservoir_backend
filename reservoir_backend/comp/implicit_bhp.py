@@ -1,25 +1,24 @@
-"""Coupled implicit Newton on ``(n_i, p, p_wf)``. ``T`` is prescribed.
+"""Coupled implicit Newton with well control. ``T`` is prescribed.
 
-Extends ``implicit_p`` so well BHP (``p_wf``) is a Newton unknown when the
-well is on rate control. Not the FIM residual and not a rewrite of
+Extends ``implicit_p``. Not the FIM residual and not a rewrite of
 ``solver/fi.py``.
 
-Well residual (rate control, documented EXAMPLE first cut):
+Rate control (``p_wf`` is a Newton unknown):
 
     R_wf = Q_spec − Σ_perfs q_PI(p_c, p_wf)
 
-    q_PI = ξ WI λ Δp     (signed Peaceman / linear PI; flowing branch)
+Specified-BHP (``p_wf`` is Dirichlet, not an unknown):
+
+    unknowns are (n_i, p) only
+    mass source uses q_PI(p_c, p_wf_spec)
+    rate is the residual outcome, not a Newton unknown
+
+    q_PI = ξ WI λ Δp     (signed Peaceman / linear PI)
 
     inject:  Δp = p_wf − p_c     (ξ = injectate 1/v_mix at (T, p_wf))
     produce: Δp = p_c − p_wf     (ξ = well-cell molar density)
 
-``Q_spec`` is the specified total molar rate. Mass residuals still use
-that specified rate (the well is rate-controlled); ``p_wf`` is the BHP
-that matches Peaceman inflow/outflow to ``Q_spec``. The residual uses
-signed ``Δp`` so ``p_wf`` can track cell ``p`` through a Newton step
-(the one-way ``max(Δp, 0)`` kink is not used). Specified-BHP wells
-are Dirichlet (``p_wf`` not an unknown). Shut-in (soak): ``p_wf`` is
-dropped from the unknown vector.
+Shut-in (soak): well is off; ``p_wf`` is dropped.
 
 Standalone EXAMPLE kernel.
 """
@@ -52,7 +51,7 @@ from reservoir_backend.comp.implicit_p import (
 # still decades below the O(1) well residual at a cell-pressure first guess.
 NEWTON_TOL = 1.0e-6
 from reservoir_backend.comp.step import DT_MIN, CompFields, WellLedger
-from reservoir_backend.comp.well import RateInjector, RateProducer
+from reservoir_backend.comp.well import RateInjector, RateProducer, well_cell_molar_z
 from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
 
@@ -66,6 +65,14 @@ WELL_RATE_CONSTRAINT = (
     "Shut-in (soak): p_wf is dropped from the unknown vector."
 )
 
+WELL_BHP_CONSTRAINT = (
+    "Specified-BHP: p_wf is Dirichlet (not a Newton unknown). "
+    "Unknowns are (n_i, p) only. "
+    "Mass source is Peaceman q_PI(p_c, p_wf_spec) = xi * WI * lambda * Delta p "
+    "(signed linear PI). Rate is the residual outcome, not an unknown. "
+    "Soak shuts the well (p_wf dropped)."
+)
+
 Q_REF = 1.0e-8  # mol/s, floors the well-residual scale
 
 
@@ -76,14 +83,24 @@ def _mobility(cell: CellFlash, mu_liquid: float, mu_vapor: float) -> float:
 
 
 def _well_mode(injectors, producers) -> str:
-    """``inject`` | ``produce`` | ``bhp_dirichlet`` | ``shut``."""
+    """``inject`` | ``produce`` | ``inject_bhp`` | ``produce_bhp`` | ``shut``."""
     if injectors:
+        if all(getattr(w, "bhp", None) is not None for w in injectors):
+            return "inject_bhp"
         return "inject"
     if producers:
         if all(p.molar_rate is not None for p in producers):
             return "produce"
-        return "bhp_dirichlet"
+        return "produce_bhp"
     return "shut"
+
+
+def _bhp_from_wells(mode: str, injectors, producers) -> float:
+    if mode == "inject_bhp":
+        return float(injectors[0].bhp)
+    if mode == "produce_bhp":
+        return float(producers[0].bhp)
+    raise ValueError(f"{mode} is not a specified-BHP well mode")
 
 
 def _specified_rate(mode: str, injectors, producers) -> float:
@@ -129,6 +146,59 @@ def _peaceman_rate(
     return 0.0
 
 
+def _apply_peaceman_bhp(
+    n_hat: NDArray[np.float64],
+    fld: CompFields,
+    p: NDArray[np.float64],
+    p_wf: float,
+    T: float,
+    mixture: EosMixture,
+    mode: str,
+    injectors,
+    producers,
+    dt: float,
+    mu_liquid: float,
+    mu_vapor: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Add specified-BHP Peaceman sources to ``n_hat``. Cap so moles stay non-negative."""
+    out = np.asarray(n_hat, dtype=float).copy()
+    injected = np.zeros(out.shape[1], dtype=float)
+    produced = np.zeros(out.shape[1], dtype=float)
+    if mode == "inject_bhp":
+        z = np.asarray(injectors[0].z_inj, dtype=float)
+        z = z / max(float(z.sum()), 1.0e-30)
+        xi = 1.0 / max(_v_mix(flash_cell(z, T, float(p_wf), mixture)), 1.0e-30)
+        for w in injectors:
+            c = int(w.cell)
+            lam = _mobility(fld.cells[c], mu_liquid, mu_vapor)
+            q = xi * float(w.well_index) * lam * (float(p_wf) - float(p[c]))
+            dn = q * float(dt) * z
+            if q >= 0.0:
+                out[c] += dn
+                injected += dn
+            else:
+                taken = np.minimum(-dn, np.clip(out[c], 0.0, None))
+                out[c] -= taken
+                produced += taken
+    elif mode == "produce_bhp":
+        for w in producers:
+            c = int(w.cell)
+            cell = fld.cells[c]
+            xi = cell.xi_liquid * cell.S_liquid + cell.xi_vapor * cell.S_vapor
+            lam = _mobility(cell, mu_liquid, mu_vapor)
+            q = max(xi, 0.0) * float(w.well_index) * lam * (float(p[c]) - float(p_wf))
+            z = well_cell_molar_z(cell)
+            dn = q * float(dt) * z
+            if q >= 0.0:
+                taken = np.minimum(dn, np.clip(out[c], 0.0, None))
+                out[c] -= taken
+                produced += taken
+            else:
+                out[c] += -dn
+                injected += -dn
+    return out, injected, produced
+
+
 def _pack_bhp(n: NDArray[np.float64], p: NDArray[np.float64], p_wf: float | None) -> NDArray[np.float64]:
     u = _pack_np(n, p)
     if p_wf is not None:
@@ -160,6 +230,38 @@ def _residual_bhp(
     mode: str,
     **kw,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], CompFields]:
+    if mode in ("inject_bhp", "produce_bhp"):
+        if p_wf is None:
+            raise ValueError("specified-BHP residual needs p_wf")
+        kw_shut = dict(kw, injectors=None, producers=None)
+        r, _, _, fld = _residual_np(
+            n_trial, p_trial, n_old, T, mixture, faces, z_center, dt, pore_volume, n_ref, **kw_shut
+        )
+        nc = n_trial.shape[1]
+        r_n = np.zeros_like(n_trial)
+        for c in range(n_trial.shape[0]):
+            i0 = c * (nc + 1)
+            r_n[c] = r[i0 : i0 + nc]
+        n_hat = n_trial - r_n * n_ref
+        n_hat, injected, produced = _apply_peaceman_bhp(
+            n_hat,
+            fld,
+            p_trial,
+            float(p_wf),
+            T,
+            mixture,
+            mode,
+            kw.get("injectors"),
+            kw.get("producers"),
+            dt,
+            float(kw.get("mu_liquid", EXAMPLE_MU_LIQUID)),
+            float(kw.get("mu_vapor", EXAMPLE_MU_VAPOR)),
+        )
+        r_n = (n_trial - n_hat) / n_ref
+        for c in range(n_trial.shape[0]):
+            i0 = c * (nc + 1)
+            r[i0 : i0 + nc] = r_n[c]
+        return r, injected, produced, fld
     r, injected, produced, fld = _residual_np(
         n_trial, p_trial, n_old, T, mixture, faces, z_center, dt, pore_volume, n_ref, **kw
     )
@@ -213,7 +315,11 @@ def implicit_newton_step_bhp(
     tol: float = NEWTON_TOL,
     max_iter: int = NEWTON_MAX,
 ) -> ImplicitStepReport:
-    """One implicit Euler Newton step. Unknowns are ``(n_i, p)`` and ``p_wf`` on rate control."""
+    """One implicit Euler Newton step.
+
+    Rate control: unknowns ``(n_i, p, p_wf)``. Specified-BHP: unknowns
+    ``(n_i, p)`` only; ``p_wf`` is Dirichlet.
+    """
     if dt < 0.0:
         raise ValueError("dt must be non-negative (s)")
     underflow = bool(dt > 0.0 and dt < DT_MIN)
@@ -231,7 +337,10 @@ def implicit_newton_step_bhp(
     z_center = grid.cell_centers()[:, 2]
     mode = _well_mode(injectors, producers)
     has_bhp = mode in ("inject", "produce")
-    p_wf_trial = _init_pwf(mode, p, p_wf)
+    if mode in ("inject_bhp", "produce_bhp"):
+        p_wf_trial = _bhp_from_wells(mode, injectors, producers)
+    else:
+        p_wf_trial = _init_pwf(mode, p, p_wf)
     kw = dict(
         gravity=gravity,
         mu_liquid=mu_liquid,
@@ -263,7 +372,7 @@ def implicit_newton_step_bhp(
             fld, injected, produced, float(dt), underflow, True, 0, residual_hist=hist, **_extra()
         )
 
-    u = _pack_bhp(n_trial, p_trial, p_wf_trial)
+    u = _pack_bhp(n_trial, p_trial, p_wf_trial if has_bhp else None)
     n_newton = 0
     for it in range(1, int(max_iter) + 1):
         n_newton = it
@@ -276,6 +385,8 @@ def implicit_newton_step_bhp(
             u_p = u.copy()
             u_p[j] += eps
             n_p, p_p, wf_p = _unpack_bhp(u_p, n_cells, n_comp, has_bhp)
+            if not has_bhp:
+                wf_p = p_wf_trial
             R_p, _, _, _ = _residual_bhp(
                 n_p, p_p, wf_p, n_old, T, mixture, faces, z_center, dt, vp, n_ref, mode, **kw
             )
@@ -292,6 +403,8 @@ def implicit_newton_step_bhp(
         accepted = False
         for _ in range(8):
             n_try, p_try, wf_try = _unpack_bhp(u + alpha * du, n_cells, n_comp, has_bhp)
+            if not has_bhp:
+                wf_try = p_wf_trial
             R_try, injected, produced, fld = _residual_bhp(
                 n_try, p_try, wf_try, n_old, T, mixture, faces, z_center, dt, vp, n_ref, mode, **kw
             )
@@ -305,8 +418,10 @@ def implicit_newton_step_bhp(
                 or (has_bhp and r_np_try <= r_np_0 / 10.0)
                 or (alpha < 0.05 and r_try <= r0)
             ):
-                u = _pack_bhp(n_try, p_try, wf_try)
-                n_trial, p_trial, p_wf_trial = n_try, p_try, wf_try
+                u = _pack_bhp(n_try, p_try, wf_try if has_bhp else None)
+                n_trial, p_trial = n_try, p_try
+                if has_bhp:
+                    p_wf_trial = wf_try
                 R = R_try
                 hist.append(float(np.max(np.abs(R))))
                 accepted = True
