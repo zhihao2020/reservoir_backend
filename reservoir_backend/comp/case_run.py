@@ -5,12 +5,13 @@ already-tested 1 HZ inj + 4 HZ prod two-cycle schedule. Not FIM, not
 DigitalTwin, not the product CLI. Fluids/K are EXAMPLE, not Jiyang GEM.
 
     python -m reservoir_backend.comp.case_run
-    python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle.yaml
+    python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle.yaml --fields results/fields.csv
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -20,10 +21,11 @@ import numpy as np
 import yaml
 
 from reservoir_backend.comp.cycle import SECONDS_PER_DAY, run_hz_1inj4prod_cycles
-from reservoir_backend.comp.step import accumulate_system
+from reservoir_backend.comp.step import CompFields, accumulate_system
 from reservoir_backend.comp.streak import example_two_region_k
 from reservoir_backend.comp.well import example_co2_rich_stream, example_hz_1inj4prod_layout, example_hz_1inj4prod_wells
 from reservoir_backend.eos.load import load_eos_mixture_yaml, resolve_fluid_yaml
+from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
 
 DEFAULT_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle.yaml"
@@ -86,10 +88,70 @@ def format_metrics(metrics: dict[str, Any]) -> str:
         lines.append(f"cycle {i} produce ||R|| {rp0:.6e} -> {rp1:.6e}")
     lines.append(f"accepted nsteps {metrics['accepted_steps']}")
     lines.append(f"underflow {metrics['underflow']}")
+    if metrics.get("fields_csv"):
+        lines.append(f"fields csv {metrics['fields_csv']}")
     return "\n".join(lines)
 
 
-def run_example_case(path: str | Path | None = None) -> dict[str, Any]:
+FIELD_CSV_COLUMNS = ("cell", "i", "j", "k", "p", "z_CO2")
+
+
+def resolve_fields_csv_path(
+    *,
+    cli_path: str | None,
+    yaml_cfg: dict[str, Any],
+    json_path: str | None,
+    case_name: str,
+) -> Path:
+    """CLI --fields, then YAML output.fields_csv, then next to --json, else results/."""
+    if cli_path:
+        return Path(cli_path)
+    ypath = (yaml_cfg.get("output") or {}).get("fields_csv")
+    if ypath:
+        return Path(str(ypath))
+    if json_path:
+        jp = Path(json_path)
+        return jp.with_name(f"{jp.stem}_fields.csv")
+    return Path("results") / f"{case_name}_fields.csv"
+
+
+def write_fields_csv(
+    path: str | Path,
+    grid: CartesianGrid,
+    fields: CompFields,
+    mixture: EosMixture,
+) -> Path:
+    """Write one row per cell: cell, i, j, k, p [Pa], z_CO2. EXAMPLE fields only."""
+    if "CO2" not in mixture.names:
+        raise ValueError("EXAMPLE field CSV needs CO2 in the mixture")
+    z = np.asarray(fields.z, dtype=float)
+    if z.ndim != 2 or z.shape[0] != grid.n_cells:
+        raise ValueError("fields.z must be (n_cells, n_comp)")
+    if fields.p is None:
+        raise ValueError("fields.p is required for EXAMPLE field CSV")
+    p = np.asarray(fields.p, dtype=float).ravel()
+    if p.size != grid.n_cells:
+        raise ValueError("fields.p must match n_cells")
+    i_co2 = list(mixture.names).index("CO2")
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(FIELD_CSV_COLUMNS)
+        for cell in range(grid.n_cells):
+            i, j, k = grid.ijk(cell)
+            writer.writerow(
+                [cell, i, j, k, float(p[cell]), float(z[cell, i_co2])]
+            )
+    return out
+
+
+def run_example_case(
+    path: str | Path | None = None,
+    *,
+    fields_csv: str | Path | None = None,
+    json_path: str | None = None,
+) -> dict[str, Any]:
     """Run the YAML case with the already-tested HZ 1+4 two-cycle physics."""
     cfg = load_case_yaml(DEFAULT_CASE if path is None else path)
     if str(cfg.get("marker", "")).upper() != "EXAMPLE":
@@ -132,7 +194,7 @@ def run_example_case(path: str | Path | None = None) -> dict[str, Any]:
         z_stream=example_co2_rich_stream(mix),
     )
     produce_days = float(scfg["produce_seconds"]) / SECONDS_PER_DAY
-    _fields, multi = run_hz_1inj4prod_cycles(
+    fields, multi = run_hz_1inj4prod_cycles(
         fields,
         float(fcfg["T"]),
         p,
@@ -149,7 +211,18 @@ def run_example_case(path: str | Path | None = None) -> dict[str, Any]:
         dt_init_days=float(scfg["dt_init_days"]),
         dt_max_days=float(scfg["dt_max_days"]),
     )
-    return metrics_from_multi(str(cfg["name"]), str(cfg["marker"]), multi)
+    if fields.p is None:
+        fields.p = np.asarray(p, dtype=float).ravel()
+    metrics = metrics_from_multi(str(cfg["name"]), str(cfg["marker"]), multi)
+    csv_path = resolve_fields_csv_path(
+        cli_path=None if fields_csv is None else str(fields_csv),
+        yaml_cfg=cfg,
+        json_path=json_path,
+        case_name=str(cfg["name"]),
+    )
+    write_fields_csv(csv_path, grid, fields, mix)
+    metrics["fields_csv"] = str(csv_path)
+    return metrics
 
 
 def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> dict[str, Any]:
@@ -161,8 +234,14 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> dict[st
         help="path to EXAMPLE YAML (default: hz_1inj4prod_two_cycle)",
     )
     parser.add_argument("--json", dest="json_path", default=None, help="optional JSON output path")
+    parser.add_argument(
+        "--fields",
+        dest="fields_csv",
+        default=None,
+        help="optional per-cell p, z_CO2 CSV (default: results/<name>_fields.csv)",
+    )
     args = parser.parse_args(argv)
-    metrics = run_example_case(args.case)
+    metrics = run_example_case(args.case, fields_csv=args.fields_csv, json_path=args.json_path)
     out = stdout or sys.stdout
     print(format_metrics(metrics), file=out)
     if args.json_path:

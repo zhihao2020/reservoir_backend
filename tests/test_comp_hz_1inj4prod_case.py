@@ -1,6 +1,7 @@
 """Smoke the EXAMPLE HZ 1+4 YAML case entry. Not FIM, not GEM."""
 
 import ast
+import csv
 import io
 from pathlib import Path
 
@@ -40,10 +41,11 @@ def test_case_run_module_does_not_import_fi_or_references() -> None:
     assert not any(n.startswith("reservoir_backend.twin") or n.startswith("reservoir_backend.cli") for n in names)
 
 
-def test_example_case_prints_metrics() -> None:
+def test_example_case_prints_metrics(tmp_path: Path) -> None:
     """Run the YAML entry; printed/returned inject/produce ||R|| and nsteps exist."""
     buf = io.StringIO()
-    metrics = main([str(DEFAULT_CASE)], stdout=buf)
+    csv_path = tmp_path / "fields.csv"
+    metrics = main([str(DEFAULT_CASE), "--fields", str(csv_path)], stdout=buf)
     text = buf.getvalue()
     assert "EXAMPLE case: hz_1inj4prod_two_cycle" in text
     assert "not a Jiyang GEM card" in text
@@ -59,3 +61,9 @@ def test_example_case_prints_metrics() -> None:
     assert "inject_R" in metrics["cycles"][0]
     assert "produce_R" in metrics["cycles"][0]
     assert format_metrics(metrics) in text
+    assert csv_path.is_file()
+    with csv_path.open(encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert "p" in rows[0] and "z_CO2" in rows[0]
+    assert len(rows) == 15
+    assert metrics["fields_csv"] == str(csv_path)

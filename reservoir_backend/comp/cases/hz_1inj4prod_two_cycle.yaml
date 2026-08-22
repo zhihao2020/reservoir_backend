@@ -40,3 +40,6 @@ schedule:
   produce_seconds: 20.0
   dt_init_days: 0.125
   dt_max_days: 0.125
+
+output:
+  fields_csv: results/hz_1inj4prod_two_cycle_fields.csv
