@@ -885,9 +885,10 @@ def run_five_spot_huff_and_puff(
     Soak: all shut.
     Produce: four specified-BHP producers on, injector shut.
     Produce BHP is 1 Pa below the post-soak producer-cell pressures
-    (one Dirichlet value for all four). ``dt`` is capped at 0.125 d and
-    may grow back after a chop. One residual ``(n_i, p)``; injector
-    ``p_wf`` is a Newton unknown only while injecting.
+    (one Dirichlet value for all four). Soak is lagged-p (moles only);
+    inject/produce stay coupled. ``dt`` is capped at 0.125 d and may
+    grow back after a chop. Injector ``p_wf`` is a Newton unknown only
+    while injecting.
     See ``reservoir_backend.comp.implicit_bhp.FIVE_SPOT_CONTROL``.
     """
     inj = tuple(injectors)
@@ -925,11 +926,23 @@ def run_five_spot_huff_and_puff(
     )
     p = per_inj.pressure if per_inj.pressure is not None else p
     z_after_inject = injector_well_cell_z_co2(fields, mixture, inj[0].cell)
-    # Soak: all shut.
-    fields, per_soak = run_implicit_period_bhp(
-        fields, pressure=p, duration=float(soak_days) * SECONDS_PER_DAY, injectors=None, producers=None, **common
+    # Soak: all shut. Lagged-p moles Newton — coupled (n, p) on this
+    # two-region 3×3 after inject grinds dt to tiny steps.
+    fields, per_soak = run_implicit_period(
+        fields,
+        T,
+        p,
+        mixture,
+        grid,
+        permeability,
+        float(soak_days) * SECONDS_PER_DAY,
+        gravity=gravity,
+        dt_init=dt_init,
+        dt_max=dt_max,
+        injectors=None,
+        producers=None,
+        grow=2.0,
     )
-    p = per_soak.pressure if per_soak.pressure is not None else p
     z_after_soak = injector_well_cell_z_co2(fields, mixture, inj[0].cell)
     # Specified BHP is 1 Pa below the current producer-cell pressures.
     # Keeping the initial-p BHP after rate inject draws ~300 Pa on the
