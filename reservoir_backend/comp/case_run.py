@@ -23,7 +23,7 @@ from reservoir_backend.comp.cycle import SECONDS_PER_DAY, run_hz_1inj4prod_cycle
 from reservoir_backend.comp.step import accumulate_system
 from reservoir_backend.comp.streak import example_two_region_k
 from reservoir_backend.comp.well import example_co2_rich_stream, example_hz_1inj4prod_layout, example_hz_1inj4prod_wells
-from reservoir_backend.eos.example_library import example_eight_component_mixture
+from reservoir_backend.eos.load import load_eos_mixture_yaml, resolve_fluid_yaml
 from reservoir_backend.grid.cartesian import CartesianGrid
 
 DEFAULT_CASE = Path(__file__).resolve().parent / "cases" / "hz_1inj4prod_two_cycle.yaml"
@@ -112,7 +112,11 @@ def run_example_case(path: str | Path | None = None) -> dict[str, Any]:
         k_matrix=float(rcfg["k_matrix_m2"]),
         k_streak=float(rcfg["k_streak_m2"]),
     )
-    mix = example_eight_component_mixture().subset(list(fcfg["components"]))
+    if not fcfg.get("eos_yaml"):
+        raise ValueError(
+            "case fluid.eos_yaml is required; refusing to invent GEM/Jiyang criticals"
+        )
+    mix = load_eos_mixture_yaml(resolve_fluid_yaml(fcfg["eos_yaml"])).subset(list(fcfg["components"]))
     p = np.full(grid.n_cells, float(wcfg["p_init_pa"]))
     z = np.tile(np.asarray(fcfg["z"], dtype=float), (grid.n_cells, 1))
     vp = float(rcfg["porosity"]) * grid.cell_volumes()

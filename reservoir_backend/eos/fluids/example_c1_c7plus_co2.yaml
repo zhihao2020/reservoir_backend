@@ -1,0 +1,75 @@
+# EXAMPLE eight-component Peng-Robinson deck (C1–C7+/CO2).
+# Public literature / NIST textbook values. NOT a Jiyang GEM card.
+# NOT site-calibrated. Same schema can load a future real deck — do not
+# invent GEM / Jiyang Tc, Pc, or omega in this repository.
+#
+# Poling, Prausnitz, O'Connell, The Properties of Gases and Liquids, 5th ed.
+# (2001) and NIST Chemistry WebBook. Pc in Pa, Tc in K.
+# Mw_g_mol is g/mol; the loader stores kg/mol on EosMixture.
+# example_C7plus is published n-decane used as an EXAMPLE C7+ stand-in.
+
+marker: "EXAMPLE / public literature — standalone example flash, not wired, example PR params; NOT a Jiyang GEM card; NOT site-calibrated"
+
+components:
+  - name: C1
+    Tc: 190.564
+    Pc: 4.5992e6
+    omega: 0.01142
+    Mw_g_mol: 16.0425
+  - name: C2
+    Tc: 305.32
+    Pc: 4.8722e6
+    omega: 0.0995
+    Mw_g_mol: 30.0690
+  - name: C3
+    Tc: 369.83
+    Pc: 4.2471e6
+    omega: 0.1523
+    Mw_g_mol: 44.0956
+  - name: nC4
+    Tc: 425.12
+    Pc: 3.7960e6
+    omega: 0.2002
+    Mw_g_mol: 58.1222
+  - name: nC5
+    Tc: 469.70
+    Pc: 3.3700e6
+    omega: 0.2515
+    Mw_g_mol: 72.1488
+  - name: nC6
+    Tc: 507.60
+    Pc: 3.0250e6
+    omega: 0.3013
+    Mw_g_mol: 86.1754
+  - name: example_C7plus
+    Tc: 617.70
+    Pc: 2.1030e6
+    omega: 0.4884
+    Mw_g_mol: 142.2817
+  - name: CO2
+    Tc: 304.1282
+    Pc: 7.3773e6
+    omega: 0.2236
+    Mw_g_mol: 44.0095
+
+# Published typical CO2–n-alkane k_ij (Danesh 1998; Whitson & Brulé 2000).
+# Unlisted pairs are 0 (hydrocarbon–hydrocarbon). Symmetric van der Waals BIP.
+kij_pairs:
+  - [CO2, C1, 0.105]
+  - [CO2, C2, 0.130]
+  - [CO2, C3, 0.125]
+  - [CO2, nC4, 0.115]
+  - [CO2, nC5, 0.115]
+  - [CO2, nC6, 0.115]
+  - [CO2, example_C7plus, 0.100]
+
+# EXAMPLE synthetic feed (mole fractions). Not a field composition.
+feed_z:
+  C1: 0.45
+  C2: 0.05
+  C3: 0.05
+  nC4: 0.03
+  nC5: 0.02
+  nC6: 0.02
+  example_C7plus: 0.18
+  CO2: 0.20

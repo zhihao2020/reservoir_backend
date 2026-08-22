@@ -9,6 +9,12 @@ from reservoir_backend.eos.example_library import (
     example_eight_component_mixture,
     example_feed_z,
 )
+from reservoir_backend.eos.load import (
+    DEFAULT_EXAMPLE_FLUID_YAML,
+    load_eos_mixture_yaml,
+    load_feed_z_yaml,
+    resolve_fluid_yaml,
+)
 from reservoir_backend.eos.flash import FlashResult, flash_tp, solve_rachford_rice, wilson_k
 from reservoir_backend.eos.inventory import PhaseInventory, component_inventory
 from reservoir_backend.eos.peng_robinson import (
@@ -25,6 +31,7 @@ from reservoir_backend.eos.peng_robinson import (
 from reservoir_backend.eos.stability import StabilityResult, michelsen_stability, tangent_plane_distance
 
 __all__ = [
+    "DEFAULT_EXAMPLE_FLUID_YAML",
     "EXAMPLE_LIBRARY_MARKER",
     "GAS_CONSTANT",
     "EosMixture",
@@ -36,6 +43,9 @@ __all__ = [
     "compressibility_roots",
     "example_eight_component_mixture",
     "example_feed_z",
+    "load_eos_mixture_yaml",
+    "load_feed_z_yaml",
+    "resolve_fluid_yaml",
     "flash_tp",
     "fugacity_coefficients",
     "mass_density",

@@ -23,6 +23,7 @@ def test_case_yaml_is_example_not_gem() -> None:
     assert "Not wired into FIM" in text
     assert float(cfg["rock"]["k_matrix_m2"]) == 1.0e-18
     assert float(cfg["rock"]["k_streak_m2"]) == 1.0e-12
+    assert cfg["fluid"]["eos_yaml"] == "example_c1_c7plus_co2.yaml"
 
 
 def test_case_run_module_does_not_import_fi_or_references() -> None:

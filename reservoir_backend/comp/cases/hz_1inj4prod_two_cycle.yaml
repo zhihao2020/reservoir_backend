@@ -17,11 +17,11 @@ grid:
   streak: injector
 
 fluid:
-  library: example_eight_component_mixture
+  eos_yaml: example_c1_c7plus_co2.yaml
   components: [C1, CO2]
   z: [0.40, 0.60]
   T: 250.0
-  note: EXAMPLE Peng-Robinson subset, not a Jiyang PVT card
+  note: EXAMPLE Peng-Robinson subset loaded from YAML, not a Jiyang PVT card
 
 rock:
   porosity: 0.20
