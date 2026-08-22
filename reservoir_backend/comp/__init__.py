@@ -20,6 +20,7 @@ from reservoir_backend.comp.cycle import (
     run_horizontal_huff_and_puff,
     run_horizontal_huff_and_puff_bhp,
     run_horizontal_huff_and_puff_bhp_spec,
+    run_horizontal_huff_and_puff_mixed,
     run_horizontal_huff_and_puff_implicit,
     run_horizontal_huff_and_puff_np,
     run_huff_and_puff,
@@ -36,6 +37,7 @@ from reservoir_backend.comp.streak import (
 )
 from reservoir_backend.comp.implicit import ImplicitPeriodLedger, ImplicitStepReport, implicit_newton_step, run_implicit_period
 from reservoir_backend.comp.implicit_bhp import (
+    MIXED_CONTROL,
     WELL_BHP_CONSTRAINT,
     WELL_RATE_CONSTRAINT,
     implicit_newton_step_bhp,
@@ -49,6 +51,7 @@ from reservoir_backend.comp.well import (
     example_co2_rich_stream,
     example_horizontal_well,
     example_horizontal_well_bhp,
+    example_horizontal_well_mixed,
     example_huff_n_puff_well,
     example_producer,
     example_rate_injector,
@@ -71,6 +74,7 @@ __all__ = [
     "RateProducer",
     "StepReport",
     "VOLUME_CONSTRAINT",
+    "MIXED_CONTROL",
     "WELL_BHP_CONSTRAINT",
     "WELL_RATE_CONSTRAINT",
     "WellLedger",
@@ -81,6 +85,7 @@ __all__ = [
     "example_drive_pressure",
     "example_horizontal_well",
     "example_horizontal_well_bhp",
+    "example_horizontal_well_mixed",
     "example_huff_n_puff_well",
     "example_two_region_k",
     "example_producer",
@@ -99,6 +104,7 @@ __all__ = [
     "run_horizontal_huff_and_puff",
     "run_horizontal_huff_and_puff_bhp",
     "run_horizontal_huff_and_puff_bhp_spec",
+    "run_horizontal_huff_and_puff_mixed",
     "run_horizontal_huff_and_puff_implicit",
     "run_horizontal_huff_and_puff_np",
     "run_implicit_period_bhp",

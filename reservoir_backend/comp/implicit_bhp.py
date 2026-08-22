@@ -73,6 +73,13 @@ WELL_BHP_CONSTRAINT = (
     "Soak shuts the well (p_wf dropped)."
 )
 
+MIXED_CONTROL = (
+    "One well, mixed control: inject is rate control (p_wf Newton unknown, "
+    "R_wf = Q_spec - sum q_PI); soak shuts the well and drops p_wf; "
+    "produce is specified-BHP (p_wf Dirichlet, mass source q_PI). "
+    "Same perforated cells. Not 1-inject-4-produce."
+)
+
 Q_REF = 1.0e-8  # mol/s, floors the well-residual scale
 
 

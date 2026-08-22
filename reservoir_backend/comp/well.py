@@ -286,6 +286,62 @@ def example_horizontal_well_bhp(
     return injectors, producers
 
 
+def example_horizontal_well_mixed(
+    grid: CartesianGrid,
+    cells: list[int] | tuple[int, ...],
+    permeability: float,
+    mixture: EosMixture,
+    *,
+    inject_rate: float,
+    produce_bhp: float,
+    z_stream: NDArray[np.float64] | None = None,
+    r_w: float | None = None,
+    skin: float = 0.0,
+) -> tuple[tuple[RateInjector, ...], tuple[RateProducer, ...]]:
+    """One EXAMPLE HZ well: rate-controlled inject, specified-BHP produce.
+
+    Same perforated cells. Not a 1-inject-4-produce pattern.
+    Inject: ``p_wf`` is a Newton unknown. Produce: ``p_wf`` is Dirichlet.
+    """
+    perfs = tuple(int(c) for c in cells)
+    if len(perfs) < 2:
+        raise ValueError("horizontal well needs at least two perforations")
+    if len(set(perfs)) != len(perfs):
+        raise ValueError("horizontal well perforations must be unique cells")
+    if float(inject_rate) < 0.0:
+        raise ValueError("injection rate must be non-negative (mol/s)")
+    if float(produce_bhp) <= 0.0:
+        raise ValueError("produce BHP must be positive (Pa)")
+    n_perf = len(perfs)
+    z = example_co2_rich_stream(mixture) if z_stream is None else z_stream
+    injectors = tuple(
+        example_rate_injector(
+            grid,
+            cell,
+            permeability,
+            mixture,
+            rate=float(inject_rate) / n_perf,
+            z_stream=z,
+            r_w=r_w,
+            skin=skin,
+        )
+        for cell in perfs
+    )
+    producers = tuple(
+        example_producer(
+            grid,
+            cell,
+            permeability,
+            mixture,
+            bhp=float(produce_bhp),
+            r_w=r_w,
+            skin=skin,
+        )
+        for cell in perfs
+    )
+    return injectors, producers
+
+
 def example_huff_n_puff_well(
     grid: CartesianGrid,
     cell: int,
