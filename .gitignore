@@ -40,11 +40,23 @@ validation_reports/*
 !validation_reports/.gitkeep
 profiling_reports/
 
+# Local scratch / one-off run artifacts (never commit)
+/scratch/
+/_*.py
+/_*.out
+/_*.err
+/_*.json
+/_*.pid
+/_*.status
+
 # Logs and temporary files
 *.log
 *.tmp
 *.temp
 *.bak
+
+# Regenerable CMG/IMEX text dumps (already-tracked ones stay tracked)
+*.out
 
 # OS metadata
 .DS_Store

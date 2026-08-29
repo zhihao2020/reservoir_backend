@@ -1,5 +1,5 @@
 # 300 mm 立方，两层 log K，6 mm 探头。
-# 25 mm 网格，apply 大约一分钟。正式 10 mm / 30³ 见 config/lab_30cm.yaml。
+# 25 mm 网格，apply 大约一分钟。正式 10 mm / 30³ 见 examples/lab/lab_30cm.yaml。
 #
 # 自检（程序造假测点，证明会反演）：
 #   reservoir apply examples/two_layer/case.yaml --demo --output results/examples/two_layer_demo
@@ -15,7 +15,7 @@ physics:
   model: two_phase_immiscible
   capillary: brooks_corey
   gravity: false
-  compressibility: incompressible
+  pvt: incompressible
   sw_init: 0.20
   p_init: 1.5e5
   dt_init: 2.0
@@ -52,17 +52,12 @@ sensors:
   - {name: S_mid_top, kind: saturation, x: 0.15, y: 0.15, z: 0.24, sigma: 0.04}
 
 inverse:
-  algorithm: esmda
   parameterization: region
   region_axis: z
   n_regions: 2
-  ensemble_size: 16
-  assimilation_steps: 4
   prior_mean: -28.2
   prior_std: 1.0
-  seed: 7
-  n_workers: 4
-  reconstruct_members: 4
+  max_iter: 8
 
 experiment:
   history_end_s: 500

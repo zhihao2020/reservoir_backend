@@ -1,0 +1,57 @@
+---
+title: "30 cm lab digital twin — development plan"
+date: last-modified
+format:
+  html:
+    toc: true
+    toc-depth: 2
+---
+
+活文档：当前产品与排队工作。不是宣传册，也不写 SCI。
+
+## 产品
+
+PetroChina **30 cm** 立方。左面定流量注入，右面定 BHP，其余面封闭。
+反演 **2-region log $K$**，正演同一套 FIM。
+验收：水驱**相似准则** + $F(m_{\mathrm{post}})$ vs $F(m_{\mathrm{true}})$。
+**不是** CMG 逐格贴场。**不是** 1 Hz 反演。
+
+入口：`examples/lab/lab_concept.yaml`。验收口径见 `docs/cnpc_acceptance.md`。
+
+## 已有
+
+- 网格 30 cm / 10 mm。`CartesianGrid.locate_cell(x, y, z) → I`。
+- 产品默认 FIM（`fully_implicit: true`）。$\Delta t$ 按 Newton 次数 chop/grow。反演闸门已过；默认开是故意的。
+- `pressure_field(case, probes, series)`：测点 + 工况 BC + $p(t)$ → LM → $F()$ → $p(t, I)$。见 `docs/pressure_field.md`。
+- 场表导出 `field.csv`：$(I,x,y,z,p)$ 以及 $S_w$、$K$；$\varphi$ 为重复列（正演常数，不进 $\theta$）。
+- `step_pressure`：固定 $K$，走一个 solver $\mathrm{d}t$。
+- `examples/lab/lab_concept.yaml` + `examples/lab/concept_probes.csv`：91 个 $S_w$ 测点（75 电阻率 + 16 新增，抄自 测点.xlsx）。声波 12 / 电磁 8 只有个数与间距，**不编造 xyz**。
+- `similarity.waterflood_groups` 已挂在 `invert --self-check`。
+- `accept_demo` pass is Sw/p field nRMSE + waterflood similarity displacement ($F(m_{\mathrm{post}})$ vs $F(m_{\mathrm{true}})$; comparison-not-CMG); contrast / logK stay as extras.
+- 声波 / 电磁现阶段当**已知饱和度**；xyz 接口以后再接。
+- 已知 $S_w$ 序列已进 `calibrate` / `pressure_field`（可与压力混装；kind `saturation` / `Sw`）。声波 / 电磁有 xyz 后按 $S_w$ 同化，现不编造坐标。
+
+## 下一步（按序）
+
+1. 压力测点 xyz：**等用户给坐标**再接，不编造。声波 / 电磁同理。
+2. `lab_concept invert --self-check`：fim-dt 跑 ne=2 two-layer demo（无观测时是 attach_two_layer_demo，不是 91 测点）。跑完报场 nRMSE / underflow。91 测点要有合成观测再另跑。
+
+`accept_demo` 闸门已对齐（2026-08-21）：pass = `sw_field_nrmse < 0.50` 且 `p_field_nrmse < 0.25`（对 $F(m_{\mathrm{true}})$）；similarity 在报告里。contrast / logK / hold-out 不是门。
+
+## 方向（2026-08-21）
+
+用户说背景是**胜利济阳页岩油**。矿场不是 30 cm 水驱：水平井 + 体积压裂 + 弹性衰竭 + 焖井渗吸（储–缝–压；杨勇等，中国石油勘探 2024）。CO2 已大规模用在前置/超临界混压；单井吞吐是补能试验（李阳等，石油勘探与开发 2024, 51(4):855-864），不是示范区基础方式。
+用户已切到济阳：**一注四采水平井，CO2 吞吐，正演 30 年、月步**。混相 CO2 / GEM 现核没有；先黑油气吞吐骨架（`examples/jiyang/jiyang_hnp.yaml`，21×21×5）。核 / 残差不动。30 cm 水驱 ne=2 停。
+
+## 不做
+
+AIM、`*TSCRIT`、1 Hz 再反演、restore harness、`import references/`、liberation 1 psi、编造缺失 xyz、SCI 写作。
+
+## 角色
+
+| 角色 | 范围 |
+|------|------|
+| xuzh | 本计划 + 输入 / 导出 |
+| fim-resid | 残差 / 测试 |
+| fim-dt | 时间步 |
+| lab-review | 只读，对照本 qmd |

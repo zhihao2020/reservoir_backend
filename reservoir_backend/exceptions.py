@@ -29,10 +29,6 @@ class InvalidObservation(ReservoirError, ValueError):
     """Observation geometry or data is inconsistent."""
 
 
-class EnsembleMemberFailure(ReservoirError, RuntimeError):
-    """Too many ensemble forwards failed."""
-
-
 class InvalidControl(ReservoirError, ValueError):
     """A port has conflicting or missing controls."""
 

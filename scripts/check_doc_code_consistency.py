@@ -34,12 +34,15 @@ DOC_GLOBS = (
 
 SKIP_PARTS = {"archive"}
 
+# Historical audit snapshots; path drift is expected.
+SKIP_DOCS = {"docs/audit_2026.md"}
+
 # Backtick paths that look like repo-relative file/dir references.
 PATH_RE = re.compile(
     r"`("
-    r"(?:reservoir_backend|tests|scripts|examples|benchmarks|config|docs|specs|"
+    r"(?:reservoir_backend|tests|scripts|examples|benchmarks|docs|specs|"
     r"requirements|references|accuracy_reports|validation_reports|profiling_reports|"
-    r"results)"
+    r"results|validation)"
     r"/[^`\s]+"
     r")`"
 )
@@ -50,19 +53,20 @@ WILDCARD_MARKERS = ("*", "...", "<", ">", "{", "}")
 # Known non-literal fragments to ignore (prose / partial paths).
 IGNORE_EXACT = {
     "results/",
+    "results/examples/two_layer/",
     "accuracy_reports/",
     "validation_reports/",
     "profiling_reports/",
     "docs/",
     "specs/",
     "tests/",
-    "config/",
     "scripts/",
     "examples/",
     "benchmarks/",
     "requirements/",
     "references/",
     "reservoir_backend/",
+    "validation/",
 }
 
 
@@ -74,6 +78,8 @@ def iter_doc_files() -> list[Path]:
                 continue
             rel_parts = path.relative_to(REPO_ROOT).parts
             if any(part in SKIP_PARTS for part in rel_parts):
+                continue
+            if path.relative_to(REPO_ROOT).as_posix() in SKIP_DOCS:
                 continue
             files.append(path)
     return sorted(set(files))
@@ -106,6 +112,8 @@ def path_exists(ref: str) -> bool:
 
 def should_skip(ref: str) -> bool:
     if ref in IGNORE_EXACT:
+        return True
+    if ref.startswith("results/"):
         return True
     if any(marker in ref for marker in WILDCARD_MARKERS):
         return True

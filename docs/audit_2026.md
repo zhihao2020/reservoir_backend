@@ -1,7 +1,7 @@
 # 审查报告 audit_2026
 
 日期：2026-08-15  
-范围：完整阅读 `reservoir_backend/`、`tests/`、`config/`、`STATUS.md`、`README.md`、`references/软件要求.txt`、`docs/check.txt`，并抽查 `black_oil/validation/`、`shale_oil/validation/`。  
+范围：完整阅读 `reservoir_backend/`、`tests/`、`config/`、`STATUS.md`、`README.md`、`references/软件要求.txt`、`docs/check.txt`，并抽查 `validation/black_oil/`、`validation/shale_oil/`。  
 原则：不以文件名、STATUS「已验证」、或旧测试通过为正确性证据。以 `docs/check.txt` 的物理问题定义为准。
 
 ---
@@ -73,7 +73,7 @@ pipeline.run / time_series          ← 产品编排
 
 ### A.4 默认算例尺度
 
-`config/sensor_case.yaml`、`config/sensor_series_case.yaml` 是 **100 × 80 × 30 m**、`dx=10 m` 的矿场盒子，不是 300 mm × 10 mm / 30³。实验室 30 cm 只存在于 `lab_horizon` 与 `black_oil/validation/lab_box_30cm/`，测试用 10³–15³，反演报告用 12³。
+`config/sensor_case.yaml`、`config/sensor_series_case.yaml` 是 **100 × 80 × 30 m**、`dx=10 m` 的矿场盒子，不是 300 mm × 10 mm / 30³。实验室 30 cm 只存在于 `lab_horizon` 与 `validation/black_oil/lab_box_30cm/`，测试用 10³–15³，反演报告用 12³。
 
 ---
 

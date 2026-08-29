@@ -1,0 +1,15 @@
+# Public PR card copied from OPM opm-tests compositional/1D_COMP.DATA
+# (CO2, methane, n-decane). PCRIT in the DATA file is bar.
+# Not a Jiyang GEM card.
+names: [CO2, C1, nC10]
+tc_k: [304.128, 190.564, 617.7]
+pc_bar: [73.773, 45.992, 21.03]
+omega: [0.22394, 0.01142, 0.4884]
+mw_g_mol: [44.00, 16.04, 142.28]
+kij:
+  - [0.0, 0.0, 0.0]
+  - [0.0, 0.0, 0.0]
+  - [0.0, 0.0, 0.0]
+# Pa·s. GEM uses *VISCOR *HZYT; these are EXAMPLE constants, not a Jiyang fit.
+mu_liquid: 3.0e-4
+mu_vapor: 2.0e-5

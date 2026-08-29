@@ -1,0 +1,10 @@
+inverse:
+  parameterization: fracture
+  truth_json: ../../validation/shale_oil/cmg_s4_parent_child/truth_s4.json
+  imex_out: ../../validation/shale_oil/cmg_s4_parent_child/mxshale_s4.out
+  n_times: 5
+  max_iter: 12
+  post_ensemble:
+    enabled: true
+    ne: 8
+    seed: 5

@@ -11,7 +11,7 @@ physics:
   model: two_phase_immiscible
   capillary: brooks_corey
   gravity: false
-  compressibility: incompressible
+  pvt: incompressible
   sw_init: 0.20
   p_init: 1.5e5
   dt_init: 2.0
@@ -48,16 +48,11 @@ sensors:
   - {name: Smx, kind: saturation, x: 0.15, y: 0.05, z: 0.15, sigma: 0.04}
 
 inverse:
-  algorithm: esmda
   parameterization: contrast
   region_map: regions.npy
-  ensemble_size: 16
-  assimilation_steps: 4
   prior_mean: -28.2
   prior_std: 1.0
-  seed: 7
-  n_workers: 4
-  reconstruct_members: 4
+  max_iter: 8
 
 experiment:
   history_end_s: 500

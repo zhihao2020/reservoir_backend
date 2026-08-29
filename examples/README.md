@@ -2,6 +2,16 @@
 
 用户入口是 `reservoir apply`。一次反演，一份 \(F(m_{\mathrm{post}})\)。
 
+算例都在 `examples/`：
+
+| 目录 | 用途 |
+|------|------|
+| `two_layer/`、`channel/` | 用户交付默认路径 |
+| `lab/` | 正式 10 mm / 30³、概念实验室、通道图 |
+| `compositional/` | EXAMPLE 组分孪生 |
+| `jiyang/` | 济阳井网 / 缝网 YAML |
+| `shale_oil/` | 页岩 S1–S5 LM invert（truth JSON + IMEX `.out`） |
+
 | 场合 | 命令 | 测点从哪来 |
 |------|------|------------|
 | 实验室做完一块样，有探头读数 | `apply <case.yaml>`（不要 `--demo`） | 你填的 CSV |
@@ -52,9 +62,13 @@ reservoir apply examples/channel/case_from_csv.yaml --output results/examples/ch
 
 | 文件 | 含义 |
 |------|------|
-| `k_mean.npy` / `k_std.npy` | 后验渗透率（该正演 \(F\) 下的等效 \(K\)） |
-| `pressure_mean.npy`、`sw_mean.npy`、`so_mean.npy` | \(F(m_{\mathrm{post}})\) 重建的三维场 |
+| `k.npy` | 拟合后的渗透率（该正演 \(F\) 下的等效 \(K\)） |
+| `pressure.npy`、`sw.npy`、`so.npy` | \(F(\hat m)\) 重建的三维场 |
 | `apply.json` | 拟合、hold-out、预报、\(\theta\) |
+| `invert.json` | 统一 run report（`reservoir invert` / `apply`） |
+| `check83.json` | check.txt §83 十二问结构化答案 |
+| `residuals.csv` | 白化观测残差明细 |
+| `k_std.npy` | post_ensemble 开启时的 \(K\) 标准差场 |
 | `figures/posterior_fields_xz.png` | 剖面图 |
 
 三维 \(p/S\) 不是单独反演出来的饱和度图。有 `--demo` 时才会和已知真值比；有实测 CSV 时只看测点拟合和预报。
@@ -83,5 +97,13 @@ time,time_unit,sensor,kind,value,unit,sigma,holdout
 - 不要把定压井的流量当观测。
 
 层状用 `region_axis: z`。已知通道用 `region_map`，不要让 `--auto` 去猜已经画好的图。层数不确定、又没有通道图时，可加 `--auto`：在均匀 / 2 层 / 3 层里按 hold-out 选，不搜格子 \(K\)。
+
+## 5. 页岩油 S1–S5（需 IMEX `.out`）
+
+```bash
+reservoir invert examples/shale_oil/s1.yaml --output results/shale_s1
+```
+
+YAML 里 `inverse.truth_json` + `inverse.imex_out` 指向 `validation/shale_oil/` 下对应工况。无 `.out` 时 CLI 报错；CI 用 `tests/cases/test_shale_cmg_suite.py`（build-only 或 skip）。
 
 示例 CSV 由 `examples/_make_observations.py` 用本正演生成；改了网格或探头后重新跑一遍即可。

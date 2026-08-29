@@ -1,0 +1,33 @@
+-- Public PR keywords from OPM opm-tests compositional/1D_COMP.DATA
+EOS
+PR /
+
+CNAMES
+CO2 C1 nC10
+/
+
+ACF
+0.22394
+0.01142
+0.4884
+/
+PCRIT
+73.773
+45.992
+21.03
+/
+TCRIT
+304.128
+190.564
+617.7
+/
+MW
+44.00
+16.04
+142.28
+/
+BIC
+0
+0
+0
+/

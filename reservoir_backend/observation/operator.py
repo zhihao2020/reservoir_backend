@@ -128,6 +128,7 @@ class ObservationOperator:
         sensor: Sensor,
         state: State,
         port_rates: dict[str, float] | None = None,
+        port_bhp: dict[str, float] | None = None,
     ) -> float:
         if sensor.kind == "pressure":
             return self.sample_field(sensor, state.pressure)
@@ -147,6 +148,27 @@ class ObservationOperator:
                     f"phase_rate sensor {sensor.name}: missing rate for port {sensor.port_name}"
                 )
             return float(rates[sensor.port_name])
+        if sensor.kind in {"q_oil", "q_gas", "q_inj"}:
+            if not sensor.port_name:
+                raise InvalidObservation(f"{sensor.kind} sensor {sensor.name} needs port_name")
+            rates = port_rates or {}
+            key = str(sensor.port_name) + ":" + sensor.kind
+            if key in rates:
+                return float(rates[key])
+            if sensor.port_name in rates and sensor.kind == "phase_rate":
+                return float(rates[sensor.port_name])
+            raise InvalidObservation(
+                f"{sensor.kind} sensor {sensor.name}: missing rate for port {sensor.port_name}"
+            )
+        if sensor.kind == "bhp":
+            if not sensor.port_name:
+                raise InvalidObservation(f"bhp sensor {sensor.name} needs port_name")
+            bhps = port_bhp or {}
+            if sensor.port_name not in bhps:
+                raise InvalidObservation(
+                    f"bhp sensor {sensor.name}: missing BHP for port {sensor.port_name}"
+                )
+            return float(bhps[sensor.port_name])
         raise InvalidObservation(f"unknown sensor kind {sensor.kind}")
 
     def vector(
@@ -154,8 +176,9 @@ class ObservationOperator:
         sensors: list[Sensor],
         state: State,
         port_rates: dict[str, float] | None = None,
+        port_bhp: dict[str, float] | None = None,
     ) -> NDArray[np.float64]:
         return np.asarray(
-            [self.sample(s, state, port_rates=port_rates) for s in sensors],
+            [self.sample(s, state, port_rates=port_rates, port_bhp=port_bhp) for s in sensors],
             dtype=float,
         )

@@ -35,19 +35,6 @@ class RegionParameterization:
             raise ValueError(f"theta size {th.size} != {self.n_params}")
         return exp_permeability(th[self.region_id])
 
-    def sample_prior(
-        self,
-        n_ensemble: int,
-        mean: NDArray[np.float64] | float,
-        std: NDArray[np.float64] | float,
-        seed: int,
-    ) -> NDArray[np.float64]:
-        rng = np.random.default_rng(seed)
-        mu = np.broadcast_to(np.asarray(mean, dtype=float), (self.n_params,)).copy()
-        sig = np.broadcast_to(np.asarray(std, dtype=float), (self.n_params,)).copy()
-        ens = rng.normal(mu[None, :], sig[None, :], size=(int(n_ensemble), self.n_params))
-        return np.clip(ens, LOGK_MIN, LOGK_MAX)
-
 
 @dataclass
 class ContrastParameterization:
@@ -89,21 +76,6 @@ class ContrastParameterization:
         vals = np.array([log_k0, log_k1], dtype=float)
         return exp_permeability(vals[self.region_id])
 
-    def sample_prior(
-        self,
-        n_ensemble: int,
-        mean: NDArray[np.float64] | float,
-        std: NDArray[np.float64] | float,
-        seed: int,
-    ) -> NDArray[np.float64]:
-        rng = np.random.default_rng(seed)
-        mu0 = float(np.mean(np.asarray(mean, dtype=float)))
-        sig0 = float(np.mean(np.asarray(std, dtype=float)))
-        logk = rng.normal(mu0, max(sig0, 1.0e-8), size=int(n_ensemble))
-        logc = rng.normal(self.log_contrast_mean, self.log_contrast_std, size=int(n_ensemble))
-        ens = np.stack([logk, logc], axis=1)
-        return np.stack([self.project(row) for row in ens], axis=0)
-
 
 @dataclass
 class CoarseFieldParameterization:
@@ -138,37 +110,3 @@ class CoarseFieldParameterization:
         jj = np.floor(fj).astype(int)
         kk = np.floor(fk).astype(int)
         return exp_permeability(coarse[kk, jj, ii])
-
-    def sample_prior(
-        self,
-        n_ensemble: int,
-        mean: NDArray[np.float64] | float,
-        std: NDArray[np.float64] | float,
-        seed: int,
-        corr_cells: float = 1.5,
-    ) -> NDArray[np.float64]:
-        rng = np.random.default_rng(seed)
-        mu = np.broadcast_to(np.asarray(mean, dtype=float), (self.n_params,)).reshape(
-            self.nz, self.ny, self.nx
-        )
-        sig = float(np.mean(np.asarray(std, dtype=float)))
-        ens = []
-        for _ in range(int(n_ensemble)):
-            noise = rng.normal(0.0, 1.0, size=mu.shape)
-            if corr_cells > 0.5 and min(self.nx, self.ny, self.nz) > 1:
-                noise = _smooth3(noise, passes=max(1, int(round(corr_cells))))
-                noise = noise / (float(np.std(noise)) + 1.0e-30)
-            ens.append(np.clip((mu + sig * noise).ravel(), LOGK_MIN, LOGK_MAX))
-        return np.stack(ens, axis=0)
-
-
-def _smooth3(arr: NDArray[np.float64], passes: int) -> NDArray[np.float64]:
-    out = arr.astype(float, copy=True)
-    for _ in range(int(passes)):
-        padded = np.pad(out, 1, mode="edge")
-        acc = padded[1:-1, 1:-1, 1:-1] * 6.0
-        acc += padded[1:-1, 1:-1, 0:-2] + padded[1:-1, 1:-1, 2:]
-        acc += padded[1:-1, 0:-2, 1:-1] + padded[1:-1, 2:, 1:-1]
-        acc += padded[0:-2, 1:-1, 1:-1] + padded[2:, 1:-1, 1:-1]
-        out = acc / 12.0
-    return out

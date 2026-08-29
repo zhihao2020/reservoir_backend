@@ -40,6 +40,7 @@ class CartesianGrid:
     dy: NDArray[np.float64]
     dz: NDArray[np.float64]
     origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    active: NDArray[np.bool_] | None = None
 
     def __post_init__(self) -> None:
         for name in ("nx", "ny", "nz"):
@@ -49,6 +50,13 @@ class CartesianGrid:
         object.__setattr__(self, "dx", _positive_spacing("dx", self.dx, self.nx))
         object.__setattr__(self, "dy", _positive_spacing("dy", self.dy, self.ny))
         object.__setattr__(self, "dz", _positive_spacing("dz", self.dz, self.nz))
+        if self.active is not None:
+            act = np.asarray(self.active, dtype=bool).ravel()
+            if act.size != self.nx * self.ny * self.nz:
+                raise GridError(
+                    "active length " + str(int(act.size)) + " != " + str(self.nx * self.ny * self.nz)
+                )
+            object.__setattr__(self, "active", act)
 
     @classmethod
     def uniform(
@@ -116,7 +124,10 @@ class CartesianGrid:
 
     def cell_volumes(self) -> NDArray[np.float64]:
         vol_ijk = self.dz[:, None, None] * self.dy[None, :, None] * self.dx[None, None, :]
-        return vol_ijk.ravel()
+        vol = vol_ijk.ravel()
+        if self.active is not None:
+            vol = np.where(self.active, vol, 0.0)
+        return vol
 
     def cell_centers(self) -> NDArray[np.float64]:
         cx = self.edge_x()[:-1] + 0.5 * self.dx

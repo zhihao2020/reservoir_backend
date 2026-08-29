@@ -1,0 +1,100 @@
+geometry:
+  size_m: [0.3, 0.3, 0.3]
+
+grid:
+  type: cartesian
+  spacing_m: 0.01
+
+physics:
+  model: two_phase_immiscible
+  capillary: brooks_corey
+  gravity: false
+  pvt: incompressible
+  sw_init: 0.20
+  p_init: 1.0e5
+  dt_init: 2.0
+  dt_max: 20.0
+  transport: implicit
+
+rock:
+  porosity: 0.20
+
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    perforation: column
+    x: 0.005
+    y: 0.15
+    sw_inj: 0.85
+  - name: PROD
+    role: producer
+    control: pressure
+    perforation: column
+    x: 0.295
+    y: 0.15
+
+sensors_defaults:
+  probe_diameter_m: 0.006
+
+# Same (x, y) column, different z: real probes / well gauges are not mid-plane.
+sensors:
+  - name: P_in_bot
+    kind: pressure
+    x: 0.08
+    y: 0.15
+    z: 0.05
+    sigma: 2.0e3
+  - name: P_in_top
+    kind: pressure
+    x: 0.08
+    y: 0.15
+    z: 0.25
+    sigma: 2.0e3
+  - name: P_out_bot
+    kind: pressure
+    x: 0.22
+    y: 0.15
+    z: 0.05
+    sigma: 2.0e3
+  - name: P_out_top
+    kind: pressure
+    x: 0.22
+    y: 0.15
+    z: 0.25
+    sigma: 2.0e3
+  - name: S_mid_bot
+    kind: saturation
+    x: 0.15
+    y: 0.15
+    z: 0.06
+    sigma: 0.04
+  - name: S_mid_top
+    kind: saturation
+    x: 0.15
+    y: 0.15
+    z: 0.24
+    sigma: 0.04
+
+inverse:
+  parameterization: region
+  region_axis: z
+  n_regions: 2
+  max_iter: 8
+
+experiment:
+  history_end_s: 600
+  holdout_sensors: [P_out_top, S_mid_bot]
+  controls:
+    - port: INJ
+      kind: rate
+      times: [0, 600, 1000]
+      values: [3.0e-8, 3.0e-8, 3.0e-8]
+    - port: INJ
+      kind: composition
+      times: [0, 1000]
+      values: [0.85, 0.85]
+    - port: PROD
+      kind: pressure
+      times: [0, 1000]
+      values: [1.0e5, 1.0e5]

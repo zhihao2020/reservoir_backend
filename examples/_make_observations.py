@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from reservoir_backend.apply import attach_two_layer_demo, write_observation_csv
+from reservoir_backend.twin.apply import attach_two_layer_demo, write_observation_csv
 from reservoir_backend.io.case import load_case
 
 ROOT = Path(__file__).resolve().parent

@@ -3,7 +3,7 @@
 300 mm 立方试块的**实验室多相渗流数字孪生反演后端**。
 
 ```text
-探头 CSV → 控制 u(t) → 先验 m → 正演 F → 观测算子 H → ES-MDA → 后验 K → F(m_post)
+探头 CSV → 控制 u(t) → 先验 m → 正演 F → 观测算子 H → LM(θ) → \(\hat K\) → F(\(\hat m\))
 ```
 
 饱和度是动态状态，不是物性场。反演默认 2-region log K，不是逐格 \(K\)。一次实验只交一份后验场，不要和 CMG 全场逐格去对。
@@ -59,8 +59,8 @@ reservoir apply examples/two_layer/case.yaml --demo --output results/examples/tw
 
 | 文件 | 含义 |
 |------|------|
-| `k_mean.npy` / `k_std.npy` | 后验渗透率 |
-| `pressure_mean.npy`、`sw_mean.npy`、`so_mean.npy` | \(F(m_{\mathrm{post}})\) 重建的三维场 |
+| `k.npy` | 拟合后的渗透率 |
+| `pressure.npy`、`sw.npy`、`so.npy` | \(F(\hat m)\) 重建的三维场 |
 | `apply.json` | \(\theta\)、拟合 / hold-out / 预报 |
 | `figures/posterior_fields_xz.png` | 剖面图 |
 
@@ -88,16 +88,15 @@ time_s,sensor,kind,value,sigma,holdout
 `apply` 不够用时再碰这些。`invert` 没有观测时用 `--self-check`，和 `apply --demo` 是同一类自检。
 
 ```bash
-reservoir validate config/lab_30cm.yaml
-reservoir simulate config/lab_30cm.yaml --output results/sim
-reservoir invert   config/lab_30cm.yaml --self-check --output results/inv
-reservoir invert   config/lab_30cm.yaml --preset balanced
-reservoir invert   config/lab_30cm.yaml --auto --time-limit 120
-reservoir forecast config/lab_30cm.yaml --output results/fc
+reservoir validate examples/lab/lab_30cm.yaml
+reservoir simulate examples/lab/lab_30cm.yaml --output results/sim
+reservoir invert   examples/lab/lab_30cm.yaml --self-check --output results/inv
+reservoir invert   examples/lab/lab_30cm.yaml --auto --time-limit 120
+reservoir forecast examples/lab/lab_30cm.yaml --output results/fc
 reservoir synthetic --output results/syn
 ```
 
-验收签字仍可用 `config/lab_apply.yaml --demo`。全网格 10 mm / \(30^3\) 是 `config/lab_30cm.yaml`，比示例慢。
+验收签字仍可用 `examples/lab/lab_apply.yaml --demo`。全网格 10 mm / \(30^3\) 是 `examples/lab/lab_30cm.yaml`，比示例慢。
 
 ## 当前物理（P0）
 
@@ -106,15 +105,15 @@ reservoir synthetic --output results/syn
 - Model C：三相 IMPES（`*SWT`+`*SLT` + Stone II；活油 \(G^s=\varphi(b_g S_g+R_s b_o S_o)\)）
 - 毛管：Brooks–Corey / van Genuchten / none，由 case 显式选择（实验室默认 Brooks–Corey）
 - 端口：定流量（地面）或定压，不是默认 Peaceman 油藏井
-- 反演：默认 2-region log K + ES-MDA。PVT 不进 \(\theta\)
+- 反演：默认 2-region log K 或已知图的 contrast，LM 拟合井史。PVT 不进 \(\theta\)
 - 后验：\(K\) 均值/标准差，以及 \(F(m_{\mathrm{post}})\) 的 \(p,S_w,S_o\)
 - 时间：内部一律秒
 
 ## 明确未做
 
-全隐式组分闪蒸、EnKF、MPFA、动态 AMR、神经网络代替正演。实验室三相仍可用独立 Corey。
+济阳 GEM 组分牌、水相组分、热、EnKF、MPFA、动态 AMR、神经网络代替正演。等温 EXAMPLE 组分（C1–nC10）是可选 \(F\)：`physics.model: compositional`，`examples/compositional/comp_example.yaml`。实验室三相仍可用独立 Corey。
 
-`black_oil/` 与 `shale_oil/` 下的旧四场/CMG 脚本不再接入本内核。
+`validation/` 下的离线 CMG/GEM 尺子不再接入本内核。
 
 ## 测试
 

@@ -25,8 +25,12 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["reservoir_backend*"]
-exclude = ["tests*", "benchmarks*", "examples*", "scripts*", "docs*", "specs*", "config*", "results*", "accuracy_reports*", "validation_reports*", "profiling_reports*", "references*", "requirements*"]
+exclude = ["tests*", "benchmarks*", "examples*", "scripts*", "docs*", "specs*", "results*", "accuracy_reports*", "validation_reports*", "profiling_reports*", "references*", "requirements*", "validation*", "scratch*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "slow: long compositional apply/invert demos (deselect with -m \"not slow\")",
+]
+addopts = "-m \"not slow\""

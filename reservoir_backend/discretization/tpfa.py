@@ -39,6 +39,63 @@ class TpfaSystem:
     g_z: NDArray[np.float64] | None = None
 
 
+
+def _series_half_t(k_l, k_r, g_l, g_r):
+    """Two-point T from half-transmissibilities: series combination."""
+    tl = np.asarray(k_l, dtype=float) * np.asarray(g_l, dtype=float)
+    tr = np.asarray(k_r, dtype=float) * np.asarray(g_r, dtype=float)
+    out = np.zeros(tl.shape, dtype=float)
+    ok = (tl > 0.0) & (tr > 0.0)
+    out[ok] = (tl[ok] * tr[ok]) / (tl[ok] + tr[ok])
+    return out
+
+
+def _cpg_geometric_transmissibility(grid, kx, ky, kz, mult_x, mult_y, mult_z):
+    """CPG-TPFA using grid.cpg_half_geom, then face_mult."""
+    n = grid.n_cells
+    kx_ijk = grid.reshape_ijk(as_cell_field(kx, n, "kx"))
+    ky_ijk = grid.reshape_ijk(as_cell_field(ky if ky is not None else kx, n, "ky"))
+    kz_ijk = grid.reshape_ijk(as_cell_field(kz if kz is not None else kx, n, "kz"))
+    half = grid.cpg_half_geom
+    nz, ny, nx = grid.nz, grid.ny, grid.nx
+    if nx > 1:
+        t_x = _series_half_t(kx_ijk[:, :, :-1], kx_ijk[:, :, 1:], half.g_x_left, half.g_x_right)
+        if mult_x is not None:
+            t_x = t_x * np.asarray(mult_x, dtype=float)
+    else:
+        t_x = np.zeros((nz, ny, 0), dtype=float)
+    if ny > 1:
+        t_y = _series_half_t(ky_ijk[:, :-1, :], ky_ijk[:, 1:, :], half.g_y_left, half.g_y_right)
+        if mult_y is not None:
+            t_y = t_y * np.asarray(mult_y, dtype=float)
+    else:
+        t_y = np.zeros((nz, 0, nx), dtype=float)
+    if nz > 1:
+        t_z = _series_half_t(kz_ijk[:-1, :, :], kz_ijk[1:, :, :], half.g_z_left, half.g_z_right)
+        if mult_z is not None:
+            t_z = t_z * np.asarray(mult_z, dtype=float)
+    else:
+        t_z = np.zeros((0, ny, nx), dtype=float)
+    return t_x, t_y, t_z
+
+
+def _mask_inactive_t(grid, t_x, t_y, t_z):
+    """Zero T on faces that touch an ACTNUM/inactive cell."""
+    active = getattr(grid, "active", None)
+    if active is None:
+        return t_x, t_y, t_z
+    a = np.asarray(active, dtype=bool).reshape((grid.nz, grid.ny, grid.nx))
+    if np.all(a):
+        return t_x, t_y, t_z
+    if t_x.size:
+        t_x = np.asarray(t_x, dtype=float) * (a[:, :, :-1] & a[:, :, 1:])
+    if t_y.size:
+        t_y = np.asarray(t_y, dtype=float) * (a[:, :-1, :] & a[:, 1:, :])
+    if t_z.size:
+        t_z = np.asarray(t_z, dtype=float) * (a[:-1, :, :] & a[1:, :, :])
+    return t_x, t_y, t_z
+
+
 def geometric_transmissibility(
     grid: CartesianGrid,
     kx: NDArray[np.float64],
@@ -50,6 +107,11 @@ def geometric_transmissibility(
     mult_z: NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Face T_geom such that Q_α = T_geom λ_α (Φ_L − Φ_R)."""
+    if getattr(grid, "cpg_half_geom", None) is not None:
+        t_x, t_y, t_z = _cpg_geometric_transmissibility(
+            grid, kx, ky, kz, mult_x, mult_y, mult_z
+        )
+        return _mask_inactive_t(grid, t_x, t_y, t_z)
     n = grid.n_cells
     kx_ijk = grid.reshape_ijk(as_cell_field(kx, n, "kx"))
     ky_ijk = grid.reshape_ijk(as_cell_field(ky if ky is not None else kx, n, "ky"))
@@ -85,7 +147,7 @@ def geometric_transmissibility(
             t_z = t_z * np.asarray(mult_z, dtype=float)
     else:
         t_z = np.zeros((0, ny, nx), dtype=float)
-    return t_x, t_y, t_z
+    return _mask_inactive_t(grid, t_x, t_y, t_z)
 
 
 def _upwind_pair(

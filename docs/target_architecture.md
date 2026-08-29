@@ -2,7 +2,7 @@
 
 日期：2026-08-15  
 对应：`docs/check.txt`、`docs/audit_2026.md`  
-原则：简单、显式、可测、物理正确。不为目录漂亮先搬文件。不为旧 API / 旧测试加 shim。
+原则：简单、显式、可测、物理正确。不为旧 API / 旧测试加 shim。仓库目录按角色分层（`examples/` 算例、`validation/` 离线尺子、`reservoir_backend/` 产品包）；搬家不改正演公式。
 
 ---
 
@@ -51,7 +51,7 @@ ObservationOperator H            点 / 体积 / 端口
     |
 Predicted Observation d_sim
     |
-Assimilator (ES-MDA)             在 θ 空间更新
+Assimilator (LM)                 在 θ 空间更新
     |
 Posterior Parameters m_post
     |
@@ -85,7 +85,7 @@ solver          压力、输运、时间步、线性求解
     ↑
 observation     H：与网格解耦
     ↑
-inverse         Parameterization、ES-MDA、诊断
+inverse         Parameterization、LM、诊断
     ↑
 twin            calibrate / forecast / reconstruct（薄编排）
     ↑
@@ -183,35 +183,30 @@ ObservationOperator
 
 ### 4.6 inverse
 
-P0 只做完整 ES-MDA：
+P0 只做低维 θ 上的 Levenberg–Marquardt：
 
 ```text
 Parameterization
     RegionParameterization      默认 2-region log K；`--auto` 可试 1/2/3 层
     ContrastParameterization    已知高渗体；符号不反演
     CoarseFieldParameterization 可选，不是产品默认
-    # 通道管 / 裂缝 θ 可保留为一种 Region/结构参数，禁止自动当万能先验
 
 Assimilator
-    ESMDA                       P0 必须完整
-    IES                         P2 再写，现在不留空类
-    EnKF                        P2，online 状态
-
-Diagnostics
-    data mismatch (whitened + rᵀR⁻¹r)
-    ensemble spread
-    prior vs posterior variance
-    failed members
+    LM                          白化 misfit + Tikhonov；FD Jacobian
+    post_ensemble (optional)    Ne=8 高斯采样 around \(\hat\theta\)；输出 \(\sigma_K\) 摘要，**不是** ES-MDA
 ```
+
+与 `docs/check.txt` §28 的偏离：不恢复 ES-MDA；ensemble 仅用于 LM 后验不确定性摘要。见 `docs/check83_acceptance.md`。
 
 默认**禁止**每 cell 独立反演 27k 个 K。全网格 log k 若保留，只能作为专家开关，并强制 localization + 明确欠定警告。
 
 ### 4.7 twin
 
 ```python
-twin.calibrate(history)   # offline ES-MDA on θ
+twin.calibrate(history)   # LM on θ
+twin.assimilate(post, new_obs)  # LM warm-start stub（增量更新 MVP）
 twin.forecast(controls)   # freeze m
-twin.reconstruct(time)    # E[x], σ[x] from posterior ensemble
+twin.reconstruct(time)    # F(θ̂) at one time
 ```
 
 不在 twin 里写 PDE 或 Kalman 公式。
@@ -246,14 +241,11 @@ for n in timesteps:                          # 自适应 Δt
 
 ```text
 1. 读 Experiment：划分 control / assimilate / hold-out / forecast 时段
-2. 选 Parameterization（默认 2-region log K，不是 6³ / 逐格）
-3. 在 θ 空间抽样 ensemble（log K，固定 seed）
-4. 每个成员：θ → K → F(m, u_history) → H(x) → d_sim
-5. ES-MDA 多步更新（现有 ensemble_math）
-6. 失败成员：重试小 Δt / 标记 / 失败比例超阈值则中止
-7. 输出 θ/K 的 mean、std、分位数；用后验 ensemble 再跑 F 得 p/S 统计
-8. 打印 assimilation RMSE 与 hold-out RMSE
-9. 冻结 m，用未来 controls 做 forecast，评分
+2. 选 Parameterization（默认 2-region log K 或已知图 contrast）
+3. 从先验均值起步，LM + FD Jacobian 更新 θ
+4. 输出 \(\hat\theta\)、\(K=\mathrm{expand}(\hat\theta)\)、Hessian 对角 σ
+5. 打印 assimilation RMSE 与 hold-out RMSE
+6. 冻结 m，用未来 controls 做 forecast，评分
 ```
 
 产品 invert **必须**能留出测点。`probe_split` 从「可选评估」改成 inversion API 的一等参数。
@@ -264,7 +256,7 @@ for n in timesteps:                          # 自适应 Δt
 |------|----------------|--------|
 | 把 \(F\) 改到和 IMEX 一样，再收回 \(K_{\mathrm{CMG}}\) | 调参 / history match | **禁止**当主线目标 |
 | 同一套井控 \(u(t)\)，用实验室 \(F\) 解释测点 | 数字孪生反演 | **要做** |
-| 换另一套正演引擎当 \(F\) | 换正演引擎 | 以后可插，不改变 \(H\) 和 ES-MDA |
+| 换另一套正演引擎当 \(F\) | 换正演引擎 | 以后可插，不改变 \(H\) 和 LM |
 
 工况对齐清单（和 CMG 或真实实验）：
 
@@ -279,21 +271,9 @@ for n in timesteps:                          # 自适应 Δt
 
 跨模拟器 / 真实生产的通过标准是观测、hold-out、预报变好。后验 \(K\) 是「我们的 \(F\) 下能解释数据的等效渗透率」，不是 CMG 格子 \(K\)。
 
-### 6.2 从 AutoGluon 迁过来的（不是把反演做成表格模型）
+### 6.2 `--auto` 搜构造
 
-迁的是用法，不是 LightGBM / 堆叠回归。
-
-| AutoGluon | 这里 |
-|-----------|------|
-| `presets='best_quality'` | `fast` / `balanced` / `strict`：只改 \(N_e,N_a,\sigma_{\mathrm{prior}}\) |
-| `time_limit` | `time_limit_s`：MDA 步或 portfolio 用完就停 |
-| `leaderboard()` | 几个反演设计按 **hold-out 测点** 排序 |
-| 多模型再加权 | 可选：hold-out 加权混合 \(K\)，变差就丢掉 |
-| 少做 HPO | **禁止**外层搜 K 或把 \(F\) 搜成 IMEX |
-
-用户面：`twin.calibrate(preset="balanced")` 或 `twin.calibrate_auto(time_limit_s=120)`。  
-`--auto` 跑 **ES / ES-MDA / ES-MDA-RS**（思想来自 dass、Equinor IES、pyesmda，代码自研不 import 参考库）。  
-排行用 hold-out。赢家做 \(1/\mathrm{hold}^2\) 加权混合 \(K\)，hold-out 变差就丢掉。
+没有 `region_map` 时，`--auto` 在均匀 / 2 区 / 3 层 / contrast 上各跑一次 LM，hold-out 选赢家。禁止搜格子 \(K\)。
 
 ---
 
@@ -324,15 +304,16 @@ physics:
   model: two_phase_immiscible
   capillary: brooks_corey      # 或 none（必须显式）
   gravity: false
-  pvt: incompressible
+  pvt: incompressible          # 或 cmg_seawater（矿场牌组）；mapping 预留标量 μ
+  # pvt:
+  #   preset: cmg_seawater
+  #   mu_w: 1.1e-3             # 死油/不可压覆盖；活油表优先
+  #   mu_o: 0.64e-3
 
 inverse:
-  algorithm: esmda
   parameterization: region   # default 2-region log K
   n_regions: 2
-  ensemble_size: 40
-  assimilation_steps: 4
-  seed: 7
+  max_iter: 8
 
 experiment:
   controls: controls.csv
@@ -353,7 +334,7 @@ reservoir forecast case.yaml
 reservoir synthetic bench.yaml
 ```
 
-替换 `--mode slice/series/discovery/esmda`。
+`invert --auto` 只搜构造。
 
 ---
 
@@ -369,7 +350,7 @@ reservoir synthetic bench.yaml
 | 两相 | Buckley–Leverett 无毛管 | 锋面位置、剖面、含水率 |
 | 守恒 | 每步 mass balance report | 相对误差阈值；clip 不得冒充守恒 |
 | 毛管 | Pc 单调、毛细平衡 | solver 旧测试恢复并接线 |
-| 反演数学 | 线性高斯 ES-MDA | 后验均值/方差与解析比 |
+| 反演数学 | 线性高斯 LM | \(\hat\theta\) 靠近真值，misfit 下降 |
 | Synthetic | \(K_{true}\) 分层/通道；噪声已知 | data misfit 降；hold-out 降；真值在合理后验带 |
 | 时间外推 | 前 60% 同化，后 40% 冻结预测 | 预测误差写入报告 |
 
@@ -386,11 +367,11 @@ reservoir synthetic bench.yaml
 3. **时间与单位**：内部秒；删 day 启发式。
 4. **IMPES Model B**：接线 saturation_solver + 边界通量 + 自适应 dt + 质量报告。
 5. **毛管**：30 cm case 显式选择模型。
-6. **Parameterization**：默认 2-region log K；ES-MDA 只更新 θ。
+6. **Parameterization**：默认 2-region log K；LM 只更新 θ。
 7. **产品 invert**：用 G(m)+H，去掉指示混合、舌头、0.7/0.3。
 8. **Synthetic truth**：观测必须来自 \(H(F(m_{true}))\)。
 9. **Hold-out + forecast** 测试与 example。
-10. 最后再按 §39 迁目录、删 `pipeline` 上帝模块、删 Archie loader。
+10. **目录**：`pipeline` / Archie 已删；算例在 `examples/`，离线尺子在 `validation/{black_oil,shale_oil,jiyang}`，包根散文件收进 `twin/` / `synthetic`（已完成）。
 
 ---
 

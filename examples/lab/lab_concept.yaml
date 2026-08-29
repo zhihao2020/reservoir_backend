@@ -1,0 +1,74 @@
+# PetroChina 30 cm concept lab (水驱).
+# Numbers copied from references/concecpt (条件.txt, 测点.xlsx). Product code
+# does not import references/.
+#
+# 条件.txt: 30 cm cube; left constant-rate injection; right constant-pressure;
+# other faces closed. Saturation probes: resistivity + acoustic, non-overlapping;
+# pressure probes exist but 条件.txt / 测点.xlsx give no pressure xyz.
+# 测点.xlsx: 75 resistivity (底面/界面/顶面, 5 cm) + 16 新增 7.5 cm on 底面.
+# 测点位置.pptx: also 12 acoustic + 8 EM at 75 mm top-bottom, no xyz table —
+# those 20 are not invented here.
+# 单层所有点.m is the same 5x5+16 surface mesh; it does not override the xlsx.
+
+geometry:
+  size_m: [0.3, 0.3, 0.3]
+
+grid:
+  type: cartesian
+  spacing_m: 0.01
+
+physics:
+  model: two_phase_immiscible
+  capillary: brooks_corey
+  gravity: false
+  pvt: incompressible
+  sw_init: 0.20
+  p_init: 1.0e5
+  dt_init: 2.0
+  dt_max: 20.0
+  transport: implicit
+
+rock:
+  porosity: 0.20
+
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    perforation: column
+    x: 0.005
+    y: 0.15
+    sw_inj: 0.85
+  - name: PROD
+    role: producer
+    control: pressure
+    perforation: column
+    x: 0.295
+    y: 0.15
+
+sensors_defaults:
+  probe_diameter_m: 0.006
+
+sensors: concept_probes.csv
+
+inverse:
+  parameterization: region
+  region_axis: z
+  n_regions: 2
+  max_iter: 8
+
+experiment:
+  history_end_s: 600
+  controls:
+    - port: INJ
+      kind: rate
+      times: [0, 600, 1000]
+      values: [3.0e-8, 3.0e-8, 3.0e-8]
+    - port: INJ
+      kind: composition
+      times: [0, 1000]
+      values: [0.85, 0.85]
+    - port: PROD
+      kind: pressure
+      times: [0, 1000]
+      values: [1.0e5, 1.0e5]

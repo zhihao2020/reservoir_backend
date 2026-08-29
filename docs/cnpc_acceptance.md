@@ -6,9 +6,9 @@
 ## 1. 交付物
 
 - 源代码与可安装 Python 包（`reservoir` CLI）
-- 30 cm 算例：`config/lab_30cm.yaml`、`config/lab_apply.yaml`
-- 测点 CSV 模板：`config/observations_template.csv`
-- 已知通道填砂算例：`config/lab_channel.yaml`
+- 30 cm 算例：`examples/lab/lab_30cm.yaml`、`examples/lab/lab_apply.yaml`
+- 测点 CSV 模板：`examples/lab/observations_template.csv`
+- 已知通道填砂算例：`examples/lab/lab_channel.yaml`
 - 本文件：验收口径（签字用）
 
 ## 2. 验收通过（必须同时满足）
@@ -17,8 +17,8 @@
 
 ```text
 python -m pip install -e .
-reservoir validate config/lab_30cm.yaml
-reservoir apply config/lab_apply.yaml --demo --output results/lab
+reservoir validate examples/lab/lab_30cm.yaml
+reservoir apply examples/lab/lab_apply.yaml --demo --output results/lab
 pytest -q
 ```
 
@@ -33,9 +33,9 @@ pytest -q
 
 ## 3. 有实测点时怎么交
 
-1. 按 `config/observations_template.csv` 填时间、传感器、压力(Pa)或饱和度(0–1)、sigma
+1. 按 `examples/lab/observations_template.csv` 填时间、传感器、压力(Pa)或饱和度(0–1)、sigma
 2. 在 YAML 的 `experiment.observations` 指向该 CSV
-3. 去掉 `--demo`，执行 `reservoir apply config/lab_apply.yaml --output results/lab`
+3. 去掉 `--demo`，执行 `reservoir apply examples/lab/lab_apply.yaml --output results/lab`
 4. 分区与岩样一致：层状用 `region_axis: z`；已知通道用 `lab_channel.yaml` 的 `region_map`
 5. 探头直径默认 6 mm；sigma 用该探头重复性，不要沿用模板里的 2 kPa / 0.04
 
@@ -54,8 +54,8 @@ pytest -q
 `results/lab/` 下：
 
 - `apply.json`：theta、identifiability、assimilate/hold-out/forecast、质量守恒
-- `k_mean.npy` / `k_std.npy`：后验渗透率
-- `pressure_mean.npy`、`sw_mean.npy`、`so_mean.npy`：F(m_post) 重建场
+- `k.npy`：拟合渗透率
+- `pressure.npy`、`sw.npy`、`so.npy`：F(m_hat) 重建场
 - `figures/posterior_fields_xz.png`：剖面图
 
 ## 6. 交付前还差（内部）

@@ -5,9 +5,10 @@
 - 正演 \(F\) 默认仍是顺序黑油：TPFA 压力 + 后向 Euler 隐式饱和度。守恒仍是 \(\partial_t(\varphi b_\alpha S_\alpha)+\nabla\cdot(b_\alpha v_\alpha)=q_\alpha^s\)
 - 实验室物理实验默认 \(B=1,c=0\)（同一套方程的不可压特例）
 - CMG 虚拟实验用牌组同款 PVT（`BlackOilPVT.cmg_seawater`：`*BWI/*CW/*CO/*CPOR`，泡点下未饱和 \(B_o\)）
-- 三相：`*SWT`+`*SLT` 表 + Stone II。默认是顺序黑油：冻 \(v_T\)，耦合隐式 \((S_w,S_g)\)，守恒 **油 + 地面气**；油表面通量用面上迎风 \(b_o\)。输运 extras 默认 **势迎风**（Brenier–Jaffré 含 \(v_T\)，顺序黑油默认）；`upwind_type=hybrid` 才把粘性和重力拆开。牛顿过残余饱和度截断。活油在闪蒸后和步末更新压力时按增量容差迭代。步末 P→T→P。`fully_implicit` 才走耦合牛顿，活油主变量是 \((p,S_w,x)\)：无游离气时 \(x=R_s\)，油气两相时 \(x=S_g\)（`switch_live_oil_unknown` / `liberate_excess_gas`，见 `docs/fim_name_map.md`）。失败砍步，不退回顺序。放气尺子闸门（约 ≤6.5 psi 且均 \(S_g\) 贴近顺序）未过前，产品默认仍关 FIM。格子级 AIM 还没接。
+- 三相：`*SWT`+`*SLT` 表 + Stone II。默认是顺序黑油：冻 \(v_T\)，耦合隐式 \((S_w,S_g)\)，守恒 **油 + 地面气**；油表面通量用面上迎风 \(b_o\)。输运 extras 默认 **势迎风**（Brenier–Jaffré 含 \(v_T\)，顺序黑油默认）；`upwind_type=hybrid` 才把粘性和重力拆开。牛顿过残余饱和度截断。活油在闪蒸后和步末更新压力时按增量容差迭代。步末 P→T→P。`fully_implicit` 才走耦合牛顿，活油主变量是 \((p,S_w,x)\)：无游离气时 \(x=R_s\)，油气两相时 \(x=S_g\)（一次切换 `switch_live_oil_unknown` + 步末可选 `liberate_excess_gas`，见 `docs/fim_name_map.md`）。失败砍步，不退回顺序。放气尺子闸门（约 ≤6.5 psi 且均 \(S_g\) 贴近顺序）未过前，产品默认仍关 FIM。格子级 AIM 还没接。
 - 活油：`BlackOilPVT.cmg_seawater` 带牌组 \(R_s,B_o,E_g,\mu_o,\mu_g\) 表。地面气 \(G^s=\varphi(b_g S_g+R_s b_o S_o)\)，通量带油相溶解气。\(p\ge p_b\) 时 \(R_s\) 封顶、\(B_o\) 用 `*CO`、\(dR_s/dp=0\)；\(p<p_b\) 时饱和插值，压力存储加 \(S_o(b_o/b_g)\,dR_s/dp\)。压力步后先闪蒸再算相通量，输运后再按总气量闪蒸。不是全隐式组分闪蒸。
-- \(\theta\) 只有岩石（log \(K\)）。PVT 是实验已知流体，不反演
+- \(\theta\) 只有岩石（log \(K\)）。PVT 是实验已知流体，不反演。Case 入口：`physics.pvt` → `io.pvt_cfg.pvt_from_cfg`；相对渗透率 \(\mu\) 从同一份盖章
+- 组分 EXAMPLE（可选 \(F\)，`physics.model: compositional`）：等温两相气–油，Peng–Robinson + PT 闪蒸，主变量 \((n_i,p)\)。流体是公开 C1–nC10（Reid/Prausnitz/Poling 临界参数，Katz–Firoozabadi \(k_{ij}\)），常数 \(\mu\)。无水、无热、不编造济阳 Tc/Pc。饱和度由闪蒸摩尔体积得到，不走黑油 \(S_g\leftrightarrow R_s\)。接线在 `solver/fi_comp.py`，不改 `solver/fi.py`。入口 `examples/compositional/comp_example.yaml`。定流量井的井底压 \(p_{\mathrm{wf}}\) 是观测（控制是率）。有 \(H=p_{\mathrm{wf}}\) 后高渗带 \(K\) 可收回；低渗带对比度有阻尼。无井底压时并联两带的压力场几乎看不见绝对 \(K\)。Jacobian 的 coloring FD 不算观测用 \(p_{\mathrm{wf}}\)；报告时刻取最近接受步。Immiscible 水相可选：`physics.has_water: true`，未知量多 \(n_w\)，水不进 PR 闪蒸；EXAMPLE 孪生可带 \(S_w\) 观测做 2-region LM（`tests/cases/test_comp_water.py`）。公开 PR 牌：`physics.fluid.file`（YAML 或 Eclipse `TCRIT`/`PCRIT`/`ACF`/`MW`/`BIC`），缺文件或缺临界量则拒绝，不编造济阳 Tc/Pc。
 
 ## 开源改编（FIM）
 
@@ -15,7 +16,8 @@
 
 ## 可压缩性 / PVT
 
-- `physics.pvt: incompressible | cmg_seawater`；YAML 里 `compressibility: <ct>` 仍可生成均匀岩石 \(c_r\)
+- `physics.pvt: incompressible | slightly_compressible | cmg_seawater`（别名 `cmg` / `black_oil`）。也可写成 mapping：`pvt: {preset: cmg_seawater, mu_w: ...}`——标量 \(\mu\) 仅覆盖死油/不可压常数场；活油表 \(\mu(p)\) 仍优先。用户可在同一 mapping 里给 SI 表 `p`/`p_tab`、`rs`/`rs_tab`、`bo`/`bo_tab`、`eg`/`eg_tab`（或 `bg`/`bg_tab`，写入 \(E_g=1/B_g\)）、`muo`/`muo_tab`、`mug`/`mug_tab`；有表的列覆盖 preset。可选 `file` / `pvto` 指向同格式 YAML/JSON sidecar（相对 case YAML 目录），或 CMG/IMEX `*PVTO`/`*PVTW`/`*PVDG`/`*PVT` 文本（默认 field：psi、scf/stb、cP，与 `cmg_seawater` 相同，换算进 SI；`*INUNIT *SI` 为 kPa + sm3/sm3 + cP）。水默认仍是线性 \(b_w\)；给了 `p_w`/`bw` 才按表插值 \(B_w\)。YAML 里 `compressibility: <ct>` 仍可生成均匀岩石 \(c_r\)（无 `pvt` 时等价 `slightly_compressible`）
+- 工厂：`io.pvt_cfg.pvt_from_cfg`。相对渗透率 \(\mu\) 从同一份 PVT 盖章。\(\theta\) 不含黏度
 - \(b_W=(1+c_w(p-p_{\mathrm{ref}}))/B_{W,\mathrm{ref}}\)，油相同；\(\varphi(p)=\varphi_{\mathrm{ref}}(1+c_r(p-p_{\mathrm{ref}}))\)
 - 定流量是地面流量。压力方程右端是 \(q^s/b\)。不可压全流量系统才钉压力基准；有存储项时不钉（否则均值压升被抽掉）
 - 活油守恒 + 表黏度已进三相 \(F\)。`*PVT` 的 \(E_g\)（scf/RB）和 \(R_s\) 一样乘 \(0.178\) 进 SI，否则气密度会被算成原油量级、放气偏少。气相压缩用 \(E_g\) 表导数。压力步闪蒸后用新 \(\lambda,c_t\) 再解一次压力。
@@ -54,6 +56,7 @@
 ## 网格
 
 - 推荐 baseline：300 mm / 10 mm / \(30^3\)
+- Variable Cartesian layering: `grid.dx`/`dy`/`dz` (aliases `DX`/`DY`/`DZ`) scalar or 1-D list along that axis; `geometry.size_m` must equal the axis sums. Optional `grid.file` relative to the case: YAML/JSON sidecar, or a CMG/Eclipse `*GRID` snippet `.grdecl` / `.dat`. Keywords (with or without `*`): CART/CARTESIAN, CORNER/CORNER-POINT, GRID, SPECGRID/DIMENS, NX/NY/NZ, DX/DY/DZ (aliases DI/DJ/DK; scalar, `*CON`, or n-vector along that axis), COORD, ZCORN (Eclipse order: COORD (nx+1)*(ny+1)*6, ZCORN 8*nx*ny*nz), ACTNUM (0 = inactive). DX/DY/DZ and no COORD/ZCORN builds CartesianGrid; COORD+ZCORN builds CornerPointGrid. Inactive cells get volume 0 and T=0 (same hook as zero-volume CPG cells). No NNC, PINCHOUT, faults, `*PVTO`, or wells.
 - 场主表示 `(n_cells,)`
 - 传感器坐标不必落在节点上
 - 探头直径 6 mm；H 在插值场上做球平均
@@ -64,39 +67,24 @@
 - 控制量与观测分离：一口端口同一时刻不能既定流量又定压并两边都当数据
 - 默认参数化是 2-region log K，不是粗网格 6³ / 逐格 K
 - 层数不必写死为 2。`--auto` 在离散目录（均匀 / 2 层 / 3 层 / 顶高或底高 contrast）上按 hold-out 选。给了 `region_map` 就用图，不猜
-- 已知高渗体（层、通道）用对比度 \(\theta=(\log k_{\mathrm{lo}},\log(k_{\mathrm{hi}}/k_{\mathrm{lo}}))\)，\(k_{\mathrm{hi}}\ge k_{\mathrm{lo}}\)。符号是构造，数值才反演。对比度先验必须能覆盖几十倍，否则 ensemble 会停在「高基质 + 弱通道」的等效模态上
+- 已知高渗体（层、通道）用对比度 \(\theta=(\log k_{\mathrm{lo}},\log(k_{\mathrm{hi}}/k_{\mathrm{lo}}))\)，\(k_{\mathrm{hi}}\ge k_{\mathrm{lo}}\)。符号是构造，数值才反演
 - 正演默认隐式输运（两相和三相）。YAML `physics.transport: explicit` 可关。不是为了把场贴成 IMEX
-- ES-MDA 在 θ 空间更新，输出均值/方差，不是唯一真值图
+- LM 在 θ 空间更新，输出点估计 \(\hat\theta\) 和 Hessian 对角 \(\sigma_\theta\)。不是逐格真值图
 - 产品 invert 支持 hold-out 测点与 history/forecast 时间切开
 - 测点是任意 \((x,y,z)\)。同一柱面上不同深度用 `column_sensors`。种类/深度越多，层状 K 越好认；单平面几个压力点不够
 - 井指数和相对渗透率差不要靠拧 K 去吸收（那是调参）。跨模拟器时流量观测要谨慎，优先用内部 \(p,S_w\)
-
-## Ensemble 和 HPO
-
-有的是 **ES-MDA 家族 + 限时搜旋钮**。没有 Optuna/CMOST 那种搜格子 \(K\)。
-
-已接线：`n_ensemble`、`n_assimilations`（\(\sum 1/\alpha_i=1\)）、log K 先验、同化后 `inflation=1.02`、失败成员回退、identifiability \(=\sigma_{\mathrm{post}}/\sigma_{\mathrm{prior}}\)。粗网格先验带一点空间光滑。
-
-写了但默认关掉：Gaspari–Cohn 局部化（`md_localization`）。\(n_\theta=2\) 的层状尺子用不上。
+- `--auto` 只搜构造（均匀 / 2 区 / 3 层），每个候选一次 LM，hold-out 选。给了 `region_map` 就用图
 
 参考实现只放在 `references/methods/`（Equinor IES、pyesmda、dass、Emerick 2013），产品代码不 import。
 
-没有：外层 HPO、自适应 \(N_a\)、IES、CMOST、AutoGluon 依赖。用它们去贴 CMG 的 K 就是调参。
-
-从 AutoGluon **只迁设计**：预设档、时限、hold-out 排行榜、赢家混合。不迁表格模型，不搜 \(K\)。
-
-`--auto` 默认做限时随机 HPO：搜的是算法和旋钮（\(N_e,N_a,\sigma_{\mathrm{prior}}\), inflation），目标是 hold-out，不是格子 \(K\)。算法：ES、ES-MDA、几何 ES-MDA、ES-MDA-RS、IES（Chen–Oliver 阻尼迭代）。赢家可 hold-out 混合，变差丢掉。Equinor Localized ESMDA 等 \(n_\theta\) 大再开。
-
-Ensemble 正演默认可并行（线程池，`inverse.n_workers`，`null` 为自动、最多 8）。不用进程池：正演是孪生上的闭包，Windows `spawn` 编不了。`n_workers: 1` 强制串行。
-
 ```text
-reservoir invert config/lab_30cm.yaml --preset balanced
-reservoir invert config/lab_30cm.yaml --auto --time-limit 120
+reservoir invert examples/lab/lab_30cm.yaml --auto --time-limit 120
 ```
 
 ## 井 / 端口
 
 - 实验室入口出口是 `FlowPort`
+- Optional `wells.file` (relative to the case YAML) loads a CMG/IMEX `*WELL` / `*INJECTOR` / `*PRODUCER` / `*PERF` / `*OPERATE` / `*GEOMETRY` snippet onto the same `FlowPort` objects YAML `ports:` already builds. I/J/K are 1-based. BHP maps to `control=pressure`, STW/STO to `control=rate`. `*GEOMETRY` rw/geofac/skin map to `rw_m`/`geofac`/`skin` and set `use_productivity`. YAML `ports:` is unchanged. No group wells, VFP, workovers, time-varying history, `*WELLHYD`, or multilateral.
 - 定压注入：出流面带走井筒组成（`composition` / `sw_inj`），不是井格 \(f_w(S_{wi})\approx 0\)
 - 定压采出：按井格分流把净流入抽走，避免井格攒到 \(S_w=1\) 后时间步崩溃
 - 实验室默认格子 Dirichlet / 半格 WI（半格也乘总流度 \(\lambda_t\)）。CMG 虚拟实验复制牌组 `*GEOMETRY` 的 Peaceman（\(r_w\)、geofac），\(q=\mathrm{WI}\,\lambda_t\,(p_{\mathrm{conn}}-p)\)。`*K` 井底压钉在最上射孔，往下加井筒水头 \(\rho_{\mathrm{wb}} g\Delta z\)。不拧 `wi_multiplier` 去贴 IMEX 流量
@@ -104,9 +92,25 @@ reservoir invert config/lab_30cm.yaml --auto --time-limit 120
 - CMG 虚拟实验 \(\varphi=0.30\)、海水 \(S_w^{\mathrm{inj}}=1\)、PVT 取牌组 `*BWI/*CW/*CO/*CPOR`。\(F(K_{\mathrm{CMG}})\) 场尺子均值压已落到几 psi（五点/断层 242 d）；剩下的是空间形态和相对渗透率表，不是再拧 \(c_t\)
 - 跨模拟器时 \(R\) 加上 \(F(K_{\mathrm{CMG}})\) 对 CMG 测点的残差，避免把模型差拧进 \(K\)。协议 A 不吃井流量（定压流量对 \(K\) 太陡）
 
+## 概念实验室 30 cm 水驱：反演对比
+
+产品 invert 对比是 **水驱相似准则**（几何 / 油藏 k,φ / 流体黏度密度比 / 动力学毛管与压缩 / 饱和度 Swc,Sor,可动 / 驱替特征）加上 \(F(m_{\mathrm{post}})\) 对 \(F(m_{\mathrm{true}})\) 的饱和度场与压力场 nRMSE（及场图）。**不是** CMG 格子场，也不用 CMG 当尺子。
+
+实验室一侧的无量纲组合由 `reservoir_backend.twin.similarity.waterflood_groups` 从 PhysicsSpec / PVT / grid 算出，写在 invert `--self-check` 与 apply 报告的 `similarity` 键旁。`references/concecpt` 只给出 30 cm 立方岩样，没有矿场原型厚度、井距或井径，因此 **不编造** 矿场比例，只报实验室组合并标明 field ratios unknown。热采 / 聚合物 / 页岩水驱相似准则不报。
+
+## 页岩油衰竭类比（IMEX 尺子）
+
+- **参数**：默认 4 维 frac θ（基质/缝/SRV \(K\)、半长 \(x_f\)）；缝面个数与相位按完井固定。`free_geometry=true` 才放 6 维。
+- **正演**：默认顺序两相；可选 FIM（`fully_implicit=true`）。定产井带 **MIN BHP=1500 psi**（IMEX `*MIN *BHP`）。
+- **控制 / 观测**：定产 rate 进 \(F\)（触底改定压）；完井 cell 压力进 misfit。产率对齐 `scale_min≥0.5`。**Sw 信号 ~0.002，不进 misfit**。
+- **反演**：Levenberg–Marquardt on θ（`inverse.lm`），不是 ES-MDA。合成尺子 assimilate nRMSE ~2–2.7（`shale_frac/validation_report.json`）；跨 IMEX S1 ~7.4 / `dp_ratio≈0.26`。
+- **证据**：`tests/inverse/test_frac_parameterization.py`、`tests/cases/test_shale_synthetic.py`、`tests/solver/test_well_index.py::test_rate_producer_min_bhp_floor`；有 IMEX `.out` 时 `tests/cases/test_shale_cmg_suite.py`。
+
+测点坐标来自 `examples/lab/concept_probes.csv`（从 `测点.xlsx` 抄入 SI 米）：电阻率 75（底面/界面/顶面）+ 新增 7.5 cm 共 16。声波 12 / 电磁 8 在 `测点位置.pptx` 只有个数与 75 mm 间距，没有 xyz 表，不编造。
+
 ## 和开源仿真 / CMG / 生产的关系
 
-开源油藏程序是正演 \(F\)。本仓库是实验室数字孪生：\(F_{\mathrm{lab}}+H+\) ES-MDA。
+开源油藏程序是正演 \(F\)。本仓库是数字孪生：\(F+H+\) LM。
 
 要和 CMG（或以后的矿场）「工况一样」：
 

@@ -1,0 +1,67 @@
+---
+title: "GEM 济阳井网 CO2 吞吐尺子 — 1 注 4 采水平井（率 / BHP）"
+date: last-modified
+format:
+  html:
+    toc: true
+    toc-depth: 2
+---
+
+活文档。离线 GEM 尺子，**不是** 产品 \(F\)。产品路径不调用 CMG。不编造济阳 Tc/Pc。不 restore `cmg_harness`。不改 `solver/fi.py` / `examples/lab/lab_apply.yaml`。
+
+对照：`docs/jiyang_twin.qmd`（井网锁）、`docs/imex_jiyang_well_history_ruler.qmd`（黑油井史合同，本档是组分 CO2 版）。
+
+## 范围
+
+GEM **组分** CO2 吞吐：济阳风格 **1 注 + 4 采水平井**。只比 **井率 / BHP**。`.dat` 离线跑；导出井序列当 truth。产品用同一 \(u(t)\) 和同一张 EXAMPLE 牌正演后对表。
+
+| 文件 | 用途 |
+|------|------|
+| `validation/jiyang/cmg_co2_hnp/jiyang_co2_hnp.dat` | GEM deck（`build_deck.py` 生成） |
+| `examples/jiyang/jiyang_co2_hnp.yaml` | 产品组分孪生：同一井网、EXAMPLE 牌、GEM BHP 进 \(H\) |
+| `examples/jiyang/fixtures/jiyang_co2_hnp_obs.csv` | 从 GEM `.out` 抽出的 BHP |
+| `validation/jiyang/cmg_co2_hnp/run_compare.py` | GEM vs \(F(m_{\mathrm{true}})\) 图 |
+| 本档 | 尺子合同 |
+
+## 非目标
+
+- **不是** 济阳现场流体牌。Tc/Pc 来自公开 C1 / nC10 / CO2（OPM `1D_COMP`）。
+- **不是** 30 年一次交卷（本 cut：90 天衰竭 + 一个年周期）。
+- **不是** 场 L2 / 逐格 \(K\) 贴场 / Dice。
+- **不是** `cmg_fivespot`（那是 4 注 1 采 IMEX 水驱）。
+- 产品代码不得 `import` 或 spawn GEM。
+
+## 模式锁
+
+| 项 | 锁 |
+|----|----|
+| 井网 | INJ（rate）+ P1–P4（BHP）；名不可改 |
+| 轨迹 I | I = 4..18 |
+| 轨迹 J | INJ J=11；P1 J=3；P2 J=7；P3 J=15；P4 J=19 |
+| 轨迹 k | 全部 k=3 |
+| 网格 | 21×21×5，`size_m: [1260, 1260, 40]` |
+| 流体 | EXAMPLE PR，`examples/compositional/fixtures/comp_c1c10co2.yaml` |
+| 克隆 | GEM 2024 TPL `spr/gmspr003.dat` |
+| 日程 | 90 d 衰竭；注 1 月 / 焖 1 月 / 采 10 月（一个周期） |
+| 注气 | 纯 CO2，\(Q=5\times 10^{-5}\,\mathrm{m}^3/\mathrm{s}\)（deck 里 SI `*STG` 为 m³/d） |
+| 生产 BHP | 47 MPa；注/焖段 50 MPa |
+| \(K\) | 区域图同 `jiyang_frac_regions.npy`；GEM 用 0.05 / 5 md（100×）。产品 SI npy 第一步会炸 Newton |
+
+本机 GEM 2024.20 烟测：`Normal Termination`，153 步，约 3 s，质量守恒 \(8\times 10^{-5}\,\%\)。
+
+## 和产品 \(F\) 对不齐时先查什么
+
+反演补不了模型差。先对齐：
+
+1. 水平井 `*GEOMETRY *I`：产品要用 Peaceman 且 `axis: I`（长度 \(d_x\)），不能当竖直井 \(d_z\)。
+2. GEM 在 `*DATE` 上打的 FIELD SUMMARY 是换控制**之前**的状态。产品控制切换要落在报告时刻之后。
+3. 井史表折行会漏井；抽取要用井名扫描，不能假设每行四个 `+` 列。
+
+剩下的注入井 \(p_{wf}\) ~1 MPa：产品常数 \(\mu\)、无水相、闪蒸 \(v\) 对地面率，不是 GEM HZYT。Invert 不关这个。
+
+## Truth 合同
+
+1. 离线跑 GEM，导出井序列。
+2. 产品组分核用同一张 EXAMPLE 牌、同一 \(u(t)\)。
+3. 注入井比 BHP（率井）；采井比产油率（定 BHP 井）。采井 BHP 是控制，不当门闩。
+4. 反演 θ 是 contrast log \(K\)（`jiyang_frac_regions.npy`）。LM。观测：INJ `bhp` + P1–P3 `q_oil`，P4 `q_oil` hold-out。后验井史 nRMSE 须低于先验。对比度方向对。INJ BHP / 采井 \(q_o\) 对 GEM 未降前不跑全井网 invert。

@@ -101,7 +101,7 @@ def run_structure_search(
             rows.append({"name": spec.name, "skipped": True, "reason": "time_limit", "selected": False})
             continue
         twin.parameterization = parameterization_for(twin.grid, spec, phi=phi)
-        post = twin._calibrate_candidate(seed=int(twin.inverse.seed) + 17 + i)
+        post = twin.calibrate()
         score = float(post.holdout_rmse)
         selected = best is None or (np.isfinite(score) and score < float(best.holdout_rmse))
         if selected:

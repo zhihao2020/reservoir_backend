@@ -15,6 +15,11 @@ rename contract for FIM work under `reservoir_backend/solver/`.
 | quasi-IMPES pressure weights | `pressure_row_weights` (optional, later) |
 | FI black-oil step | `solve_fi_step` |
 | product flag | `PhysicsSpec.fully_implicit` |
+| well control BHP (datum) | `wi_datum` / `bhp_ctrl` |
+| connection hydrostatic head | `connection_head` (via live `ρ g Δz` in `_well_surface_rates`) |
+| Peaceman geometric WI | `wi_base` first field |
+| local dense AD dual | `CellAD` in `solver/adnum.py` |
+| residual-consistent Jacobian | `_jacobian_residual_coloring` |
 
 Forbidden examples in product code (non-exhaustive):
 

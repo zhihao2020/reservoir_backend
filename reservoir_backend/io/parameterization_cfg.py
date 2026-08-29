@@ -9,6 +9,12 @@ from typing import Any
 import numpy as np
 
 from reservoir_backend.grid.cartesian import CartesianGrid
+from reservoir_backend.inverse.frac import (
+    FractureStripParameterization,
+    WellTrack,
+    default_shale_prior,
+    wells_from_truth,
+)
 from reservoir_backend.inverse.parameterization import (
     CoarseFieldParameterization,
     ContrastParameterization,
@@ -79,6 +85,57 @@ def parameterization_from_cfg(grid: CartesianGrid, cfg: dict[str, Any], cfg_dir:
     if kind in {"coarse_field", "coarse"}:
         coarse = inv.get("coarse_n", [6, 6, 6])
         return CoarseFieldParameterization(grid, int(coarse[0]), int(coarse[1]), int(coarse[2]), phi=phi)
+    if kind in {"fracture", "frac", "fracture_strip"}:
+        truth_path = inv.get("truth_json")
+        truth = None
+        if truth_path:
+            import json
+
+            tp = Path(str(truth_path))
+            if not tp.is_file():
+                tp = Path(cfg_dir) / tp
+            truth = json.loads(tp.read_text(encoding="utf-8"))
+            wells = wells_from_truth(truth)
+            mean, std = default_shale_prior(truth, free_geometry=bool(inv.get("free_geometry", False)))
+        else:
+            wells_cfg = inv.get("wells") or []
+            wells = tuple(
+                WellTrack(
+                    name=str(w["name"]),
+                    j=int(w["j"]) - int(w.get("ijk_base", 1)),
+                    k=int(w["k"]) - int(w.get("ijk_base", 1)),
+                    i0=int(w["i0"]) - int(w.get("ijk_base", 1)),
+                    i1=int(w["i1"]) - int(w.get("ijk_base", 1)),
+                    open_from_day=float(w.get("open_from_day") or 0.0),
+                )
+                for w in wells_cfg
+            )
+            mean, std = default_shale_prior(None, free_geometry=bool(inv.get("free_geometry", False)))
+        prior = inv.get("prior") or {}
+        if prior.get("mean") is not None:
+            mean = np.asarray(prior["mean"], dtype=float)
+        if prior.get("std") is not None:
+            std = np.asarray(prior["std"], dtype=float)
+        layers = inv.get("frac_k_layers", [1, 2, 3])
+        free_geometry = bool(inv.get("free_geometry", False))
+        fixed_n = inv.get("fixed_n_frac")
+        if fixed_n is None and truth_path:
+            planes = (truth or {}).get("frac_i_planes") or []
+            fixed_n = float(max(len(planes), 1))
+        return FractureStripParameterization(
+            grid,
+            wells,
+            phi=phi,
+            frac_k_layers=tuple(int(x) for x in layers),
+            prior_mean=mean,
+            prior_std=std,
+            n_frac_min=int(inv.get("n_frac_min", 1)),
+            n_frac_max=int(inv.get("n_frac_max", 12)),
+            frac_aperture_m=inv.get("frac_aperture_m"),
+            free_geometry=free_geometry,
+            fixed_n_frac=float(fixed_n if fixed_n is not None else 5.0),
+            fixed_phase=float(inv.get("fixed_phase", 0.0)),
+        )
     raise ValueError(
-        f"unknown inverse.parameterization {kind!r}; use region, contrast, or coarse_field"
+        f"unknown inverse.parameterization {kind!r}; use region, contrast, coarse_field, or fracture"
     )

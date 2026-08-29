@@ -1,0 +1,63 @@
+---
+title: "济阳页岩油数字孪生 — 开发计划"
+date: last-modified
+format:
+  html:
+    toc: true
+    toc-depth: 2
+---
+
+活文档。不是 SCI，不 import `references/`，不 restore harness，不改 `solver/fi.py` 黑油残差。
+
+## 产品
+
+胜利济阳页岩油数字孪生：**一注四采水平井**，吞吐周期，正演 **30 年、月步**。
+矿场不是水驱：水平井 + 体积压裂 + 弹性衰竭 + 焖井渗吸；CO2 现场主要用于前置/超临界混压，单井吞吐是补能试验。
+验收：井史（注采 + 压力）→ 低维 $\theta$（$x_f$, $F_{cd}$, SRV $k$，周期）→ $F(m_{\mathrm{post}})$ 场。**不是** 逐格 $K$，**不是** CMG/GEM 贴场。
+
+入口：`examples/jiyang/jiyang_co2_hnp.yaml`（组分 CO2）。30 cm 水驱先放下。
+
+## 已有
+
+- 黑油 FIM 核（Sg↔Rs OPM 开关）。**不是** 组分 / GEM。
+- `examples/jiyang/jiyang_hnp.yaml`：21×21×5，1 注 4 采水平井，年周期 注1月/焖1月/采10月，`dt_max` 一个月，`dt_init` 1 小时。
+- `shale_oil/` S1–S5：IMEX 黑油缝网衰竭尺子，不是济阳 CO2 模型。
+- 测点→全场、`field.csv`、LM：实验室调用层已接；济阳井网用 contrast \(\theta\) + `jiyang_frac_regions.npy`。
+
+## 不做（本档）
+
+把黑油残差改成组分、AIM、1 Hz 反演、编造 GEM 牌、编造缝网 xyz、import `references/`、liberation 1 psi、SCI。
+
+## 计划（按序）
+
+### P0 正演骨架（进行中）
+
+黑油 `jiyang_hnp` 跑完 30 年、月步，报 finish / underflow / 步数。
+只许改 `dt_init`（已 3600 s）。步长 knobs / 残差不动。
+
+### P1 缝网进井网
+
+输入已有：`examples/jiyang/jiyang_frac.yaml` + `examples/jiyang/jiyang_frac_regions.npy`（0 基质 / 1 水平井+SRV 条带，675/2205）。
+仍黑油。先 90 天正演，再 30 年。无现场缝坐标，沿水平段均布，**不编造测点**。
+
+### P2 孪生调用层
+
+井史（率 / BHP / 周期）→ LM 反 contrast $\theta=(\log k_{\mathrm{lo}}, \log(k_{\mathrm{hi}}/k_{\mathrm{lo}}))$ → $F(\hat m)$ 的 $p,S,z$。$x_f,F_{cd}$ 等 $F$ 对齐后再加维。
+导出 `field.csv`。不每秒反演。
+
+### P3 组分核（另开，有牌再动）
+
+混相 CO2 要新核（EOS / 闪蒸），**不进** `solver/fi.py`。
+等温 EXAMPLE（C1–nC10）已在 `eos/` + `comp/` + `solver/fi_comp.py`，入口 `examples/compositional/comp_example.yaml`。
+缺现场 / GEM 组分牌就不写假济阳 PVT。黑油 30 年骨架不因此停。
+
+## 角色
+
+| 角色 | 本档 |
+|------|------|
+| xuzh | 本计划、YAML、缝网输入、孪生调用层 |
+| fim-dt | P0 30 年月步正演；P1/P2 步长，不重做 knobs |
+| fim-resid | 黑油残差不动；组分不进 `fi.py` |
+| comp-eos | P3 独立闪蒸/EOS，不进 `fi.py` |
+| lab-review | 只读，对照本文，不再用 30 cm 水驱当尺子 |
+

@@ -62,6 +62,9 @@ class BlackOilPVT:
     eg_tab: NDArray[np.float64] | None = None
     muo_tab: NDArray[np.float64] | None = None
     mug_tab: NDArray[np.float64] | None = None
+    p_w_tab: NDArray[np.float64] | None = None
+    bw_tab: NDArray[np.float64] | None = None
+    muw_tab: NDArray[np.float64] | None = None
 
     def _b(self, p: NDArray[np.float64] | float, c: float, pref: float, bref: float) -> NDArray[np.float64]:
         return (1.0 + float(c) * (np.asarray(p, dtype=float) - float(pref))) / max(float(bref), 1.0e-30)
@@ -80,7 +83,12 @@ class BlackOilPVT:
         return rs
 
     def b_w(self, p: NDArray[np.float64] | float) -> NDArray[np.float64]:
-        return self._b(p, self.cw, self.pref_w, self.bw_ref)
+        p_a = np.asarray(p, dtype=float)
+        xp = self.p_w_tab if self.p_w_tab is not None else self.p_tab
+        if xp is not None and self.bw_tab is not None:
+            bw = self._interp(p_a, xp, self.bw_tab)
+            return 1.0 / np.maximum(bw, 1.0e-30)
+        return self._b(p_a, self.cw, self.pref_w, self.bw_ref)
 
     def pbub_of_rs(self, rs: NDArray[np.float64] | float) -> NDArray[np.float64]:
         """Invert the saturated Rs(p) table to a bubble-point pressure."""
@@ -171,6 +179,13 @@ class BlackOilPVT:
         if self.p_tab is None or self.mug_tab is None:
             return np.full(p_a.shape, float(self.mu_g), dtype=float)
         return self._interp(p_a, self.p_tab, self.mug_tab)
+
+    def viscosity_w(self, p: NDArray[np.float64] | float) -> NDArray[np.float64]:
+        p_a = np.asarray(p, dtype=float)
+        xp = self.p_w_tab if self.p_w_tab is not None else self.p_tab
+        if xp is None or self.muw_tab is None:
+            return np.full(p_a.shape, float(self.mu_w), dtype=float)
+        return self._interp(p_a, xp, self.muw_tab)
 
     def has_live_oil(self) -> bool:
         return self.p_tab is not None and self.rs_tab is not None

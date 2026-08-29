@@ -13,7 +13,8 @@ class Sensor:
     """Measurement geometry. Coordinates are SI metres, independent of the grid."""
 
     name: str
-    kind: str  # pressure | saturation | oil_saturation | gas_saturation | phase_rate
+    kind: str  # pressure | saturation | oil_saturation | gas_saturation | phase_rate | bhp | q_oil | q_gas | q_inj
+    # acoustic / em / resistivity alias saturation once xyz exists; do not invent coordinates.
     x: float
     y: float
     z: float
@@ -26,7 +27,16 @@ class Sensor:
         kind = str(self.kind).strip().lower()
         if kind in {"p", "pressure"}:
             kind = "pressure"
-        elif kind in {"s", "sw", "saturation", "water_saturation"}:
+        elif kind in {
+            "s",
+            "sw",
+            "saturation",
+            "water_saturation",
+            "acoustic",
+            "em",
+            "electromagnetic",
+            "resistivity",
+        }:
             kind = "saturation"
         elif kind in {"so", "oil", "oil_saturation"}:
             kind = "oil_saturation"
@@ -34,6 +44,14 @@ class Sensor:
             kind = "gas_saturation"
         elif kind in {"qw", "phase_rate", "water_rate", "rate"}:
             kind = "phase_rate"
+        elif kind in {"bhp", "pwf", "well_pressure", "bottomhole"}:
+            kind = "bhp"
+        elif kind in {"q_oil", "oil_rate", "qo"}:
+            kind = "q_oil"
+        elif kind in {"q_gas", "gas_rate", "qg"}:
+            kind = "q_gas"
+        elif kind in {"q_inj", "inj_rate", "injection_rate"}:
+            kind = "q_inj"
         else:
             raise ValueError(f"unsupported sensor kind: {self.kind}")
         object.__setattr__(self, "kind", kind)
@@ -121,7 +139,7 @@ class ObservationSeries:
     """A single observation channel. SI values, times in seconds."""
 
     sensor_name: str
-    kind: str  # pressure | saturation | oil_saturation | gas_saturation | phase_rate
+    kind: str  # same aliases as Sensor (acoustic/em/resistivity -> saturation)
     times_s: NDArray[np.float64]
     values: NDArray[np.float64]
     sigma: NDArray[np.float64]
@@ -131,7 +149,16 @@ class ObservationSeries:
         kind = str(self.kind).strip().lower()
         if kind in {"p", "pressure"}:
             kind = "pressure"
-        elif kind in {"s", "sw", "saturation", "water_saturation"}:
+        elif kind in {
+            "s",
+            "sw",
+            "saturation",
+            "water_saturation",
+            "acoustic",
+            "em",
+            "electromagnetic",
+            "resistivity",
+        }:
             kind = "saturation"
         elif kind in {"so", "oil", "oil_saturation"}:
             kind = "oil_saturation"
@@ -139,6 +166,14 @@ class ObservationSeries:
             kind = "gas_saturation"
         elif kind in {"qw", "phase_rate", "water_rate", "rate"}:
             kind = "phase_rate"
+        elif kind in {"bhp", "pwf", "well_pressure", "bottomhole"}:
+            kind = "bhp"
+        elif kind in {"q_oil", "oil_rate", "qo"}:
+            kind = "q_oil"
+        elif kind in {"q_gas", "gas_rate", "qg"}:
+            kind = "q_gas"
+        elif kind in {"q_inj", "inj_rate", "injection_rate"}:
+            kind = "q_inj"
         else:
             raise ValueError(f"unsupported observation kind: {self.kind}")
         object.__setattr__(self, "kind", kind)
@@ -164,6 +199,7 @@ class State:
     sw: NDArray[np.float64]
     sg: NDArray[np.float64] | None = None
     rs: NDArray[np.float64] | None = None
+    moles: NDArray[np.float64] | None = None
     time_s: float = 0.0
 
     def so(self) -> NDArray[np.float64]:
@@ -176,6 +212,7 @@ class State:
             sw=np.asarray(self.sw, dtype=float).copy(),
             sg=None if self.sg is None else np.asarray(self.sg, dtype=float).copy(),
             rs=None if self.rs is None else np.asarray(self.rs, dtype=float).copy(),
+            moles=None if self.moles is None else np.asarray(self.moles, dtype=float).copy(),
             time_s=float(self.time_s),
         )
 

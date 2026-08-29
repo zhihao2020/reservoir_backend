@@ -87,6 +87,7 @@ class StepReport:
     mass: MassBalance
     port_rates: dict[str, float]
     notes: list[str] = field(default_factory=list)
+    newton_its: int | None = None
 
 
 @dataclass
@@ -95,6 +96,7 @@ class Trajectory:
     states: list[State]
     reports: list[StepReport]
     port_rates: list[dict[str, float]]
+    port_bhp: list[dict[str, float]] = field(default_factory=list)
 
     def state_at(self, t: float) -> State:
         times = np.asarray(self.times_s, dtype=float)
@@ -102,6 +104,17 @@ class Trajectory:
             raise ValueError("empty trajectory")
         idx = int(np.argmin(np.abs(times - float(t))))
         return self.states[idx]
+
+    def rates_and_bhp_at(self, t: float) -> tuple[dict[str, float], dict[str, float]]:
+        """Last stored well report at or before ``t`` (step-post / GEM DATE)."""
+        times = np.asarray(self.times_s, dtype=float)
+        if times.size == 0:
+            return {}, {}
+        idx = int(np.searchsorted(times, float(t), side="right") - 1)
+        idx = int(np.clip(idx, 0, times.size - 1))
+        rates = self.port_rates[idx] if idx < len(self.port_rates) else {}
+        bhp = self.port_bhp[idx] if idx < len(self.port_bhp) else {}
+        return rates, bhp
 
 
 def surface_water(
@@ -256,6 +269,72 @@ def _cell_face_outflow(
         + fz[k + 1, j, i]
         - fz[k, j, i]
     )
+
+
+def _peaceman_mobility_wi(
+    grid: CartesianGrid,
+    port: FlowPort,
+    cell: int,
+    k_field: NDArray[np.float64],
+    mobility: NDArray[np.float64],
+) -> float:
+    """WI·λ for one connection (Peaceman if rw>0 else half-cell)."""
+    c = int(cell)
+    rw = float(getattr(port, "rw_m", 0.0) or 0.0)
+    if rw > 0.0:
+        wi_geom = peaceman_wi(
+            grid,
+            c,
+            float(k_field[c]),
+            rw,
+            skin=float(getattr(port, "skin", 0.0) or 0.0),
+            geofac=float(getattr(port, "geofac", 0.0) or 0.0),
+            axis=getattr(port, "axis", "k"),
+        )
+        return float(port.wi_multiplier) * wi_geom * float(mobility[c])
+    return float(port.wi_multiplier) * half_cell_wi(grid, c, float(k_field[c])) * float(mobility[c])
+
+
+def _implied_producer_bhp(
+    grid: CartesianGrid,
+    port: FlowPort,
+    *,
+    q_surface: float,
+    pressure: NDArray[np.float64],
+    mobility: NDArray[np.float64],
+    lw_cell: NDArray[np.float64],
+    lo_cell: NDArray[np.float64],
+    lg_cell: NDArray[np.float64] | None,
+    b_w: NDArray[np.float64],
+    b_o: NDArray[np.float64],
+    b_g: NDArray[np.float64],
+    k_field: NDArray[np.float64],
+    single_phase: bool,
+) -> float:
+    """Estimate p_wf for a rate-controlled producer via Peaceman ∑ WI λ (p_wf−p)=Q_res."""
+    ids = np.asarray(port.cell_ids, dtype=np.int64).ravel()
+    nperf = max(int(ids.size), 1)
+    share_s = float(q_surface) / float(nperf)
+    q_res_total = 0.0
+    sum_w = 0.0
+    sum_wp = 0.0
+    for c in ids:
+        c = int(c)
+        wi = _peaceman_mobility_wi(grid, port, c, k_field, mobility)
+        sum_w += wi
+        sum_wp += wi * float(pressure[c])
+        if single_phase:
+            q_res_total += share_s
+            continue
+        lt_c = max(float(mobility[c]), 1.0e-30)
+        fw = float(lw_cell[c] / lt_c)
+        fo = float(lo_cell[c] / lt_c)
+        fg = 0.0 if lg_cell is None else float(lg_cell[c] / lt_c)
+        bmix = b_w[c] * fw + b_o[c] * fo + b_g[c] * fg
+        q_res_total += share_s / max(bmix, 1.0e-30)
+    if sum_w <= 1.0e-30:
+        return float(np.mean(pressure[ids]))
+    return float((q_res_total + sum_wp) / sum_w)
 
 
 def _port_total_rate(
@@ -1017,7 +1096,33 @@ def solve_step(
     t_ctrl = state.time_s + dt
     for port in ports:
         val = _port_value(cmap, port, t_ctrl)
-        if port.control == "rate":
+        min_bhp = getattr(port, "min_bhp_Pa", None)
+        rate_hits_floor = False
+        if (
+            port.control == "rate"
+            and min_bhp is not None
+            and port.use_productivity
+            and port.role == "producer"
+            and float(val) < 0.0
+        ):
+            p_wf_est = _implied_producer_bhp(
+                grid,
+                port,
+                q_surface=float(val),
+                pressure=p_old,
+                mobility=mobility,
+                lw_cell=lw_cell,
+                lo_cell=lo_cell,
+                lg_cell=lg_cell,
+                b_w=b_w,
+                b_o=b_o,
+                b_g=b_g,
+                k_field=k_field,
+                single_phase=bool(single_phase),
+            )
+            if p_wf_est < float(min_bhp) - 1.0e-6:
+                rate_hits_floor = True
+        if port.control == "rate" and not rate_hits_floor:
             share_s = float(val) / float(port.cell_ids.size)
             sw_src = _injection_sw(cmap, port, t_ctrl)
             sg_src = _injection_sg(cmap, port, t_ctrl) if three_phase is not None else 0.0
@@ -1047,7 +1152,8 @@ def solve_step(
                 cell_qw_s[c] += qw_s
                 cell_qo_s[c] += qo_s
                 cell_qg_s[c] += qg_s
-        elif port.use_productivity:
+        elif port.use_productivity or rate_hits_floor:
+            bhp_val = float(min_bhp) if rate_hits_floor else float(val)
             sw_src = _injection_sw(cmap, port, t_ctrl)
             rho_wb = _wellbore_density(
                 port,
@@ -1061,25 +1167,13 @@ def solve_step(
                 rho_g_mean,
                 sw_src,
             )
-            p_conn = _connection_bhp(grid, port.cell_ids, float(val), rho_wb, float(gravity))
+            p_conn = _connection_bhp(grid, port.cell_ids, bhp_val, rho_wb, float(gravity))
             for c in port.cell_ids:
                 c = int(c)
-                rw = float(getattr(port, "rw_m", 0.0) or 0.0)
-                if rw > 0.0:
-                    wi_geom = peaceman_wi(
-                        grid,
-                        c,
-                        float(k_field[c]),
-                        rw,
-                        skin=float(getattr(port, "skin", 0.0) or 0.0),
-                        geofac=float(getattr(port, "geofac", 0.0) or 0.0),
-                    )
-                    wi = float(port.wi_multiplier) * wi_geom * float(mobility[c])
-                else:
-                    wi = float(port.wi_multiplier) * half_cell_wi(grid, c, float(k_field[c])) * float(mobility[c])
+                wi = _peaceman_mobility_wi(grid, port, c, k_field, mobility)
                 if wi > 0.0:
                     well_index[c] = (wi, p_conn[c])
-                    well_datum[c] = float(val)
+                    well_datum[c] = bhp_val
         else:
             for c in port.cell_ids:
                 cell_dirichlet[int(c)] = float(val)
@@ -1308,19 +1402,26 @@ def solve_step(
             for c in port.cell_ids
             if int(c) in well_index
         }
-        # Freeze connection total mobility without free gas (oil+water at t^n).
-        sg_lt = sg_old if sg_old is not None else sg
-        lw0, lo0, lg0, _mob0 = _cell_mobility(
-            relperm,
-            three_phase,
-            sw_beg,
-            sg_lt,
-            fluid,
-            p_old,
-            single_phase=single_phase,
-            mu_single=mu_single,
+        # Live oil: Newton must start from (p^n, S^n, Rs^n). The IMPES
+        # pressure guess is already below pb while Rs is still Rs(p^n), so the
+        # first residual/Jacobian are inconsistent and line search rejects all
+        # steps (seen on liberation ruler). Dead oil may warm-start from IMPES p.
+        p_fi_guess = p_old if fluid.has_live_oil() else pressure
+        fi_kw = dict(
+            src_w=qw_rate,
+            src_o=qo_rate,
+            src_g=qg_rate,
+            rs0=rs_beg,
+            wi_base=wi_base,
+            wi_comp=wi_comp or None,
+            wi_group=wi_group,
+            wi_datum=well_datum or None,
+            lt_fixed=None,
+            cell_dirichlet=cell_dirichlet or None,
+            face_mult_x=face_mult_x,
+            face_mult_y=face_mult_y,
+            face_mult_z=face_mult_z,
         )
-        lt_fixed = np.maximum(np.asarray(lw0, dtype=float) + np.asarray(lo0, dtype=float), 1.0e-30)
         fi = solve_fi_step(
             grid,
             rock,
@@ -1330,23 +1431,30 @@ def solve_step(
             sw_beg,
             sg_old if sg_old is not None else sg,
             p_old,
-            pressure,
+            p_fi_guess,
             dt,
             float(gravity),
-            src_w=qw_rate,
-            src_o=qo_rate,
-            src_g=qg_rate,
-            rs0=rs_beg,
-            wi_base=wi_base,
-            wi_comp=wi_comp or None,
-            wi_group=wi_group,
-            wi_datum=well_datum or None,
-            lt_fixed=lt_fixed,
-            cell_dirichlet=cell_dirichlet or None,
-            face_mult_x=face_mult_x,
-            face_mult_y=face_mult_y,
-            face_mult_z=face_mult_z,
+            **fi_kw,
         )
+        if fi is None:
+            # One relaxed retry before the invert/ensemble path sees None.
+            fi = solve_fi_step(
+                grid,
+                rock,
+                three_phase,
+                fluid,
+                capillary,
+                sw_beg,
+                sg_old if sg_old is not None else sg,
+                p_old,
+                p_fi_guess,
+                dt,
+                float(gravity),
+                nltol=1.0e-3,
+                maxnewt=40,
+                lstrials=16,
+                **fi_kw,
+            )
         extras["scheme"] = "fim"
         if fi is not None:
             if not isinstance(fi, FiStepResult):
@@ -1385,7 +1493,7 @@ def solve_step(
                 rho_w=rho_w_f,
                 rho_o=rho_o_f,
                 rho_g=rho_g_f,
-                lt_fixed=lt_fixed,
+                lt_fixed=None,
             )
             port_water = {}
             port_liquid = {}
@@ -1401,7 +1509,7 @@ def solve_step(
                     if c not in wi_base:
                         continue
                     base, pbhp = wi_base[c]
-                    lt = float(lt_fixed[c]) if lt_fixed is not None else float(lw_f[c] + lo_f[c] + lg_f[c])
+                    lt = float(lw_f[c] + lo_f[c] + lg_f[c])
                     qi = float(base) * lt * (float(pbhp) - float(p_fi[c]))
                     q_res += qi
                     cell_rate_fi[c] += qi
@@ -2281,12 +2389,16 @@ def simulate(
                 ds = float(np.max(np.abs(trial.sw - state.sw))) if trial.sw.size else 0.0
                 if trial.sg is not None and state.sg is not None:
                     ds = max(ds, float(np.max(np.abs(trial.sg - state.sg))))
-                if ds > max_ds and dt_try > hard_floor * 2.0:
+                # Converged FIM already Appleyard-chops inside Newton. Outer
+                # ds/dp rejects forced live-oil FIM onto 20 s steps while
+                # sequential kept 300 s, which is the liberation mismatch.
+                fim_ok = bool(extras.get("fi_ok"))
+                if (not fim_ok) and ds > max_ds and dt_try > hard_floor * 2.0:
                     dt_try *= 0.5
                     note = "ds"
                     continue
                 dp_rel = float(extras.get("dp_rel", 0.0))
-                if dp_rel > 0.55 and dt_try > hard_floor * 2.0:
+                if (not fim_ok) and dp_rel > 0.55 and dt_try > hard_floor * 2.0:
                     dt_try *= 0.5
                     note = "dp"
                     continue
@@ -2337,6 +2449,7 @@ def simulate(
                     gas_relative_balance_error=abs(g_err) / g_scale,
                 )
                 cfl = dt_try / dt_cfl if np.isfinite(dt_cfl) and dt_cfl > 0 else 0.0
+                its_now = extras.get("newton_its")
                 reports.append(
                     StepReport(
                         time_s=trial.time_s,
@@ -2346,10 +2459,10 @@ def simulate(
                         mass=mb,
                         port_rates=dict(port_w),
                         notes=[note] if note else [],
+                        newton_its=int(its_now) if its_now is not None else None,
                     )
                 )
                 state = trial
-                its_now = extras.get("newton_its")
                 dt_state = state_change_timestep(
                     dt_try,
                     ds,
@@ -2360,14 +2473,19 @@ def simulate(
                 )
                 if extras.get("implicit_ok") and its_now is not None:
                     if extras.get("scheme") == "fim":
+                        # Newton-count controller only. A report-time remainder
+                        # must not reset Δt (that starved invert onto CFL-sized
+                        # steps). Liberation-ladder dt caps are intentionally gone.
+                        controller = float(dt)
+                        chopped = note in {"fim", "ds", "dp", "bounds"}
+                        base = float(dt_try) if chopped or dt_try >= 0.99 * max(controller, 1.0e-30) else controller
                         dt_its = dt_from_newton_iters(
-                            dt_try,
+                            base,
                             int(its_now),
-                            dt0=dt_prev,
-                            its0=its_prev,
                             dt_min=hard_floor,
                             dt_max=float(dt_max) if dt_max is not None else 1.0e30,
                         )
+                        dt = dt_its
                     else:
                         dt_its = iteration_count_timestep(
                             dt_try,
@@ -2377,7 +2495,7 @@ def simulate(
                             dt_min=hard_floor,
                             dt_max=dt_max,
                         )
-                    dt = min(dt_its, dt_state)
+                        dt = min(dt_its, dt_state)
                     dt_prev = dt_try
                     its_prev = int(its_now)
                 else:

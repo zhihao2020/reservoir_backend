@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import time
 
 import numpy as np
 from numpy.typing import NDArray
@@ -11,7 +10,8 @@ from numpy.typing import NDArray
 from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor, State
 from reservoir_backend.exceptions import TimeStepUnderflow
 from reservoir_backend.grid.cartesian import CartesianGrid
-from reservoir_backend.inverse.esmda import ESMdaResult, identifiability, run_esmda
+from reservoir_backend.inverse.lm import identifiability, run_lm
+from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble, sample_posterior_ensemble
 from reservoir_backend.inverse.parameterization import (
     CoarseFieldParameterization,
     ContrastParameterization,
@@ -28,25 +28,18 @@ from reservoir_backend.solver.impes import Trajectory, simulate, water_mass
 
 @dataclass
 class InverseSpec:
-    """Ensemble design for ES-MDA. Prefer presets / time_limit over raw knobs.
+    """Levenberg–Marquardt on low-dimensional θ. Not a search over cell K."""
 
-    Not HPO over K, and not a tabular AutoGluon stack. Localization in
-    ``inverse.ensemble`` stays off until n_θ grows.
-    """
-
-    n_ensemble: int = 24
-    n_assimilations: int = 4
-    seed: int = 7
-    prior_mean: float = float(np.log(1.0e-12))
-    prior_std: float = 0.8
-    inflation: float = 1.02
-    algorithm: str = "esmda"
+    prior_mean: float | NDArray[np.float64] = float(np.log(1.0e-12))
+    prior_std: float | NDArray[np.float64] = 0.8
+    max_iter: int = 8
+    fd_rel: float = 0.05
     time_limit_s: float | None = None
-    n_workers: int | None = None
-    fail_fraction: float = 0.30
-    reconstruct_members: int = 8
     search_structure: bool | None = None
     structure_candidates: list[str] | None = None
+    post_ensemble_enabled: bool = False
+    post_ensemble_ne: int = 8
+    post_ensemble_seed: int = 0
 
 
 @dataclass
@@ -71,11 +64,30 @@ class PhysicsSpec:
     sfi_outer: int = 0
     reupdate_pressure: bool = True
     upwind_type: str = "potential"
-    # Default on for three-phase product configs via case loader; field default stays
-    # False for two-phase / single-phase DigitalTwin construction.
-    fully_implicit: bool = False  # opt-in FIM; flip default only after liberation ruler gate
+    # Unreduced liberation-ruler invert passed without TimeStepUnderflow; FIM is product default.
+    fully_implicit: bool = True
     max_steps: int = 12000
     hydrostatic_init: bool = False
+    model: str = "two_phase_immiscible"
+    fluid: object | None = None
+    temperature_k: float = 350.0
+    z_init: NDArray[np.float64] | None = None
+
+
+def three_phase_for_fim(relperm, existing=None):
+    # Dead-oil wrapper so invert FIM actually enters solve_fi_step.
+    if existing is not None:
+        return existing
+    from reservoir_backend.physics.relperm import CoreyThreePhase
+
+    mu_w = float(getattr(relperm, "mu_w", 1.0e-3))
+    mu_o = float(getattr(relperm, "mu_o", 5.0e-3))
+    mu_g = float(getattr(relperm, "mu_g", 2.0e-5))
+    swi = float(getattr(relperm, "swi", 0.20))
+    sor = float(getattr(relperm, "sor", 0.15))
+    if swi + sor >= 0.99:
+        sor = max(0.0, 0.98 - swi)
+    return CoreyThreePhase(swi=swi, sor=sor, sgr=0.0, mu_w=mu_w, mu_o=mu_o, mu_g=mu_g)
 
 
 @dataclass
@@ -130,8 +142,7 @@ def predict_from_trajectory(
     for i, (t, name, kind) in enumerate(zip(vec.times, vec.names, vec.kinds)):
         state = traj.state_at(t)
         # nearest recorded rates
-        idx = int(np.argmin(np.abs(traj.times_s - t)))
-        rates = traj.port_rates[idx] if idx < len(traj.port_rates) else {}
+        rates, bhp = traj.rates_and_bhp_at(float(t))
         sensor = sensors[name]
         if sensor.kind != kind:
             sensor = Sensor(
@@ -145,7 +156,7 @@ def predict_from_trajectory(
                 port_name=sensor.port_name,
                 sigma=sensor.sigma,
             )
-        out[i] = operator.sample(sensor, state, port_rates=rates)
+        out[i] = operator.sample(sensor, state, port_rates=rates, port_bhp=bhp)
     return out
 
 
@@ -159,13 +170,18 @@ class FieldStats:
 
 @dataclass
 class Posterior:
-    esmda: ESMdaResult
+    theta: NDArray[np.float64]
+    k: NDArray[np.float64]
+    theta_std: NDArray[np.float64]
     assimilate_rmse: float
     holdout_rmse: float
     forecast_rmse: float | None
     identifiability: NDArray[np.float64]
     history: Trajectory
     notes: list[str]
+    n_forward: int = 0
+    misfit: list[float] = field(default_factory=list)
+    ensemble: PosteriorEnsemble | None = None
 
 
 @dataclass
@@ -182,6 +198,7 @@ class DigitalTwin:
     kz_ratio: NDArray[np.float64] | None = None
     inverse: InverseSpec = field(default_factory=InverseSpec)
     last_leaderboard: list[dict] = field(default_factory=list)
+    last_structure_board: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         kinds: dict[str, set[str]] = {}
@@ -192,8 +209,14 @@ class DigitalTwin:
 
     def initial_state(self) -> State:
         n = self.grid.n_cells
+        if str(self.physics.model).lower() in {"compositional", "comp", "eos"} and self.physics.fluid is not None:
+            from reservoir_backend.solver.fi_comp import initialize_state
+
+            phi = float(getattr(self.parameterization, "phi", 0.20))
+            rock0 = Rock(np.full(n, 1.0e-12), np.full(n, phi))
+            return initialize_state(self.grid, rock0, self.physics.fluid, float(self.physics.p_init))
         sg = None
-        if self.physics.three_phase is not None:
+        if self.physics.three_phase is not None or bool(self.physics.fully_implicit):
             sg = np.full(n, float(self.physics.sg_init))
         pressure = np.full(n, float(self.physics.p_init))
         if self.physics.hydrostatic_init and self.physics.gravity > 0.0:
@@ -252,6 +275,29 @@ class DigitalTwin:
         if report_times is None:
             report_times = self.experiment.all_times_s()
         floor = self.physics.dt_min if dt_min is None else float(dt_min)
+        if str(self.physics.model).lower() in {"compositional", "comp", "eos"} and self.physics.fluid is not None:
+            from reservoir_backend.solver.fi_comp import simulate_comp
+
+            return simulate_comp(
+                self.grid,
+                rock,
+                self.physics.fluid,
+                self.ports,
+                controls,
+                state0 or self.initial_state(),
+                float(t_end),
+                dt_init=self.physics.dt_init,
+                dt_min=floor,
+                dt_max=self.physics.dt_max,
+                max_steps=int(self.physics.max_steps),
+                report_times=report_times,
+            )
+        fim = bool(self.physics.fully_implicit)
+        implicit = bool(self.physics.implicit_transport or fim)
+        three = three_phase_for_fim(self.physics.relperm, self.physics.three_phase) if fim else self.physics.three_phase
+        # max_steps is a safety fuse, not an explicit-CFL step budget.
+        # FIM Δt is Newton-count; do not inflate the fuse here.
+        nstep = int(self.physics.max_steps)
         try:
             return simulate(
                 self.grid,
@@ -268,11 +314,11 @@ class DigitalTwin:
                 face_mult_x=self.face_mult_x,
                 face_mult_y=self.face_mult_y,
                 face_mult_z=self.face_mult_z,
-                implicit=self.physics.implicit_transport,
+                implicit=implicit,
                 sfi_outer=int(self.physics.sfi_outer),
                 reupdate_pressure=bool(self.physics.reupdate_pressure),
                 upwind_type=str(self.physics.upwind_type),
-                fully_implicit=bool(self.physics.fully_implicit),
+                fully_implicit=fim,
                 single_phase=self.physics.single_phase,
                 mu_single=self.physics.mu_single,
                 dt_init=self.physics.dt_init,
@@ -280,9 +326,9 @@ class DigitalTwin:
                 dt_max=self.physics.dt_max,
                 max_cfl=self.physics.max_cfl,
                 max_ds=self.physics.max_ds,
-                max_steps=int(self.physics.max_steps),
+                max_steps=nstep,
                 report_times=report_times,
-                three_phase=self.physics.three_phase,
+                three_phase=three,
             )
         except TimeStepUnderflow as exc:
             msg = str(exc)
@@ -341,7 +387,8 @@ class DigitalTwin:
                 if not mask[i]:
                     continue
                 idx = int(np.argmin(np.abs(traj.times_s - t)))
-                pred.append(self.operator.sample(sensor, traj.state_at(float(t)), port_rates=traj.port_rates[idx]))
+                rates, bhp = traj.rates_and_bhp_at(float(t))
+                pred.append(self.operator.sample(sensor, traj.state_at(float(t)), port_rates=rates, port_bhp=bhp))
                 j = int(np.argmin(np.abs(ref.times_s - t)))
                 clean_v.append(float(ref.values[j]))
             inst = float(np.mean(series.sigma[mask])) if np.any(mask) else float(np.mean(series.sigma))
@@ -377,38 +424,13 @@ class DigitalTwin:
     def calibrate(
         self,
         *,
-        n_ensemble: int | None = None,
-        n_assimilations: int | None = None,
-        prior_mean: float | None = None,
-        prior_std: float | None = None,
-        seed: int | None = None,
-        preset: str | None = None,
+        prior_mean: float | NDArray[np.float64] | None = None,
+        prior_std: float | NDArray[np.float64] | None = None,
+        max_iter: int | None = None,
         time_limit_s: float | None = None,
-        n_workers: int | None = None,
-        inflation: float | None = None,
+        fd_rel: float | None = None,
     ) -> Posterior:
-        """Run the fixed ES-MDA calibration path."""
-        return self._calibrate_candidate(
-            n_ensemble=n_ensemble, n_assimilations=n_assimilations,
-            prior_mean=prior_mean, prior_std=prior_std, seed=seed, preset=preset,
-            time_limit_s=time_limit_s, algorithm="esmda", n_workers=n_workers,
-            inflation=inflation,
-        )
-
-    def _calibrate_candidate(
-        self,
-        *,
-        n_ensemble: int | None = None,
-        n_assimilations: int | None = None,
-        prior_mean: float | None = None,
-        prior_std: float | None = None,
-        seed: int | None = None,
-        preset: str | None = None,
-        time_limit_s: float | None = None,
-        algorithm: str = "esmda",
-        n_workers: int | None = None,
-        inflation: float | None = None,
-    ) -> Posterior:
+        """Fit θ to history observations with Levenberg–Marquardt."""
         history_end = self.experiment.history_end_s
         assim = []
         hold = []
@@ -436,42 +458,35 @@ class DigitalTwin:
         d_obs = stack_observations(assim)
         t_hist = float(history_end) if history_end is not None else float(np.max(d_obs.times))
 
-        knobs: dict = {}
-        if preset is not None:
-            from reservoir_backend.inverse.presets import knobs_for
-
-            knobs = knobs_for(preset)
-        ne = int(n_ensemble if n_ensemble is not None else knobs.get("n_ensemble", self.inverse.n_ensemble))
-        na = int(
-            n_assimilations
-            if n_assimilations is not None
-            else knobs.get("n_assimilations", self.inverse.n_assimilations)
-        )
-        pstd = float(prior_std if prior_std is not None else knobs.get("prior_std", self.inverse.prior_std))
-        infl = float(inflation if inflation is not None else knobs.get("inflation", self.inverse.inflation))
-        algo = str(algorithm)
+        if prior_mean is None:
+            pmean = getattr(self.parameterization, "prior_mean", self.inverse.prior_mean)
+        else:
+            pmean = prior_mean
+        if prior_std is None:
+            pstd = getattr(self.parameterization, "prior_std", self.inverse.prior_std)
+        else:
+            pstd = prior_std
+        pmean = np.asarray(pmean, dtype=float)
+        pstd = np.asarray(pstd, dtype=float)
+        niter = int(self.inverse.max_iter if max_iter is None else max_iter)
+        fd = float(self.inverse.fd_rel if fd_rel is None else fd_rel)
         budget = time_limit_s if time_limit_s is not None else self.inverse.time_limit_s
 
         def fwd(theta: NDArray[np.float64]) -> NDArray[np.float64]:
             return self._forward_vector(theta, assim, t_end=t_hist)
 
-        result = run_esmda(
+        result = run_lm(
             self.parameterization,
             fwd,
             d_obs.values,
-            d_obs.sigma ** 2,
-            n_ensemble=ne,
-            n_assimilations=na,
-            prior_mean=self.inverse.prior_mean if prior_mean is None else prior_mean,
+            d_obs.sigma,
+            prior_mean=pmean,
             prior_std=pstd,
-            seed=int(self.inverse.seed if seed is None else seed),
-            inflation=infl,
+            max_iter=niter,
+            fd_rel=fd,
             time_limit_s=budget,
-            algorithm=algo,
-            n_workers=self.inverse.n_workers if n_workers is None else n_workers,
-            fail_fraction=float(self.inverse.fail_fraction),
         )
-        rock = self.rock_from_k(result.k_mean)
+        rock = self.rock_from_k(result.k)
         hist = self.simulate(rock, t_end=t_hist, report_times=d_obs.times)
         d_post = predict_from_trajectory(self.operator, self.experiment, hist, assim)
         assim_rmse = float(np.sqrt(np.mean(((d_post - d_obs.values) / d_obs.sigma) ** 2)))
@@ -480,31 +495,80 @@ class DigitalTwin:
             d_h = stack_observations(hold)
             pred_h = predict_from_trajectory(self.operator, self.experiment, hist, hold)
             hold_rmse = float(np.sqrt(np.mean(((pred_h - d_h.values) / d_h.sigma) ** 2)))
-        prior_spread = np.std(result.prior_theta, axis=0)
+        prior_spread = np.broadcast_to(np.asarray(pstd, dtype=float), result.theta.shape)
         ident = identifiability(prior_spread, result.theta_std)
-        notes = list(result.diagnostics.notes)
+        notes = list(result.notes)
         notes.append(f"assimilation whitened RMSE={assim_rmse:.4g}")
         notes.append(f"hold-out whitened RMSE={hold_rmse:.4g}")
+        ensemble = None
+        if bool(self.inverse.post_ensemble_enabled):
+            ensemble = sample_posterior_ensemble(
+                self.parameterization,
+                result,
+                ne=int(self.inverse.post_ensemble_ne),
+                seed=int(self.inverse.post_ensemble_seed),
+            )
+            notes.append(f"post ensemble Ne={int(self.inverse.post_ensemble_ne)}")
         return Posterior(
-            esmda=result,
+            theta=result.theta,
+            k=result.k,
+            theta_std=result.theta_std,
             assimilate_rmse=assim_rmse,
             holdout_rmse=hold_rmse,
             forecast_rmse=None,
             identifiability=ident,
             history=hist,
             notes=notes,
+            n_forward=int(result.n_forward),
+            misfit=list(result.misfit),
+            ensemble=ensemble,
+        )
+
+    def assimilate(
+        self,
+        posterior: Posterior,
+        new_observations: list[ObservationSeries],
+        *,
+        max_iter: int = 2,
+        time_limit_s: float | None = None,
+    ) -> Posterior:
+        """Warm-start LM from an existing posterior with additional observations."""
+        merged = list(self.experiment.observations)
+        by_name = {o.sensor_name: o for o in merged}
+        for obs in new_observations:
+            if obs.sensor_name in by_name:
+                old = by_name[obs.sensor_name]
+                times = np.unique(np.concatenate([old.times_s, obs.times_s]))
+                vals = np.zeros(times.size, dtype=float)
+                sigs = np.zeros(times.size, dtype=float)
+                for i, t in enumerate(times):
+                    j = int(np.argmin(np.abs(old.times_s - t)))
+                    vals[i] = float(old.values[j])
+                    sigs[i] = float(old.sigma[j])
+                    k = int(np.argmin(np.abs(obs.times_s - t)))
+                    if abs(float(obs.times_s[k]) - float(t)) < 1.0e-9:
+                        vals[i] = float(obs.values[k])
+                        sigs[i] = float(obs.sigma[k])
+                by_name[obs.sensor_name] = ObservationSeries(
+                    obs.sensor_name, obs.kind, times, vals, sigs, obs.holdout or old.holdout
+                )
+            else:
+                by_name[obs.sensor_name] = obs
+        self.experiment.observations = list(by_name.values())
+        return self.calibrate(
+            prior_mean=posterior.theta.copy(),
+            prior_std=np.maximum(posterior.theta_std, 1.0e-6),
+            max_iter=int(max_iter),
+            time_limit_s=time_limit_s,
         )
 
     def calibrate_auto(
         self,
         *,
         time_limit_s: float | None = None,
-        blend: bool = True,
-        search: bool = True,
-        n_trials: int | None = None,
         search_structure: bool | None = None,
     ) -> Posterior:
-        """Try structure hypotheses and/or assimilator knobs; pick on hold-out."""
+        """Try structure hypotheses; pick on hold-out. One LM per candidate."""
         budget = time_limit_s if time_limit_s is not None else self.inverse.time_limit_s
         from reservoir_backend.inverse.structure import run_structure_search, should_search_structure
 
@@ -513,37 +577,12 @@ class DigitalTwin:
             search_structure=self.inverse.search_structure if search_structure is None else search_structure,
             candidates=self.inverse.structure_candidates,
         )
-        extra_notes: list[str] = []
         if do_struct:
-            t0 = time.perf_counter()
-            best_s, srows = run_structure_search(self, time_limit_s=budget)
-            self.last_structure_board = srows
-            extra_notes.append(f"structure search {len(srows)} candidates")
-            extra_notes.extend(best_s.notes)
-            if budget is not None:
-                budget = max(0.0, float(budget) - (time.perf_counter() - t0))
-                if budget <= 1.0:
-                    best_s.notes = list(best_s.notes) + extra_notes
-                    self.last_leaderboard = srows
-                    return best_s
-        else:
-            best_s = None
-        if search:
-            from reservoir_backend.inverse.hpo import run_hpo
-
-            best, rows, extra = run_hpo(self, time_limit_s=budget, n_trials=n_trials, blend=blend)
-        else:
-            from reservoir_backend.inverse.portfolio import run_portfolio
-
-            best, rows, extra = run_portfolio(self, time_limit_s=budget, blend=blend)
-        self.last_leaderboard = [r.as_dict() for r in rows]
-        best.notes = list(best.notes) + extra + extra_notes
-        if best_s is not None and np.isfinite(best_s.holdout_rmse) and (
-            not np.isfinite(best.holdout_rmse) or float(best_s.holdout_rmse) < float(best.holdout_rmse)
-        ):
-            best_s.notes = list(best_s.notes) + extra_notes + ["kept structure winner over knob search"]
-            return best_s
-        return best
+            best, rows = run_structure_search(self, time_limit_s=budget)
+            self.last_structure_board = rows
+            self.last_leaderboard = rows
+            return best
+        return self.calibrate(time_limit_s=budget)
 
     def forecast(
         self,
@@ -552,7 +591,7 @@ class DigitalTwin:
         controls: list[ControlSeries] | None = None,
         t_end: float | None = None,
     ) -> Trajectory:
-        rock = self.rock_from_k(posterior.esmda.k_mean)
+        rock = self.rock_from_k(posterior.k)
         history_end = self.experiment.history_end_s
         state0 = posterior.history.states[-1].copy() if posterior.history.states else self.initial_state()
         if t_end is None:
@@ -600,50 +639,19 @@ class DigitalTwin:
         self,
         posterior: Posterior,
         time_s: float,
-        *,
-        n_members: int | None = None,
     ) -> dict[str, NDArray[np.float64]]:
-        """Posterior mean/std of static K and of dynamic fields at ``time_s``."""
-        theta = posterior.esmda.theta_ensemble
-        n_use = int(n_members if n_members is not None else min(self.inverse.reconstruct_members, theta.shape[0]))
-        pick = np.linspace(0, theta.shape[0] - 1, n_use).astype(int)
-        pressures = []
-        sws = []
-        sgs = []
+        """Point-estimate static K and dynamic fields at ``time_s`` from F(θ)."""
         t_end = max(float(time_s), float(posterior.history.times_s[-1]) if posterior.history.times_s.size else float(time_s))
-
-        def _one(e: int) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-            rock = self.rock_from_theta(theta[e])
-            traj = self.simulate(rock, t_end=t_end, report_times=np.array([time_s]))
-            st = traj.state_at(time_s)
-            sg = np.zeros_like(st.sw) if st.sg is None else st.sg
-            return st.pressure, st.sw, sg
-
-        from reservoir_backend.inverse.parallel import map_members
-
-        packed = map_members(_one, [int(e) for e in pick], self.inverse.n_workers)
-        for pressure, sw, sg in packed:
-            pressures.append(pressure)
-            sws.append(sw)
-            sgs.append(sg)
-        p = np.stack(pressures, axis=0)
-        sw = np.stack(sws, axis=0)
-        sg = np.stack(sgs, axis=0)
-        so = 1.0 - sw - sg
+        traj = self.simulate(self.rock_from_k(posterior.k), t_end=t_end, report_times=np.array([time_s]))
+        st = traj.state_at(time_s)
+        sg = np.zeros_like(st.sw) if st.sg is None else st.sg
+        so = 1.0 - st.sw - sg
         return {
-            "k_mean": posterior.esmda.k_mean,
-            "k_std": posterior.esmda.k_std,
-            "k_q10": posterior.esmda.k_q10,
-            "k_q50": posterior.esmda.k_q50,
-            "k_q90": posterior.esmda.k_q90,
-            "pressure_mean": np.mean(p, axis=0),
-            "pressure_std": np.std(p, axis=0),
-            "sw_mean": np.mean(sw, axis=0),
-            "sw_std": np.std(sw, axis=0),
-            "so_mean": np.mean(so, axis=0),
-            "so_std": np.std(so, axis=0),
-            "sg_mean": np.mean(sg, axis=0),
-            "sg_std": np.std(sg, axis=0),
+            "k": np.asarray(posterior.k, dtype=float),
+            "pressure": np.asarray(st.pressure, dtype=float),
+            "sw": np.asarray(st.sw, dtype=float),
+            "so": np.asarray(so, dtype=float),
+            "sg": np.asarray(sg, dtype=float),
         }
 
 

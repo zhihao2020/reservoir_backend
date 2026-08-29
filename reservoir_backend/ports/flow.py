@@ -25,6 +25,8 @@ class FlowPort:
     rw_m: float = 0.0
     skin: float = 0.0
     geofac: float = 0.0
+    axis: str = "k"  # Peaceman wellbore axis: i / j / k (CMG *GEOMETRY *I/*J/*K)
+    min_bhp_Pa: float | None = None  # rate-well floor (IMEX *MIN *BHP); producers only
 
     def __post_init__(self) -> None:
         role = str(self.role).strip().lower()
@@ -120,24 +122,33 @@ def peaceman_wi(
     *,
     skin: float = 0.0,
     geofac: float = 0.0,
+    axis: str = "k",
 ) -> float:
-    """Vertical Peaceman connection (m³). ``q = WI λ (p_bhp - p)``.
+    """Peaceman connection (m³). ``q = WI λ (p_bhp - p)``.
 
-    Default ``re = 0.14 sqrt(dx²+dy²)``. If ``geofac > 0``, use the CMG
-    *GEOMETRY form ``re = geofac * sqrt(dx dy)``.
+    ``axis`` is the wellbore direction (CMG ``*GEOMETRY *I/*J/*K``). Length is
+    the cell size along that axis; ``re`` lives in the perpendicular plane.
+    Default ``re = 0.14 sqrt(a²+b²)``. If ``geofac > 0``, ``re = geofac * sqrt(a b)``.
     """
     i, j, k = grid.ijk(int(cell))
     dx, dy, dz = float(grid.dx[i]), float(grid.dy[j]), float(grid.dz[k])
+    ax = str(axis).strip().lower()[:1]
+    if ax == "i":
+        length, a, b = dx, dy, dz
+    elif ax == "j":
+        length, a, b = dy, dx, dz
+    else:
+        length, a, b = dz, dx, dy
     rw = float(rw_m)
     if rw <= 0.0:
         raise InvalidControl("peaceman rw_m must be > 0")
     if float(geofac) > 0.0:
-        re = float(geofac) * float(np.sqrt(dx * dy))
+        re = float(geofac) * float(np.sqrt(a * b))
     else:
-        re = 0.14 * float(np.sqrt(dx * dx + dy * dy))
+        re = 0.14 * float(np.sqrt(a * a + b * b))
     denom = float(np.log(max(re, 1.01 * rw) / rw) + float(skin))
     denom = max(denom, 1.0e-12)
-    return float(2.0 * np.pi * float(permeability) * dz / denom)
+    return float(2.0 * np.pi * float(permeability) * length / denom)
 
 
 def geometric_wi(grid: CartesianGrid, cell: int, permeability: float, radius_m: float = 0.0) -> float:

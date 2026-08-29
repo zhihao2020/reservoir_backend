@@ -1,0 +1,82 @@
+# Lab deliverable case: 300 mm cube, 6 mm probes, 2-region log K.
+# 25 mm mesh so apply finishes in about a minute. Full 10 mm / 30³ is lab_30cm.yaml.
+# Inlet/outlet are vertical columns so both layers are driven. p_init > p_prod
+# so the window has Δp; rate is large enough for the water front to move.
+#
+# User walkthrough: examples/README.md
+# Demo (self-check, not a substitute for gauges):
+#   reservoir apply examples/lab/lab_apply.yaml --demo --output results/lab
+# Real gauges: copy examples/lab/observations_template.csv, fill it, then set
+#   experiment.observations: observations.csv
+# and drop --demo.
+# SI: time_s (seconds), pressure in Pa, saturation 0-1, sigma in the same unit.
+# Lab units: use columns time + time_unit (min) and unit (kPa), or set
+#   experiment.observation_time_unit / observation_pressure_unit.
+geometry:
+  size_m: [0.3, 0.3, 0.3]
+
+grid:
+  type: cartesian
+  spacing_m: 0.025
+
+physics:
+  model: two_phase_immiscible
+  capillary: brooks_corey
+  gravity: false
+  pvt: incompressible
+  sw_init: 0.20
+  p_init: 1.5e5
+  dt_init: 2.0
+  dt_max: 20.0
+  transport: implicit
+  fully_implicit: false
+
+rock:
+  porosity: 0.20
+
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    perforation: column
+    x: 0.012
+    y: 0.15
+    sw_inj: 0.85
+  - name: PROD
+    role: producer
+    control: pressure
+    perforation: column
+    x: 0.288
+    y: 0.15
+
+sensors_defaults:
+  probe_diameter_m: 0.006
+
+sensors:
+  - {name: P_in_bot, kind: pressure, x: 0.08, y: 0.15, z: 0.06, sigma: 2.0e3}
+  - {name: P_in_top, kind: pressure, x: 0.08, y: 0.15, z: 0.24, sigma: 2.0e3}
+  - {name: P_out_bot, kind: pressure, x: 0.22, y: 0.15, z: 0.06, sigma: 2.0e3}
+  - {name: P_out_top, kind: pressure, x: 0.22, y: 0.15, z: 0.24, sigma: 2.0e3}
+  - {name: S_mid_bot, kind: saturation, x: 0.15, y: 0.15, z: 0.06, sigma: 0.04}
+  - {name: S_mid_top, kind: saturation, x: 0.15, y: 0.15, z: 0.24, sigma: 0.04}
+
+inverse:
+  parameterization: region
+  region_axis: z
+  n_regions: 2
+  prior_mean: -28.2
+  prior_std: 1.0
+  max_iter: 4
+  post_ensemble:
+    enabled: true
+    ne: 8
+    seed: 3
+
+experiment:
+  history_end_s: 500
+  holdout_sensors: [P_out_top, S_mid_bot]
+  # observations: observations.csv
+  controls:
+    - {port: INJ, kind: rate, times: [0, 500, 700], values: [2.0e-6, 2.0e-6, 2.0e-6]}
+    - {port: INJ, kind: composition, times: [0, 700], values: [0.85, 0.85]}
+    - {port: PROD, kind: pressure, times: [0, 700], values: [1.0e5, 1.0e5]}

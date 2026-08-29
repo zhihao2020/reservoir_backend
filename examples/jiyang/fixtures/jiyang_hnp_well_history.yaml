@@ -1,0 +1,83 @@
+# Offline IMEX well-history ruler fixture (Jiyang 1 inj + 4 horiz producers).
+# Not for invert yet. Not harness. Not GEM.
+# Geometry / ports / names locked to examples/jiyang/jiyang_hnp.yaml.
+# Schedule cloned from examples/jiyang/jiyang_hnp_short.yaml (~20 d smoke) so this
+# fixture can run later without the product 30 y lock.
+# Full 30 y year0-deplete then yearly inj 1mo / soak 1mo / prod 10mo pattern
+# remains the product lock in docs/imex_jiyang_well_history_ruler.qmd.
+
+geometry:
+  size_m: [1260, 1260, 40]
+
+grid:
+  type: cartesian
+  nx: 21
+  ny: 21
+  nz: 5
+
+physics:
+  model: black_oil
+  fully_implicit: true
+  capillary: brooks_corey
+  gravity: false
+  pvt: cmg_seawater
+  sw_init: 0.25
+  p_init: 2.068e7
+  dt_init: 60
+  dt_max: 2592000
+  transport: implicit
+
+rock:
+  porosity: 0.06
+
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    ijk: [[4,11,3], [5,11,3], [6,11,3], [7,11,3], [8,11,3], [9,11,3], [10,11,3], [11,11,3], [12,11,3], [13,11,3], [14,11,3], [15,11,3], [16,11,3], [17,11,3], [18,11,3]]
+    sw_inj: 0.0
+  - name: P1
+    role: producer
+    control: pressure
+    ijk: [[4,3,3], [5,3,3], [6,3,3], [7,3,3], [8,3,3], [9,3,3], [10,3,3], [11,3,3], [12,3,3], [13,3,3], [14,3,3], [15,3,3], [16,3,3], [17,3,3], [18,3,3]]
+  - name: P2
+    role: producer
+    control: pressure
+    ijk: [[4,7,3], [5,7,3], [6,7,3], [7,7,3], [8,7,3], [9,7,3], [10,7,3], [11,7,3], [12,7,3], [13,7,3], [14,7,3], [15,7,3], [16,7,3], [17,7,3], [18,7,3]]
+  - name: P3
+    role: producer
+    control: pressure
+    ijk: [[4,15,3], [5,15,3], [6,15,3], [7,15,3], [8,15,3], [9,15,3], [10,15,3], [11,15,3], [12,15,3], [13,15,3], [14,15,3], [15,15,3], [16,15,3], [17,15,3], [18,15,3]]
+  - name: P4
+    role: producer
+    control: pressure
+    ijk: [[4,19,3], [5,19,3], [6,19,3], [7,19,3], [8,19,3], [9,19,3], [10,19,3], [11,19,3], [12,19,3], [13,19,3], [14,19,3], [15,19,3], [16,19,3], [17,19,3], [18,19,3]]
+
+experiment:
+  history_end_s: 1728000
+  observations: jiyang_hnp_well_history.csv
+  controls:
+    - port: INJ
+      kind: rate
+      times: [0, 604800, 777600, 950400, 1728000]
+      values: [0, 1e-05, 0, 0, 0]
+    - port: INJ
+      kind: gas_composition
+      times: [0, 604800, 777600, 950400, 1728000]
+      values: [0, 1, 0, 0, 0]
+    - port: P1
+      kind: pressure
+      times: [0, 604800, 777600, 950400, 1728000]
+      values: [19300000.0, 20680000.0, 20680000.0, 19300000.0, 19300000.0]
+    - port: P2
+      kind: pressure
+      times: [0, 604800, 777600, 950400, 1728000]
+      values: [19300000.0, 20680000.0, 20680000.0, 19300000.0, 19300000.0]
+    - port: P3
+      kind: pressure
+      times: [0, 604800, 777600, 950400, 1728000]
+      values: [19300000.0, 20680000.0, 20680000.0, 19300000.0, 19300000.0]
+    - port: P4
+      kind: pressure
+      times: [0, 604800, 777600, 950400, 1728000]
+      values: [19300000.0, 20680000.0, 20680000.0, 19300000.0, 19300000.0]

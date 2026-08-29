@@ -7,9 +7,12 @@ When the fluid has dissolved gas:
   no free gas:  x = Rs, Sg = 0
   oil and gas:  x = Sg, Rs = RsSat(p)
 
-Appearance and disappearance are two-stage on the Newton increment
-(``switch_live_oil_unknown``). Liberated gas uses a volume-balance flash
-(not a small steady Sg cap). Newton failure rejects the step (chop dt).
+Appearance is one-shot (industrial FIM family, renamed): switch to Sg
+unknown and convert excess Rs → free gas once (mass-conserving); no
+per-residual volume-balance flash or two-stage ``near`` park. Gas
+storage may use primary Rs above RsSat until that switch. Disappearance
+uses ``was_switched`` hysteresis. Convergence is CNV∧MB with optional
+relaxed tolerances (not residual soft-accept). Newton failure chops dt.
 
 Local names follow docs/fim_name_map.md (licensed adaptation; no upstream IDs).
 """
@@ -17,11 +20,12 @@ Local names follow docs/fim_name_map.md (licensed adaptation; no upstream IDs).
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy import sparse
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import MatrixRankWarning, lsmr, spsolve
 
 from reservoir_backend.discretization.tpfa import geometric_transmissibility, phase_interior_fluxes
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -59,25 +63,28 @@ def clip_saturation_increment(
     ds_max: float = 0.20,
     rs_ref: float = 1.0,
     pref: float = 1.0e5,
-    dp_rel_max: float = 0.20,
+    dp_rel_max: float = 0.30,
 ) -> NDArray[np.float64]:
-    """Scale Newton Δ so max |ΔS| and relative |Δp|, |ΔRs| stay bounded."""
+    """Appleyard-style shared saturation scale + relative Δp; Rs not sat-chopped."""
     out = np.asarray(du, dtype=float).ravel().copy()
+    un = np.asarray(unsat, dtype=bool).ravel()
     dsw = out[n : 2 * n]
-    peak_sw = float(np.max(np.abs(dsw))) if dsw.size else 0.0
-    if peak_sw > ds_max:
-        out[n : 2 * n] = dsw * (ds_max / peak_sw)
-    dx = out[2 * n :]
-    if np.any(~unsat):
-        peak_sg = float(np.max(np.abs(dx[~unsat])))
-        if peak_sg > ds_max:
-            dx = dx.copy()
-            dx[~unsat] *= ds_max / peak_sg
-    if np.any(unsat):
-        peak_rs = float(np.max(np.abs(dx[unsat]))) / max(rs_ref, 1.0)
-        if peak_rs > ds_max:
-            dx = dx.copy()
-            dx[unsat] *= ds_max / peak_rs
+    dx = out[2 * n :].copy()
+    dsg = np.zeros(n, dtype=float)
+    if np.any(~un):
+        dsg[~un] = dx[~un]
+    peak_s = 0.0
+    if dsw.size:
+        peak_s = max(peak_s, float(np.max(np.abs(dsw))))
+    if np.any(~un):
+        peak_s = max(peak_s, float(np.max(np.abs(dsg[~un]))))
+    if peak_s > ds_max and peak_s > 0.0:
+        sat_alpha = ds_max / peak_s
+        out[n : 2 * n] = dsw * sat_alpha
+        dx[~un] *= sat_alpha
+    # Rs unknown: do not Appleyard-scale; only keep update from driving Rs << 0.
+    if np.any(un):
+        dx[un] = np.maximum(dx[un], -max(rs_ref, 1.0))
     out[2 * n :] = dx
     peak_p = float(np.max(np.abs(out[:n]))) / max(pref, 1.0)
     if peak_p > dp_rel_max:
@@ -137,7 +144,16 @@ def dt_from_newton_iters(
     dt_max: float = 1.0e30,
     target_its: int = TARGET_ITERATION_COUNT,
 ) -> float:
-    """Grow/shrink Δt from successful Newton iteration count."""
+    """Grow/shrink Δt from successful Newton iteration count.
+
+    One-point policy (iteration_count_timestep, target=5, offset=5,
+    relative clamp [0.5, 2.0]):
+
+    - its <= 3  (easy): grow up to x2
+    - its == 5  (target): hold
+    - its >= 8  (hard): shrink toward x0.5
+    - Newton failure is a separate outer chop (x0.5), not this helper
+    """
     return float(
         iteration_count_timestep(
             float(dt),
@@ -149,6 +165,39 @@ def dt_from_newton_iters(
             dt_max=float(dt_max),
         )
     )
+
+
+def _structured_cell_colors(grid: CartesianGrid) -> NDArray[np.int64]:
+    """Distance-two coloring for the Cartesian 7-point residual stencil."""
+    n = grid.n_cells
+    colors = np.zeros(n, dtype=np.int64)
+    for c in range(n):
+        i = c % grid.nx
+        j = (c // grid.nx) % grid.ny
+        k = c // (grid.nx * grid.ny)
+        colors[c] = (i % 3) + 3 * (j % 3) + 9 * (k % 3)
+    return colors
+
+
+def _neighbor_cells(grid: CartesianGrid, c: int) -> list[int]:
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    i = c % nx
+    j = (c // nx) % ny
+    k = c // (nx * ny)
+    out = []
+    if i > 0:
+        out.append(c - 1)
+    if i + 1 < nx:
+        out.append(c + 1)
+    if j > 0:
+        out.append(c - nx)
+    if j + 1 < ny:
+        out.append(c + nx)
+    if k > 0:
+        out.append(c - nx * ny)
+    if k + 1 < nz:
+        out.append(c + nx * ny)
+    return out
 
 
 def _clip_sw_sg(sw: NDArray[np.float64], sg: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -175,12 +224,7 @@ def liberate_excess_gas(
     live: bool,
     grow_max: float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_], NDArray[np.bool_]]:
-    """Flash excess Rs into Sg.
-
-    If ``grow_max`` is set, free-gas appearance per residual/switch eval is
-    limited to that increment (Newton stability). ``None`` uses the full
-    volume-balance flash (liquid-limited only).
-    """
+    """Flash excess Rs into Sg (step-end / tests only — not inside Newton switch)."""
     sg_e = np.asarray(sg, dtype=float).ravel().copy()
     rs_e = np.asarray(rs, dtype=float).ravel().copy()
     n = sg_e.size
@@ -219,10 +263,11 @@ def switch_live_oil_unknown(
     sw: NDArray[np.float64],
     x: NDArray[np.float64],
     unsat: NDArray[np.bool_],
-    near: NDArray[np.bool_],
+    was_switched: NDArray[np.bool_],
     *,
     live: bool,
     eps_s: float = 1.0e-10,
+    eps_osc: float = 1.0e-5,
 ) -> tuple[
     NDArray[np.float64],
     NDArray[np.float64],
@@ -231,10 +276,14 @@ def switch_live_oil_unknown(
     NDArray[np.bool_],
     NDArray[np.float64],
 ]:
-    """Two-stage live-oil unknown switch on a Newton increment of x.
+    """One-shot live-oil unknown switch (industrial FIM family, renamed).
 
-    First bubble hit marks the cell; second hit liberates volume-balance Sg.
-    Disappearance is two-stage. Dead oil keeps x = Sg.
+    Appear: Rs unknown and Rs > RsSat → Sg unknown with Sg = 0 (Newton grows gas).
+    Disappear: Sg ≤ 0 → Rs unknown at RsSat. ``was_switched`` raises the
+    threshold next time (oscillation hysteresis). Dead oil keeps x = Sg.
+
+    The ``was_switched`` argument is also accepted under the legacy name via
+    callers that still pass a ``near`` array (same buffer).
     """
     sw_c = np.clip(np.asarray(sw, dtype=float).ravel(), 0.0, 1.0)
     x_a = np.asarray(x, dtype=float).ravel()
@@ -244,54 +293,40 @@ def switch_live_oil_unknown(
         zbool = np.zeros(n, dtype=bool)
         return sw_c, sg_c, np.zeros(n, dtype=float), zbool, zbool, sg_c.copy()
     unsat_n = np.asarray(unsat, dtype=bool).ravel().copy()
-    near_n = np.asarray(near, dtype=bool).ravel().copy()
+    switched = np.asarray(was_switched, dtype=bool).ravel().copy()
     rs_sat = np.asarray(fluid.rs(p), dtype=float).ravel()
-    eps_rs = max(1.0e-6 * max(float(np.mean(np.abs(rs_sat))), 1.0), 1.0e-12)
+    eps_base = max(1.0e-6 * max(float(np.mean(np.abs(rs_sat))), 1.0), 1.0e-12)
+    # Stricter barrier if the cell switched on the previous update.
+    eps_rs = np.where(switched, max(eps_osc, 10.0 * eps_base), eps_base)
     sl = np.maximum(1.0 - sw_c, 0.0)
     sg_c = np.zeros(n, dtype=float)
     rs_c = rs_sat.copy()
     sat = ~unsat_n
     sg_c[sat] = x_a[sat]
     rs_c[unsat_n] = np.maximum(x_a[unsat_n], 0.0)
-    grow = unsat_n & (rs_c >= rs_sat)
-    dry = sat & (sg_c <= 0.0)
-    first_g = grow & ~near_n
-    second_g = grow & near_n
-    first_d = dry & ~near_n
-    second_d = dry & near_n
-    if np.any(first_g):
-        sg_c[first_g] = 0.0
-        unsat_n[first_g] = True
-        near_n[first_g] = True
-    if np.any(second_g):
-        sg_e, rs_e, _grow, at_cap = liberate_excess_gas(
-            fluid, sw_c, sg_c, rs_c, unsat_n, p, live=True, grow_max=0.20
-        )
-        go = second_g & ~at_cap
-        hold = second_g & at_cap
-        sg_c[go] = np.maximum(sg_e[go], np.minimum(eps_s, sl[go]))
-        rs_c[go] = rs_sat[go]
-        unsat_n[go] = False
-        sg_c[hold] = 0.0
-        unsat_n[hold] = True
-        near_n[hold] = True
-    if np.any(first_d):
-        sg_c[first_d] = np.minimum(eps_s, sl[first_d])
-        rs_c[first_d] = rs_sat[first_d]
-        unsat_n[first_d] = False
-        near_n[first_d] = True
-    if np.any(second_d):
-        sg_c[second_d] = 0.0
-        rs_c[second_d] = np.maximum(rs_sat[second_d] - eps_rs, 0.0)
-        unsat_n[second_d] = True
-    pb_rs = np.asarray(fluid.pbub_of_rs(rs_c), dtype=float).ravel()
-    at_bub = np.asarray(p, dtype=float).ravel() <= pb_rs + 1.0 * PSI
-    close = unsat_n & at_bub & (rs_c >= rs_sat - 10.0 * eps_rs)
-    near_n[close] = True
-    near_n[~(grow | dry | close)] = False
+    appear = unsat_n & (rs_c > rs_sat * (1.0 + 1e-6) + 1e-12)
+    disappear = sat & (sg_c <= eps_s) & (sl > eps_s)
+    switched_n = np.zeros(n, dtype=bool)
+    if np.any(appear):
+        # OPM-style: Rs > RsSat -> Sg unknown starts at 0. Newton grows gas.
+        # Do not flash dSg here; that state is not residual-consistent.
+        sg_c[appear] = 0.0
+        rs_c[appear] = rs_sat[appear]
+        unsat_n[appear] = False
+        switched_n[appear] = True
+    if np.any(disappear):
+        # OPM-style: Sg <= 0 and liquid remains -> Rs unknown at RsSat(p).
+        # Do not fold holdup back into Rs (that often leaves Rs >= RsSat
+        # and the cell immediately re-appears).
+        sg_c[disappear] = 0.0
+        rs_c[disappear] = rs_sat[disappear]
+        unsat_n[disappear] = True
+        switched_n[disappear] = True
+    # Clear hysteresis on cells that did not switch this update.
+    switched_n[~(appear | disappear)] = False
     sw_c, sg_c = _clip_sw_sg(sw_c, np.maximum(sg_c, 0.0))
     x_n = np.where(unsat_n, rs_c, sg_c)
-    return sw_c, sg_c, rs_c, unsat_n, near_n, x_n
+    return sw_c, sg_c, rs_c, unsat_n, switched_n, x_n
 
 
 # Tests and older call sites.
@@ -304,9 +339,18 @@ def _div(grid: CartesianGrid, fx, fy, fz) -> NDArray[np.float64]:
 
 
 def _lambda(three, fluid: BlackOilPVT, sw, sg, p, rs=None, saturated=None):
+    """Phase mobility; must match ``impes._cell_mobility`` for the same fluid.
+
+    Dead oil uses Corey ``mu_o`` / ``mu_g`` (PVT constant μ defaults differ).
+    Live oil uses table ``fluid.viscosity_*``.
+    """
     krw, kro, krg = three.kr(sw, sg)
-    mu_o = np.maximum(fluid.viscosity_o(p, rs=rs, saturated=saturated), 1.0e-30)
-    mu_g = np.maximum(fluid.viscosity_g(p), 1.0e-30)
+    if fluid.has_live_oil():
+        mu_o = np.maximum(fluid.viscosity_o(p, rs=rs, saturated=saturated), 1.0e-30)
+        mu_g = np.maximum(fluid.viscosity_g(p), 1.0e-30)
+    else:
+        mu_o = max(float(three.mu_o), 1.0e-30)
+        mu_g = max(float(three.mu_g), 1.0e-30)
     return (
         np.asarray(krw, dtype=float).ravel() / max(float(three.mu_w), 1.0e-30),
         np.asarray(kro, dtype=float).ravel() / mu_o,
@@ -358,8 +402,8 @@ def _well_surface_rates(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Surface well rates. Injecting perfs use mixed wellbore composition.
 
-    Production is mobility-split plus dissolved gas (OPM gasOilPerfRateProd).
-    Injection uses total mobility and cmix / Σ(cmix/b) (OPM volumeRatio).
+    Production is mobility-split plus dissolved gas.
+    Injection uses total mobility and cmix / Σ(cmix/b).
     ``lt_fixed`` freezes connection qT (typically oil+water mobility at
     t^n) so free-gas mobility cannot collapse the drawdown.
     """
@@ -432,7 +476,8 @@ def _well_surface_rates(
                 pbhp_now[c] = datum + float(rho_wb) * float(gravity) * (z_ref - float(z[c]))
         for i, c in enumerate(cells):
             base, _old = wi_base[c]
-            lt = max(float(lw[c] + lo[c] + lg[c]), 1.0e-30)
+            lt_now = max(float(lw[c] + lo[c] + lg[c]), 1.0e-30)
+            lt = lt_now if lt_fixed is None else max(float(lt_fixed[c]), 1.0e-30)
             pull = float(pbhp_now[c]) - float(p[c])
             q_res_c[i] = float(base) * lt * pull
             flux[i, 0] = float(lw[c]) * pull
@@ -451,8 +496,12 @@ def _well_surface_rates(
             qg_s[c] += sg_m * q_s
             continue
         base, _ = wi_base[c]
+        # With lt_fixed, keep Peaceman+head total rate and mobility-split
+        # (matches sequential freeze of oil+water λT). Avoid double-counting
+        # head: wi_base.pbhp already includes connection head from impes.
         if (
-            wi_datum is not None
+            lt_fixed is None
+            and wi_datum is not None
             and z is not None
             and rho_o is not None
             and abs(float(gravity)) > 1.0e-15
@@ -530,30 +579,38 @@ def solve_fi_step(
         rs0 = np.asarray(rs0, dtype=float).ravel()
     unsat = fluid.vo_unsat(sg0) if live else np.zeros(n, dtype=bool)
     if live:
-        rs0 = np.where(unsat, np.minimum(rs0, rs_sat0), rs_sat0)
+        # Keep dissolved gas inventory; do not min-clamp Rs to RsSat at step start
+        # (that discarded liberation feedstock before Newton).
+        rs0 = np.where(unsat, np.maximum(rs0, 0.0), rs_sat0)
+        so0 = np.clip(1.0 - sw0 - sg0, 0.0, 1.0)
     else:
         rs0 = np.zeros(n, dtype=float)
     pv0 = phi * fluid.pv_mult(p0) * vol
     acc_w0 = pv0 * fluid.b_w(p0) * sw0
-    acc_o0 = pv0 * fluid.b_o(p0, rs=rs0) * so0
+    acc_o0 = pv0 * fluid.b_o(p0, rs=np.minimum(rs0, rs_sat0) if live else rs0) * so0
+    # Gas accumulation uses full Rs (may exceed RsSat) so mass is not dropped.
     acc_g0 = pv0 * fluid.surface_gas_holdup(sw0, sg0, p0, rs=rs0)
     src_w = np.asarray(src_w, dtype=float).ravel()
     src_o = np.asarray(src_o, dtype=float).ravel()
     src_g = np.asarray(src_g, dtype=float).ravel()
     dt = float(dt)
-    p = np.asarray(p_init, dtype=float).ravel().copy()
+    # FIM Newton starts from the accepted pressure at t^n.  The sequential
+    # pressure predictor is useful to IMPES, but crosses live-oil switch
+    # surfaces before the FIM residual/Jacobian pair is established.
+    p = p0.copy()
     sw, sg = _clip_sw_sg(sw0, sg0)
     rs = rs0.copy()
     pref = max(float(np.mean(np.abs(p0))), 1.0e5)
     rs_ref = max(float(np.mean(np.abs(rs_sat0))), 1.0) if live else 1.0
     if live:
-        pb0 = np.asarray(fluid.pbub_of_rs(rs0), dtype=float).ravel()
-        near = unsat & (p0 <= pb0 + 1.0 * PSI)
+        # The primary-switch hysteresis starts clear.
+        near = np.zeros(n, dtype=bool)
     else:
         near = np.zeros(n, dtype=bool)
 
-    use_head = False  # head in Newton historically destabilized CMG wells; report-time only
-
+    # Live connection head: wi_datum + z + ρ.
+    # wi_base.pbhp is the step-start connection pressure (datum+head0) used only
+    # when wi_datum is absent — never stack datum on top of baked pbhp.
     def _well_pack(p_a, lw, lo, lg, bw, bo, bg, rs_e, rho_w, rho_o, rho_g):
         if not wi_base:
             return (
@@ -561,6 +618,11 @@ def solve_fi_step(
                 np.zeros(n, dtype=float),
                 np.zeros(n, dtype=float),
             )
+        use_live_head = (
+            wi_datum is not None
+            and abs(float(gravity)) > 1.0e-15
+            and rho_o is not None
+        )
         return _well_surface_rates(
             wi_base,
             wi_comp,
@@ -573,12 +635,12 @@ def solve_fi_step(
             bo,
             bg,
             rs_e,
-            wi_datum=None,
-            z=None,
-            gravity=0.0,
-            rho_w=None,
-            rho_o=None,
-            rho_g=None,
+            wi_datum=wi_datum if use_live_head else None,
+            z=z_cell if use_live_head else None,
+            gravity=float(gravity) if use_live_head else 0.0,
+            rho_w=rho_w if use_live_head else None,
+            rho_o=rho_o if use_live_head else None,
+            rho_g=rho_g if use_live_head else None,
             lt_fixed=lt_fixed,
         )
 
@@ -591,10 +653,17 @@ def solve_fi_step(
         else:
             unsat_b = np.asarray(unsat_a, dtype=bool).ravel()
         sg_e = np.where(unsat_b, 0.0, np.asarray(sg_a, dtype=float).ravel())
-        rs_e = np.asarray(rs_a, dtype=float).ravel()
+        rs_prim = np.asarray(rs_a, dtype=float).ravel()
         if live:
             rs_sat = np.asarray(fluid.rs(p_a), dtype=float).ravel()
-            rs_e = np.where(unsat_b, np.minimum(rs_e, rs_sat), rs_sat)
+            # In saturated cells Rs is a dependent quantity.  Use the same
+            # RsSat(p) in storage, flux, PVT, and their Jacobian columns.
+            rs_prim = np.where(unsat_b, np.maximum(rs_prim, 0.0), rs_sat)
+            # PVT/mobility use capped Rs; gas storage uses primary Rs.
+            rs_e = np.where(unsat_b, np.minimum(rs_prim, rs_sat), rs_sat)
+        else:
+            rs_e = rs_prim
+            rs_prim = rs_e
         grow = np.zeros(n, dtype=bool)
         at_cap = np.zeros(n, dtype=bool)
         so = np.clip(1.0 - sw_a - sg_e, 0.0, 1.0)
@@ -642,7 +711,7 @@ def solve_fi_step(
         fw_x, fw_y, fw_z = _up_b(qw_x, qw_y, qw_z, bw)
         fo_x, fo_y, fo_z = _up_b(qo_x, qo_y, qo_z, bo)
         fg_x, fg_y, fg_z = _up_b(qg_x, qg_y, qg_z, bg)
-        rsbo = rs_e * bo
+        rsbo = rs_prim * bo
         rg_x, rg_y, rg_z = _up_b(qo_x, qo_y, qo_z, rsbo)
         qw_s = src_w.copy()
         qo_s = src_o.copy()
@@ -653,14 +722,17 @@ def solve_fi_step(
         qg_s += dg
         rw = (pv * bw * sw_a - acc_w0) / dt + _div(grid, fw_x, fw_y, fw_z) - qw_s
         ro = (pv * bo * so - acc_o0) / dt + _div(grid, fo_x, fo_y, fo_z) - qo_s
-        rg = (pv * (bg * sg_e + rs_e * bo * so) - acc_g0) / dt + _div(grid, fg_x + rg_x, fg_y + rg_y, fg_z + rg_z) - qg_s
+        rg = (pv * (bg * sg_e + rs_prim * bo * so) - acc_g0) / dt + _div(grid, fg_x + rg_x, fg_y + rg_y, fg_z + rg_z) - qg_s
         if cell_dirichlet:
             for c, pbc in cell_dirichlet.items():
                 rw[int(c)] = p_a[int(c)] - float(pbc)
-        return np.concatenate([rw, ro, rg]), (lw, lo, lg, bw, bo, bg, rs_e, pv, sg_e, grow, at_cap)
+        return np.concatenate([rw, ro, rg]), (lw, lo, lg, bw, bo, bg, rs_e, pv, sg_e, grow, at_cap, rs_prim)
 
     def _jacobian(p_a, sw_a, sg_a, rs_a, unsat_a, pack):
-        lw, lo, lg, bw, bo, bg, rs, pv, sg_e, grow, at_cap = pack
+        # Residual no longer flashes per eval, so pack grow/at_cap stay False;
+        # grow branches below are inert and kept for switch-era FD compatibility.
+        lw, lo, lg, bw, bo, bg, rs, pv, sg_e, grow, at_cap = pack[:11]
+        rs_prim = pack[11] if len(pack) > 11 else rs
         so = np.clip(1.0 - sw_a - sg_e, 0.0, 1.0)
         sat = (~unsat_a) | grow
         dbw, dbo, dbg, _bw, _bo, _bg, _rs_sat, drs_sat = _db_dp(fluid, p_a, rs=rs)
@@ -682,12 +754,12 @@ def solve_fi_step(
         dO_dx = np.where(sat, -pv * bo / dt, pv * dbo_drs * so / dt)
         dO_dx = np.where(grow & ~at_cap, (-pv * bo / dt) * dsg_drs, dO_dx)
         dO_dx = np.where(grow & at_cap, pv * dbo_drs * so / dt, dO_dx)
-        hold = bg * sg_e + rs * bo * so
-        dG_dp_sat = (dpv * hold + pv * (dbg * sg_e + drs_sat * bo * so + rs * dbo * so)) / dt
-        dG_dp_unsat = (dpv * hold + pv * (rs * dbo * so)) / dt
+        hold = bg * sg_e + rs_prim * bo * so
+        dG_dp_sat = (dpv * hold + pv * (dbg * sg_e + drs_sat * bo * so + rs_prim * dbo * so)) / dt
+        dG_dp_unsat = (dpv * hold + pv * (rs_prim * dbo * so)) / dt
         dG_dp = np.where(unsat_a & ~grow, dG_dp_unsat, dG_dp_sat)
-        dG_dsw = pv * rs * bo * (-1.0) / dt
-        dG_dx_unsat = pv * (bo + rs_a * dbo_drs) * so / dt
+        dG_dsw = pv * rs_prim * bo * (-1.0) / dt
+        dG_dx_unsat = pv * (bo + rs_prim * dbo_drs) * so / dt
         dG_dx = np.where(unsat_a & ~grow, dG_dx_unsat, pv * (bg - rs * bo) / dt)
         dG_dx = np.where(grow & ~at_cap, pv * (bg - rs * bo) / dt * dsg_drs, dG_dx)
         dG_dx = np.where(grow & at_cap, dG_dx_unsat, dG_dx)
@@ -881,11 +953,9 @@ def solve_fi_step(
                 dpc_i[sl].ravel(), dpc_i[sr].ravel(),
             )
         if wi_base:
-            # Well Jacobian must match `_well_pack` / `_well_surface_rates`
-            # (lt_fixed, mixture, optional head). Analytic Peaceman stubs diverge
-            # on liberation wells; use centered FD of the well source only.
+            # Pressure column: analytic Peaceman for producers (leading −WI λ b).
+            # Saturation / x stay centered FD (mixture + live head couple perfs).
             cells_w = [int(c) for c in wi_base]
-            # Cross-flow couples perfs in a well: FD each well unknown locally.
             eps_p = max(1.0, 1.0e-6 * float(np.mean(np.abs(p_a))))
             eps_sw = 1.0e-5
             rs_scale = max(float(np.mean(np.abs(rs_a))), 1.0)
@@ -917,28 +987,51 @@ def solve_fi_step(
                     fluid.density_g(p_b, bg=bg2),
                 )
 
+            qw0, qo0, qg0 = _well_pack(
+                p_a, lw, lo, lg, bw, bo, bg, rs,
+                fluid.density_w(p_a, bw=bw),
+                fluid.density_o(p_a, rs=rs, bo=bo),
+                fluid.density_g(p_a, bg=bg),
+            )
             for c in cells_w:
-                # dp
-                p_h = p_a.copy()
-                p_l = p_a.copy()
-                p_h[c] += eps_p
-                p_l[c] -= eps_p
-                qwh, qoh, qgh = _rates_at(p_h, sw_a, sg_a, rs_a, unsat_a)
-                qwl, qol, qgl = _rates_at(p_l, sw_a, sg_a, rs_a, unsat_a)
-                dqw = (qwh - qwl) / (2.0 * eps_p)
-                dqo = (qoh - qol) / (2.0 * eps_p)
-                dqg = (qgh - qgl) / (2.0 * eps_p)
-                # residual has -q_well → Jacobian entries are -dq/du
-                for cc in cells_w:
-                    data.append(np.array([-float(dqw[cc])]))
-                    rows.append(np.array([cc]))
+                base = float(wi_base[c][0])
+                # Producer sink: analytic ∂q_α/∂p ≈ −WI λ_α b_α (ignore ∂head/∂p).
+                if float(qw0[c] + qo0[c] + qg0[c]) < 0.0:
+                    dqw_dp = -base * float(lw[c]) * float(bw[c])
+                    dqo_dp = -base * float(lo[c]) * float(bo[c])
+                    dqg_dp = (
+                        -base * float(lg[c]) * float(bg[c])
+                        - base * float(lo[c]) * float(rs[c]) * float(bo[c])
+                    )
+                    data.append(np.array([-dqw_dp]))
+                    rows.append(np.array([c]))
                     cols.append(np.array([c]))
-                    data.append(np.array([-float(dqo[cc])]))
-                    rows.append(np.array([cc + n]))
+                    data.append(np.array([-dqo_dp]))
+                    rows.append(np.array([c + n]))
                     cols.append(np.array([c]))
-                    data.append(np.array([-float(dqg[cc])]))
-                    rows.append(np.array([cc + 2 * n]))
+                    data.append(np.array([-dqg_dp]))
+                    rows.append(np.array([c + 2 * n]))
                     cols.append(np.array([c]))
+                else:
+                    p_h = p_a.copy()
+                    p_l = p_a.copy()
+                    p_h[c] += eps_p
+                    p_l[c] -= eps_p
+                    qwh, qoh, qgh = _rates_at(p_h, sw_a, sg_a, rs_a, unsat_a)
+                    qwl, qol, qgl = _rates_at(p_l, sw_a, sg_a, rs_a, unsat_a)
+                    dqw = (qwh - qwl) / (2.0 * eps_p)
+                    dqo = (qoh - qol) / (2.0 * eps_p)
+                    dqg = (qgh - qgl) / (2.0 * eps_p)
+                    for cc in cells_w:
+                        data.append(np.array([-float(dqw[cc])]))
+                        rows.append(np.array([cc]))
+                        cols.append(np.array([c]))
+                        data.append(np.array([-float(dqo[cc])]))
+                        rows.append(np.array([cc + n]))
+                        cols.append(np.array([c]))
+                        data.append(np.array([-float(dqg[cc])]))
+                        rows.append(np.array([cc + 2 * n]))
+                        cols.append(np.array([c]))
                 # dsw
                 sw_h = sw_a.copy()
                 sw_l = sw_a.copy()
@@ -1004,7 +1097,96 @@ def solve_fi_step(
                 jac[c, :] = 0.0
                 jac[c, c] = 1.0
             jac = jac.tocsr()
+        # Water-filled / tiny-So Rs unknowns leave a near-zero x-column → singular.
+        so_reg = np.clip(1.0 - sw_a - sg_e, 0.0, 1.0)
+        weak = np.asarray(unsat_a, dtype=bool).ravel() & (so_reg < 1.0e-8)
+        if np.any(weak):
+            jac = jac.tolil()
+            for c in np.flatnonzero(weak):
+                jac[2 * n + int(c), :] = 0.0
+                jac[2 * n + int(c), 2 * n + int(c)] = 1.0
+            jac = jac.tocsr()
         return jac
+
+    def _jacobian_residual_coloring(p_a, sw_a, sg_a, rs_a, unsat_a):
+        """Jacobian by colored FD of the SAME residual (R/J consistent).
+
+        Local-dense AD (adnum.CellAD) supplies the dual arithmetic for future
+        analytic residuals; until the flux residual is fully AD-rewritten,
+        coloring FD guarantees the Newton matrix matches `_residual`.
+        """
+        res0, _pack0 = _residual(p_a, sw_a, sg_a, rs_a, unsat_a)
+        jac = sparse.lil_matrix((3 * n, 3 * n))
+        colors = _structured_cell_colors(grid)
+        eps_p = max(1.0, 1.0e-6 * float(np.mean(np.abs(p_a))))
+        eps_sw = 1.0e-6
+        # Sg is saturation-scaled, while Rs is O(10--100) in field units.
+        # A single 1e-6 perturbation loses the Rs residual difference to
+        # roundoff and creates apparently singular dissolved-gas columns.
+        eps_x = np.where(
+            np.asarray(unsat_a, dtype=bool).ravel(),
+            max(1.0e-3 * float(rs_ref), 1.0e-8),
+            1.0e-6,
+        )
+        x_a = fluid.vo_encode(sg_a, rs_a, unsat_a) if live else np.asarray(sg_a, dtype=float).ravel()
+        well_touch: dict[int, set[int]] = {}
+        if wi_base:
+            groups: dict[int, set[int]] = {}
+            for c0 in wi_base:
+                c0 = int(c0)
+                group = int(wi_group[c0]) if wi_group is not None and c0 in wi_group else c0
+                groups.setdefault(group, set()).add(c0)
+            for members in groups.values():
+                for c0 in members:
+                    well_touch[c0] = members
+        for color in range(int(np.max(colors)) + 1):
+            cells = np.flatnonzero(colors == color)
+            if cells.size == 0:
+                continue
+            for slot in range(3):
+                p_t = p_a.copy()
+                sw_t = sw_a.copy()
+                x_t = x_a.copy()
+                if slot == 0:
+                    p_t[cells] = p_t[cells] + eps_p
+                elif slot == 1:
+                    sw_t[cells] = np.clip(sw_t[cells] + eps_sw, 0.0, 1.0)
+                else:
+                    x_t[cells] = x_t[cells] + eps_x[cells]
+                if live:
+                    # Differentiate the current primary-variable branch.  A
+                    # phase switch is a Newton update operation, not part of
+                    # the residual evaluation being differentiated.
+                    unsat_t = np.asarray(unsat_a, dtype=bool).ravel().copy()
+                    sg_t = np.where(unsat_t, 0.0, x_t)
+                    rs_t = np.where(unsat_t, np.maximum(x_t, 0.0), fluid.rs(p_t))
+                    sw_t, sg_t = _clip_sw_sg(sw_t, sg_t)
+                else:
+                    sw_t, sg_t = _clip_sw_sg(sw_t, x_t)
+                    rs_t = np.zeros(n, dtype=float)
+                    unsat_t = np.zeros(n, dtype=bool)
+                res1, _ = _residual(p_t, sw_t, sg_t, rs_t, unsat_t)
+                for c in cells:
+                    eps_c = eps_p if slot == 0 else eps_sw if slot == 1 else float(eps_x[c])
+                    col = int(c) + slot * n
+                    touch = {int(c), *(_neighbor_cells(grid, int(c)))}
+                    touch.update(well_touch.get(int(c), ()))
+                    for cc in touch:
+                        for blk in range(3):
+                            row = cc + blk * n
+                            jac[row, col] = (res1[row] - res0[row]) / eps_c
+        # Match the weak-oil-cell guard in the analytic Jacobian.  An
+        # undersaturated cell with vanishing So has no meaningful Rs storage
+        # or flux derivative, so its gas row/column is otherwise exactly
+        # singular.  Such states occur on rejected Newton chops and must not
+        # poison the next linear solve.
+        so_reg = np.clip(1.0 - sw_a - np.where(unsat_a, 0.0, sg_a), 0.0, 1.0)
+        weak = np.asarray(unsat_a, dtype=bool).ravel() & (so_reg < 1.0e-8)
+        for c in np.flatnonzero(weak):
+            row = 2 * n + int(c)
+            jac[row, :] = 0.0
+            jac[row, row] = 1.0
+        return jac.tocsr()
 
     def _cnv_scale(pv, bw, bo, bg, rs_a):
         dt_s = max(dt, 1.0e-30)
@@ -1021,15 +1203,13 @@ def solve_fi_step(
             ]
         )
 
-    def _finish(p_f, sw_f, sg_f, rs_f, unsat_f, pack_f, n_its: int) -> FiStepResult:
-        if live:
-            # Equilibrium flash only after Newton accepts the primary state.
-            sg_e, rs_e, grow, _ac = liberate_excess_gas(
-                fluid, sw_f, sg_f, rs_f, unsat_f, p_f, live=True, grow_max=0.20
-            )
-            sg_f = np.where(grow, sg_e, sg_f)
-            rs_f = np.where(grow, rs_e, rs_f)
-            sw_f, sg_f = _clip_sw_sg(sw_f, sg_f)
+    def _finish(
+        p_f, sw_f, sg_f, rs_f, unsat_f, pack_f, n_its: int, *, hard_cnv: bool = False
+    ) -> FiStepResult:
+        # Keep the accepted primary-variable state.  Full-field flashing here
+        # changes the converged residual and can underflow marginal gas cells;
+        # appearance is handled by switch_live_oil_unknown, while disappearance
+        # folds its gas inventory back into Rs there.
         # Recompute total reservoir fluxes at the accepted state.
         so_f = np.clip(1.0 - sw_f - sg_f, 0.0, 1.0)
         sat_f = None if not live else ~fluid.vo_unsat(sg_f)
@@ -1066,9 +1246,30 @@ def solve_fi_step(
             newton_iters=int(n_its),
         )
 
-    def _converged(res_a, scale_a) -> bool:
-        # Primary accept is cell CNV; global MB is used on soft accept only.
-        return cell_cnv_ok(res_a, scale_a, tol=nltol)
+    def _converged(res_a, scale_a, *, relaxed: bool = False) -> bool:
+        # Industrial FIM family: CNV and MB. The relaxed path uses
+        # widened tols (cnv_relaxed≈1, mb_relaxed≈1e-6), not err≤0.1 soft accept.
+        cnv_tol = 0.1 if relaxed else float(nltol)
+        mb_tol = max(1.0e-6, float(TOLERANCE_MB)) if relaxed else float(TOLERANCE_MB)
+        return cell_cnv_ok(res_a, scale_a, tol=cnv_tol) and global_mass_balance_ok(
+            res_a, n, scale_a, tol=mb_tol
+        )
+
+    def _cnv_violated_pv_fraction(res_a, scale_a, pv_a, *, tol: float) -> float:
+        """Fraction of pore volume where cell CNV exceeds the requested tolerance."""
+        r = np.asarray(res_a, dtype=float).ravel()
+        s = np.maximum(np.asarray(scale_a, dtype=float).ravel(), 1.0e-30)
+        pv_a = np.maximum(np.asarray(pv_a, dtype=float).ravel(), 0.0)
+        if r.size != 3 * n or s.size != 3 * n or pv_a.size != n:
+            return 1.0
+        viol = np.zeros(n, dtype=bool)
+        for k in range(3):
+            sl = slice(k * n, (k + 1) * n)
+            viol |= np.abs(r[sl]) / s[sl] > float(tol)
+        den = float(np.sum(pv_a))
+        if den <= 0.0:
+            return 1.0
+        return float(np.sum(pv_a[viol])) / den
 
     x = fluid.vo_encode(sg, rs, unsat) if live else sg.copy()
     scale = np.maximum(_cnv_scale(pv0, fluid.b_w(p0), fluid.b_o(p0, rs=rs0), fluid.b_g(p0), rs0), 1.0e-12)
@@ -1077,10 +1278,11 @@ def solve_fi_step(
     if not np.isfinite(err0):
         return None
     if _converged(res, scale):
-        return _finish(p, sw, sg, rs, unsat, pack, 0)
+        return _finish(p, sw, sg, rs, unsat, pack, 0, hard_cnv=True)
     err_init = err0
     relax = NewtonRelaxation()
     n_its = 0
+    du_prev_max = 0.0
     _trace = False
     try:
         import os as _os
@@ -1093,14 +1295,32 @@ def solve_fi_step(
     for _ in range(int(maxnewt)):
         n_its += 1
         try:
-            jac = _jacobian(p, sw, sg, rs, unsat, pack)
+            # Use a Jacobian of the same residual on validation-sized grids.
+            # The live-oil branch is frozen during differentiation and switches
+            # only after an accepted Newton increment.
+            if n <= 1024:
+                jac = _jacobian_residual_coloring(p, sw, sg, rs, unsat)
+            else:
+                jac = _jacobian(p, sw, sg, rs, unsat, pack)
             col_x = np.where(unsat, rs_ref, 1.0)
             scale_n = np.maximum(_cnv_scale(pack[7], pack[3], pack[4], pack[5], pack[6]), 1.0e-12)
             row_s = 1.0 / scale_n
             col_s = np.concatenate([np.full(n, pref), np.ones(n), col_x])
             jac = sparse.diags(row_s) @ jac @ sparse.diags(col_s)
             rhs = -res * row_s
-            du = np.asarray(spsolve(jac.tocsr(), rhs), dtype=float).ravel()
+            jac_s = jac.tocsr()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", MatrixRankWarning)
+                du = np.asarray(spsolve(jac_s, rhs), dtype=float).ravel()
+            if du.size != 3 * n or not np.all(np.isfinite(du)):
+                # Phase switching can leave a redundant gas row on a rejected
+                # chop.  Recover the minimum-norm Newton direction instead of
+                # rejecting the whole timestep solely because the direct
+                # factorization selected that transient singular state.
+                du = np.asarray(
+                    lsmr(jac_s, rhs, atol=1.0e-10, btol=1.0e-10, maxiter=max(50, 3 * n))[0],
+                    dtype=float,
+                ).ravel()
             du[:n] *= pref
             du[2 * n :] *= col_x
         except Exception as exc:
@@ -1112,9 +1332,10 @@ def solve_fi_step(
                 print(f"[fim] bad du it={n_its}", flush=True)
             return None
         du = clip_saturation_increment(
-            du, n, unsat, ds_max=0.20, rs_ref=rs_ref, pref=pref, dp_rel_max=0.35
+            du, n, unsat, ds_max=0.20, rs_ref=rs_ref, pref=pref, dp_rel_max=0.30
         )
         du = scale_newton_update(relax.apply(du), alpha=1.0)
+        du_prev_max = float(np.max(np.abs(du)))
         improved = False
         masks = [np.ones(3 * n), np.concatenate([np.ones(n), np.zeros(2 * n)]), np.concatenate([np.zeros(n), np.ones(2 * n)])]
         for mask in masks:
@@ -1136,8 +1357,9 @@ def solve_fi_step(
                 err = float(np.max(np.abs(r_try) / scale))
                 switched = live and (np.any(unsat_t != unsat) or np.any(near_t != near))
                 better = np.isfinite(err) and err < err0 * (1.0 - 1.0e-4 * max(step, 1.0e-3))
-                # VO switch: accept only if residual does not increase.
-                if not better and switched and np.isfinite(err) and err <= err0:
+                # One-shot appear sets Sg=0 and drops Rs→RsSat; residual can
+                # jump up. Still accept finite switched updates (Newton grows Sg).
+                if not better and switched and np.isfinite(err) and err <= max(err0 * 2.0, err0 + 0.5):
                     better = True
                 if better:
                     p, sw, sg, rs, unsat, near = p_t, sw_t, sg_t, rs_t, unsat_t, near_t
@@ -1152,17 +1374,28 @@ def solve_fi_step(
                 f"du_p={float(np.max(np.abs(du[:n]))):.4g} du_s={float(np.max(np.abs(du[n:2*n]))):.4g}",
                 flush=True,
             )
-        # Soft accept: CNV small enough. Do not require a large relative drop —
-        # sequential pressure guesses often start with err_init already O(0.1).
-        soft_ok = err0 <= max(10.0 * nltol, 1.0e-1) and err0 <= err_init
-        relax.update(np.array([[err0]]), np.array([err0 <= nltol or soft_ok]))
-        if _converged(res, scale):
-            return _finish(p, sw, sg, rs, unsat, pack, n_its)
+        hard_ok = _converged(res, scale, relaxed=False)
+        # Relax after enough Newton work / small Δ / tiny violating PV.
+        small_du = du_prev_max <= 1.0e-3 * max(pref, 1.0)
+        pv_now = np.asarray(pack[7], dtype=float).ravel()
+        viol_frac = _cnv_violated_pv_fraction(res, scale, pv_now, tol=float(nltol))
+        relax_eligible = (n_its >= 8 or small_du) and viol_frac <= 0.03
+        relaxed_ok = relax_eligible and _converged(res, scale, relaxed=True)
+        relax.update(np.array([[err0]]), np.array([hard_ok or relaxed_ok]))
+        if hard_ok:
+            return _finish(p, sw, sg, rs, unsat, pack, n_its, hard_cnv=True)
         if not improved:
-            if soft_ok:
-                return _finish(p, sw, sg, rs, unsat, pack, n_its)
+            if relaxed_ok:
+                return _finish(p, sw, sg, rs, unsat, pack, n_its, hard_cnv=False)
             return None
-    soft_ok = err0 <= max(10.0 * nltol, 1.0e-1) and err0 <= err_init
-    if soft_ok or _converged(res, scale):
-        return _finish(p, sw, sg, rs, unsat, pack, n_its)
+    hard_ok = _converged(res, scale, relaxed=False)
+    small_du = du_prev_max <= 1.0e-3 * max(pref, 1.0)
+    pv_now = np.asarray(pack[7], dtype=float).ravel()
+    viol_frac = _cnv_violated_pv_fraction(res, scale, pv_now, tol=float(nltol))
+    relax_eligible = (n_its >= 8 or small_du) and viol_frac <= 0.03
+    relaxed_ok = relax_eligible and _converged(res, scale, relaxed=True)
+    if hard_ok:
+        return _finish(p, sw, sg, rs, unsat, pack, n_its, hard_cnv=True)
+    if relaxed_ok:
+        return _finish(p, sw, sg, rs, unsat, pack, n_its, hard_cnv=False)
     return None
