@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.dpdp
+
 from reservoir_backend.comp.dual_residual import dual_residual
 from reservoir_backend.comp.dual_state import CompositionalContinuumState, DualCompositionalState
 from reservoir_backend.comp.fluid import fluid_from_name

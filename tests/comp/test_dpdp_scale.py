@@ -1,6 +1,9 @@
 """Scalability smoke: 5³ one forward. Larger grids live in scripts/dpdp_scale_bench.py."""
 
 import numpy as np
+import pytest
+
+pytestmark = pytest.mark.dpdp
 
 from reservoir_backend.comp.fluid import fluid_from_name
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -10,6 +13,8 @@ from reservoir_backend.solver.dpdp_context import DPDPModelContext
 from reservoir_backend.solver.fi_comp_dual import initialize_dual_state, simulate_dual_comp
 
 
+@pytest.mark.slow
+@pytest.mark.scalability
 def test_five_cubed_closed_transfer_conserves() -> None:
     n = 5
     dx = 0.02
@@ -42,6 +47,8 @@ def test_five_cubed_closed_transfer_conserves() -> None:
     assert ctx.pattern.nnz < ctx.pattern.n_u ** 2
 
 
+@pytest.mark.slow
+@pytest.mark.scalability
 def test_ten_cubed_closed_transfer_conserves() -> None:
     n = 10
     dx = 0.01

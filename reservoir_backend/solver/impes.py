@@ -2272,6 +2272,10 @@ def simulate(
 
     ``max_steps`` is a safety fuse. Implicit transport is not sized to an
     explicit CFL step budget; chop on Newton / ``max_ds`` / bounds instead.
+
+    Incompressible pressure is elliptic (MRST incompTPFA / OPM Darcy): a
+    Dirichlet pressure jump of O(1) is the TPFA solution, not a dt limit.
+    CFL applies only when saturation is transported.
     """
     if capillary is None:
         capillary = NoCapillary()
@@ -2382,7 +2386,8 @@ def simulate(
                     pv_scale=np.asarray(fluid.pv_mult(trial.pressure), dtype=float).ravel(),
                 )
                 # Implicit BE is unconditionally stable in dt; CFL only bounds explicit fallback.
-                if not extras.get("implicit_ok") and dt_try > dt_cfl * 1.01:
+                # Single-phase Darcy has no saturation transport.
+                if (not single_phase) and not extras.get("implicit_ok") and dt_try > dt_cfl * 1.01:
                     dt_try = 0.8 * dt_cfl
                     note = "cfl"
                     continue
@@ -2398,7 +2403,8 @@ def simulate(
                     note = "ds"
                     continue
                 dp_rel = float(extras.get("dp_rel", 0.0))
-                if (not fim_ok) and dp_rel > 0.55 and dt_try > hard_floor * 2.0:
+                elliptic_p = not fluid.has_storage()
+                if (not fim_ok) and (not elliptic_p) and dp_rel > 0.55 and dt_try > hard_floor * 2.0:
                     dt_try *= 0.5
                     note = "dp"
                     continue
@@ -2466,7 +2472,7 @@ def simulate(
                 dt_state = state_change_timestep(
                     dt_try,
                     ds,
-                    dp_rel,
+                    0.0 if elliptic_p else dp_rel,
                     target_ds=float(max_ds),
                     dt_min=hard_floor,
                     dt_max=dt_max,

@@ -117,5 +117,7 @@ reservoir synthetic --output results/syn
 ## 测试
 
 ```bash
-pytest -q
+pytest -q                      # default: not slow (no 10³ / ES-MDA DPDP)
+pytest -q -m dpdp
+pytest -q -m "slow and assimilation"
 ```

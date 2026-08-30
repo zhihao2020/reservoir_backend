@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.assimilation
+
 from reservoir_backend.inverse.ensemble import replace_failed_members, sample_log_prior
 from reservoir_backend.inverse.esmda import esmda_update, inflation_schedule
 from reservoir_backend.exceptions import AssimilationError

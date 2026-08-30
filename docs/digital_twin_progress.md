@@ -21,7 +21,7 @@
 ## 未完成
 
 - 实验室 `apply` 默认仍是两区 log K + LM（计划允许）
-- 30³ 阶梯：脚本 `scripts/dpdp_scale_bench.py`；pytest 含 5³ 与 10³。20³/30³ 由脚本记录，通过前不扩 zonal \(C_f\)
+- 30³ 是 milestone（`scripts/dpdp_scale_bench.py --max-n 30`），默认 `pytest -m "not slow"` 不跑 ES-MDA/\(10^3\)
 
 ## 接口变化
 
@@ -38,8 +38,7 @@
 
 - 实验室产品路径仍是两区 log K + LM
 - adapter 的 `step` 用 `simulate` 推到 \(t+\Delta t\)，内部仍可 substep
-- `test_1d_dirichlet_linear_pressure`（`tests/physics/test_pressure_analytical.py`）在空 ports + face Dirichlet 上 TimeStepUnderflow；未改 IMPES
 
 ## 下一阶段
 
-跑 `scripts/dpdp_scale_bench.py --max-n 30` 留下 20³/30³ 计时；通过后才允许 zonal \(C_f\)。
+冻结 \(\lambda\) 快环求压（`solver/frozen_pressure.py`）。Flash 单相 bypass 仅全场残差启用。\(5^3/10^3\) 标 `slow`。

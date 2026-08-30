@@ -1,6 +1,9 @@
 import numpy as np
+import pytest
 
 from reservoir_backend.synthetic import make_scalar_cf_twin
+
+pytestmark = [pytest.mark.slow, pytest.mark.assimilation]
 
 
 def test_esmda_scalar_cf_moves_toward_truth() -> None:

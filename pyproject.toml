@@ -31,6 +31,9 @@ exclude = ["tests*", "benchmarks*", "examples*", "scripts*", "docs*", "specs*", 
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
-    "slow: long compositional apply/invert demos (deselect with -m \"not slow\")",
+    "slow: long DPDP/ES-MDA/scale cases (deselect with -m \"not slow\")",
+    "dpdp: dual-continuum compositional solver",
+    "assimilation: ES-MDA / parameter EnKF",
+    "scalability: 5^3 and larger DPDP forwards",
 ]
 addopts = "-m \"not slow\""

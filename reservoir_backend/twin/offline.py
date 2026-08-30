@@ -239,6 +239,10 @@ class DigitalTwin:
             kinds.setdefault(c.port_name, set()).add(c.kind)
         validate_port_controls(self.ports, kinds)
         self.operator = ObservationOperator(self.grid, self.experiment.sensors, self.ports)
+        self._last_dual = None
+        self._lam_f = None
+        self._lam_m = None
+        self._last_dual_rock = None
 
     def uses_dpdp(self) -> bool:
         model = str(self.physics.model).lower()
@@ -378,7 +382,7 @@ class DigitalTwin:
             dual0 = initialize_dual_state(self.grid, dual_rock, self.physics.fluid, float(self.physics.p_init))
             if state0 is not None:
                 dual0.time_s = float(state0.time_s)
-            traj, _ = simulate_dual_comp(
+            traj, dual = simulate_dual_comp(
                 self.grid,
                 dual_rock,
                 self.physics.fluid,
@@ -394,6 +398,14 @@ class DigitalTwin:
                 report_times=report_times,
                 context=self.dpdp_context(),
             )
+            from reservoir_backend.comp.properties import flash_state
+
+            pf = flash_state(self.physics.fluid, dual.fracture.pressure, dual.fracture.moles)
+            pm = flash_state(self.physics.fluid, dual.matrix.pressure, dual.matrix.moles)
+            self._last_dual = dual
+            self._lam_f = pf.lam_l + pf.lam_v + pf.lam_w
+            self._lam_m = pm.lam_l + pm.lam_v + pm.lam_w
+            self._last_dual_rock = dual_rock
             return traj
         if rock is None:
             raise ValueError("simulate requires a Rock for single-continuum models")

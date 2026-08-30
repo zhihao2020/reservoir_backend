@@ -1,6 +1,9 @@
 """Scalar C_f ES-MDA checks: noise, dropout, outlier, coverage. Linear and QC, not 30³."""
 
 import numpy as np
+import pytest
+
+pytestmark = pytest.mark.assimilation
 
 from reservoir_backend.inverse.esmda import esmda_update
 from reservoir_backend.observation.qc import ObservationStatus, classify_observations

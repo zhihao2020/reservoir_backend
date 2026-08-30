@@ -27,6 +27,7 @@ class FlashResult:
     v_liq: float
     v_vap: float
     two_phase: bool
+    k: NDArray[np.float64] | None = None
 
     @property
     def v_mix(self) -> float:
@@ -96,21 +97,33 @@ def flash_tp(
     *,
     max_iter: int = 20,
     tol: float = 1.0e-8,
+    k_guess: NDArray[np.float64] | None = None,
+    skip_stability: bool = False,
+    single_vapor: bool | None = None,
 ) -> FlashResult:
-    """Two-phase PT flash. Single-phase if stable or RR has no split."""
+    """Two-phase PT flash. Reuse ``k_guess``; skip stability when clearly single-phase."""
     z = _frac(z, eos.nc)
     p = float(pressure)
     t = float(temperature)
-    k = np.clip(wilson_k(eos, p, t), 1.0e-8, 1.0e8)
+    if skip_stability and single_vapor is not None:
+        fl = _single(eos, p, t, z, vapor=bool(single_vapor))
+        fl.k = np.clip(wilson_k(eos, p, t), 1.0e-8, 1.0e8)
+        return fl
+    if k_guess is not None:
+        k = np.clip(np.asarray(k_guess, dtype=float).ravel(), 1.0e-8, 1.0e8)
+    else:
+        k = np.clip(wilson_k(eos, p, t), 1.0e-8, 1.0e8)
     two_phase_guess = float(np.max(k)) > 1.0 + 1.0e-8 and float(np.min(k)) < 1.0 - 1.0e-8
     v_try = 0.5
     if two_phase_guess:
         v_try = rachford_rice(k, z)
         two_phase_guess = 1.0e-6 < v_try < 1.0 - 1.0e-6
     if not two_phase_guess:
-        if not is_unstable(eos, p, t, z):
-            vapor = float(np.sum(z * k)) > 1.0
-            return _single(eos, p, t, z, vapor=vapor)
+        if skip_stability or not is_unstable(eos, p, t, z):
+            vapor = float(np.sum(z * k)) > 1.0 if single_vapor is None else bool(single_vapor)
+            fl = _single(eos, p, t, z, vapor=vapor)
+            fl.k = k
+            return fl
 
     v = v_try
     x = z.copy()
@@ -153,4 +166,5 @@ def flash_tp(
         v_liq=v_liq,
         v_vap=v_vap,
         two_phase=True,
+        k=k,
     )

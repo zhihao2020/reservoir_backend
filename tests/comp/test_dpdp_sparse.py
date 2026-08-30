@@ -1,6 +1,9 @@
 import numpy as np
+import pytest
 
 from reservoir_backend.grid.cartesian import CartesianGrid
+
+pytestmark = pytest.mark.dpdp
 from reservoir_backend.solver.dpdp_context import DPDPModelContext
 from reservoir_backend.solver.dpdp_jacobian import build_sparsity_pattern
 from reservoir_backend.solver.fi_comp import _neighbor_cells

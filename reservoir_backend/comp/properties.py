@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import numpy as np
 from numpy.typing import NDArray
 
 from reservoir_backend.comp.fluid import CompSpec
 from reservoir_backend.eos.flash import flash_tp
+
+_LAST_FLASH_S = 0.0
+
+
+def last_flash_seconds() -> float:
+    """Wall time of the most recent ``flash_state`` cell loop."""
+    return float(_LAST_FLASH_S)
 
 
 @dataclass
@@ -29,6 +37,9 @@ class PhaseProps:
     vapor_frac: NDArray[np.float64]
     two_phase: NDArray[np.bool_]
     has_water: bool = False
+    k_flash: NDArray[np.float64] | None = None
+    p_flash: NDArray[np.float64] | None = None
+    z_flash: NDArray[np.float64] | None = None
 
     def copy(self) -> PhaseProps:
         return PhaseProps(
@@ -48,6 +59,9 @@ class PhaseProps:
             vapor_frac=self.vapor_frac.copy(),
             two_phase=self.two_phase.copy(),
             has_water=self.has_water,
+            k_flash=None if self.k_flash is None else self.k_flash.copy(),
+            p_flash=None if self.p_flash is None else self.p_flash.copy(),
+            z_flash=None if self.z_flash is None else self.z_flash.copy(),
         )
 
 
@@ -105,16 +119,47 @@ def flash_state(
             vapor_frac=np.zeros(n_cells),
             two_phase=np.zeros(n_cells, dtype=bool),
             has_water=bool(spec.has_water),
+            k_flash=np.ones((n_cells, n_hc)),
+            p_flash=np.zeros(n_cells),
+            z_flash=np.zeros((n_cells, n_hc)),
         )
     out.has_water = bool(spec.has_water)
+    if out.k_flash is None:
+        out.k_flash = np.ones((n_cells, n_hc))
+    if out.p_flash is None:
+        out.p_flash = np.zeros(n_cells)
+    if out.z_flash is None:
+        out.z_flash = np.zeros((n_cells, n_hc))
     idx = np.arange(n_cells, dtype=np.int64) if cells is None else np.asarray(cells, dtype=np.int64).ravel()
     t = float(spec.temperature_k)
     vw = spec.water_vw(p) if spec.has_water else np.zeros(n_cells)
+    jac_fd = cells is not None
+    t_flash = time.perf_counter()
     for c in idx:
         nh = n[c, :n_hc]
         tot = float(np.sum(nh))
         z = nh / tot if tot > 1.0e-18 else spec.z_init
-        fl = flash_tp(spec.eos, float(p[c]), t, z)
+        prev_p = float(out.p_flash[c])
+        k_guess = None
+        skip = False
+        single_vapor = None
+        if (not jac_fd) and prev_p > 0.0:
+            rel_p = abs(float(p[c]) - prev_p) / max(abs(float(p[c])), 1.0)
+            rel_z = float(np.max(np.abs(z - out.z_flash[c])))
+            if bool(out.two_phase[c]) and rel_p < 0.05:
+                k_guess = out.k_flash[c]
+            elif (not bool(out.two_phase[c])) and 1.0e-4 < rel_p < 2.0e-3 and rel_z < 1.0e-3:
+                skip = True
+                single_vapor = float(out.vapor_frac[c]) > 0.5
+        fl = flash_tp(
+            spec.eos,
+            float(p[c]),
+            t,
+            z,
+            k_guess=k_guess,
+            skip_stability=skip,
+            single_vapor=single_vapor,
+        )
         out.x[c] = fl.x
         out.y[c] = fl.y
         out.v_mix[c] = max(fl.v_mix, 1.0e-12)
@@ -136,6 +181,12 @@ def flash_state(
         out.sw[c] = sw
         out.vapor_frac[c] = fl.vapor_frac
         out.two_phase[c] = fl.two_phase
+        out.p_flash[c] = float(p[c])
+        out.z_flash[c] = z[:n_hc]
+        if fl.k is not None:
+            out.k_flash[c] = np.asarray(fl.k, dtype=float).ravel()[:n_hc]
+    global _LAST_FLASH_S
+    _LAST_FLASH_S = time.perf_counter() - t_flash
     if spec.has_water:
         krw, kro, krg = _corey_three(out.sw, out.sv, spec)
         out.lam_w = krw / spec.mu_water

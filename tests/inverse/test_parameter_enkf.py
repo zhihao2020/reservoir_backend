@@ -1,6 +1,9 @@
 import numpy as np
+import pytest
 
 from reservoir_backend.inverse.esmda import inflation_schedule
+
+pytestmark = pytest.mark.assimilation
 from reservoir_backend.inverse.parameter_enkf import analysis_parameters, forecast_parameters
 
 

@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 from reservoir_backend.comp.dual_residual import dual_residual, pack_dual, unpack_dual
 from reservoir_backend.comp.dual_state import CompositionalContinuumState, DualCompositionalState
 from reservoir_backend.comp.fluid import CompSpec
-from reservoir_backend.comp.properties import flash_state, moles_from_z
+from reservoir_backend.comp.properties import flash_state, last_flash_seconds, moles_from_z
 from reservoir_backend.comp.wells import well_molar_sources
 from reservoir_backend.domain.types import ControlSeries, State
 from reservoir_backend.exceptions import PhysicsConvergenceError, TimeStepUnderflow
@@ -44,6 +44,7 @@ class DualCompStepResult:
     jac_s: float = 0.0
     solve_s: float = 0.0
     resid_s: float = 0.0
+    flash_s: float = 0.0
 
 
 def initialize_dual_state(
@@ -156,14 +157,19 @@ def _residual(
     reflash_m=None,
     need_bhp=False,
 ):
+    flash_s = 0.0
     if props_f is None:
         props_f = flash_state(spec, state.fracture.pressure, state.fracture.moles)
+        flash_s += last_flash_seconds()
     elif reflash_f is not None:
         flash_state(spec, state.fracture.pressure, state.fracture.moles, cells=reflash_f, out=props_f)
+        flash_s += last_flash_seconds()
     if props_m is None:
         props_m = flash_state(spec, state.matrix.pressure, state.matrix.moles)
+        flash_s += last_flash_seconds()
     elif reflash_m is not None:
         flash_state(spec, state.matrix.pressure, state.matrix.moles, cells=reflash_m, out=props_m)
+        flash_s += last_flash_seconds()
     q_f, q_m, rates, bhp = _wells(
         grid, dual_rock, spec, state, ports, cmap, t_eval, props_f, props_m, need_bhp=need_bhp
     )
@@ -182,7 +188,7 @@ def _residual(
         props_fracture=props_f,
         props_matrix=props_m,
     )
-    return res, props_f, props_m, rates, bhp, q_f, q_m
+    return res, props_f, props_m, rates, bhp, q_f, q_m, flash_s
 
 
 def _coloring_jacobian(
@@ -242,7 +248,7 @@ def _coloring_jacobian(
                     matrix=CompositionalContinuumState(pm, nm),
                     time_s=t1,
                 )
-                r2, _, _, _, _, _, _ = _residual(
+                r2, _, _, _, _, _, _, _ = _residual(
                     grid,
                     dual_rock,
                     spec,
@@ -310,6 +316,7 @@ def solve_dual_comp_step(
     t_jac = 0.0
     t_solve = 0.0
     t_res = 0.0
+    t_flash = 0.0
     n_scale = max(float(np.mean(np.sum(state.fracture.moles, axis=1))), 1.0e-6)
     p_scale = max(float(np.mean(np.abs(state.fracture.pressure))), 1.0e5)
     pv = np.asarray(dual_rock.fracture.porosity, dtype=float).ravel() * grid.cell_volumes()
@@ -319,9 +326,10 @@ def solve_dual_comp_step(
     for it in range(int(max_newton)):
         trial = _state_from_u(u, n_cells, nc, t1)
         t_r0 = time.perf_counter()
-        res, props_f, props_m, last_rates, last_bhp, last_qf, last_qm = _residual(
+        res, props_f, props_m, last_rates, last_bhp, last_qf, last_qm, fls = _residual(
             grid, dual_rock, spec, trial, old, dt, transfer, t_f, t_m, ports, cmap, t1, need_bhp=True
         )
+        t_flash += float(fls)
         t_res += time.perf_counter() - t_r0
         last_res = res
         mass_r, vol_r, nrm = _residual_stats(res, n_cells, nc, row_s)
@@ -340,6 +348,7 @@ def solve_dual_comp_step(
                 jac_s=t_jac,
                 solve_s=t_solve,
                 resid_s=t_res,
+                flash_s=t_flash,
             )
         t_j0 = time.perf_counter()
         jac = _coloring_jacobian(
@@ -380,9 +389,10 @@ def solve_dual_comp_step(
             trial2.fracture.pressure = np.clip(trial2.fracture.pressure, 1.0e4, 1.0e9)
             trial2.matrix.pressure = np.clip(trial2.matrix.pressure, 1.0e4, 1.0e9)
             packed = pack_dual(trial2)
-            r_try, _, _, rates_try, bhp_try, qf_try, qm_try = _residual(
+            r_try, _, _, rates_try, bhp_try, qf_try, qm_try, fls_try = _residual(
                 grid, dual_rock, spec, trial2, old, dt, transfer, t_f, t_m, ports, cmap, t1, need_bhp=False
             )
+            t_flash += float(fls_try)
             if float(np.linalg.norm(r_try * row_s)) <= (1.0 - 1.0e-4 * alpha) * r0:
                 u = packed
                 last_rates, last_bhp, last_qf, last_qm = rates_try, bhp_try, qf_try, qm_try
@@ -446,6 +456,7 @@ def simulate_dual_comp(
     sum_jac = 0.0
     sum_solve = 0.0
     sum_res = 0.0
+    sum_flash = 0.0
 
     while t < t_end - 1.0e-15:
         if n_acc >= int(max_steps):
@@ -466,6 +477,7 @@ def simulate_dual_comp(
         prod = np.sum(np.maximum(-q_tot, 0.0), axis=0) * dt
         injected = injected + inj
         produced = produced + prod
+        prev = dual
         dual = nxt.state
         t = float(dual.time_s)
         n_acc += 1
@@ -478,6 +490,7 @@ def simulate_dual_comp(
         sum_jac += float(nxt.jac_s)
         sum_solve += float(nxt.solve_s)
         sum_res += float(nxt.resid_s)
+        sum_flash += float(nxt.flash_s)
         reports.append(
             StepReport(
                 time_s=t,
@@ -493,16 +506,38 @@ def simulate_dual_comp(
                     f"jac_s={nxt.jac_s:.4f}",
                     f"solve_s={nxt.solve_s:.4f}",
                     f"resid_s={nxt.resid_s:.4f}",
+                    f"flash_s={nxt.flash_s:.4f}",
                     f"n_reject={n_reject}",
                 ],
                 newton_its=nxt.newton_iters,
             )
         )
-        states.append(dual_to_state(spec, dual, dual_rock))
+        vis = dual_to_state(spec, dual, dual_rock)
+        ds = 0.0
+        if states:
+            ds = float(np.max(np.abs(vis.sw - states[-1].sw)))
+            if vis.sg is not None and states[-1].sg is not None:
+                ds = max(ds, float(np.max(np.abs(vis.sg - states[-1].sg))))
+        reports[-1].max_ds = ds
+        states.append(vis)
         times.append(t)
         rates_hist.append(dict(nxt.port_rates))
         bhp_hist.append(dict(nxt.port_bhp))
         dt = dt_from_newton_iters(dt, nxt.newton_iters, its0=last_its, dt_min=dt_min, dt_max=dt_max)
+        dp = max(
+            float(np.max(np.abs(dual.fracture.pressure - prev.fracture.pressure))),
+            float(np.max(np.abs(dual.matrix.pressure - prev.matrix.pressure))),
+        )
+        def _z(moles):
+            tot = np.maximum(np.sum(moles, axis=1, keepdims=True), 1.0e-18)
+            return moles / tot
+
+        dz = max(
+            float(np.max(np.abs(_z(dual.fracture.moles) - _z(prev.fracture.moles)))),
+            float(np.max(np.abs(_z(dual.matrix.moles) - _z(prev.matrix.moles)))),
+        )
+        if dp > 5.0e5 or dz > 0.15 or ds > 0.20:
+            dt = max(float(dt_min), 0.5 * dt)
         last_its = nxt.newton_iters
 
     if reports:
@@ -511,6 +546,7 @@ def simulate_dual_comp(
                 f"sum_jac_s={sum_jac:.4f}",
                 f"sum_solve_s={sum_solve:.4f}",
                 f"sum_resid_s={sum_res:.4f}",
+                f"sum_flash_s={sum_flash:.4f}",
                 f"n_accept={n_acc}",
                 f"n_reject={n_reject}",
             ]
