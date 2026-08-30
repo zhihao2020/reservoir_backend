@@ -1,5 +1,6 @@
-# V1 scalar C_f on compositional DPDP. ES-MDA updates log(C_f / C_ref).
-# Coarse mesh so ensemble forwards finish quickly.
+# V1 lab apply path: scalar log(C_f/C_ref) + compositional DPDP + ES-MDA.
+#   reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab_cf
+# Coarse mesh so ensemble forwards finish quickly. 30³ is the scale gate, not apply.
 geometry:
   size_m: [0.30, 0.10, 0.10]
 

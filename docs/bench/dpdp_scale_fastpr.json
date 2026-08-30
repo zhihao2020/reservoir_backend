@@ -1,0 +1,183 @@
+[
+  {
+    "grid": [
+      4,
+      3,
+      2
+    ],
+    "n_cells": 24,
+    "n_unknowns": 144,
+    "nnz": 2520,
+    "n_colors": 7,
+    "wall_s": 2.0002005999995163,
+    "jac_s": 0.6103,
+    "solve_s": 0.0017,
+    "resid_s": 0.5877,
+    "flash_s": 0.9789,
+    "flash_main_s": 0.9789,
+    "flash_jacobian_s": 0.5639,
+    "n_accept": 1,
+    "n_reject": 0,
+    "newton_its": [
+      3
+    ],
+    "n_flash_main": 144,
+    "n_flash_thermo_jac": 144,
+    "n_flash_line_search": 96,
+    "n_jac_reuse": 1,
+    "peak_mib": 0.2905731201171875,
+    "mass_rel": 1.1771313930590606e-16,
+    "ok": true,
+    "threads": 16,
+    "commit": "b1afe36",
+    "flash_backend": "fast"
+  },
+  {
+    "grid": [
+      5,
+      5,
+      5
+    ],
+    "n_cells": 125,
+    "n_unknowns": 750,
+    "nnz": 15300,
+    "n_colors": 7,
+    "wall_s": 2.5070817999949213,
+    "jac_s": 0.9261,
+    "solve_s": 0.0103,
+    "resid_s": 0.6634,
+    "flash_s": 1.1527,
+    "flash_main_s": 1.1527,
+    "flash_jacobian_s": 0.6209,
+    "n_accept": 1,
+    "n_reject": 0,
+    "newton_its": [
+      3
+    ],
+    "n_flash_main": 750,
+    "n_flash_thermo_jac": 750,
+    "n_flash_line_search": 500,
+    "n_jac_reuse": 1,
+    "peak_mib": 2.01674747467041,
+    "mass_rel": 1.5891273806297312e-15,
+    "ok": true,
+    "threads": 16,
+    "commit": "b1afe36",
+    "flash_backend": "fast"
+  },
+  {
+    "grid": [
+      10,
+      10,
+      10
+    ],
+    "n_cells": 1000,
+    "n_unknowns": 6000,
+    "nnz": 133200,
+    "n_colors": 7,
+    "wall_s": 6.43473529999028,
+    "jac_s": 3.8307,
+    "solve_s": 0.4604,
+    "resid_s": 0.9049,
+    "flash_s": 1.5069,
+    "flash_main_s": 1.5069,
+    "flash_jacobian_s": 0.9237,
+    "n_accept": 1,
+    "n_reject": 0,
+    "newton_its": [
+      3
+    ],
+    "n_flash_main": 6000,
+    "n_flash_thermo_jac": 6000,
+    "n_flash_line_search": 4000,
+    "n_jac_reuse": 1,
+    "peak_mib": 19.66342544555664,
+    "mass_rel": 4.361271811283929e-14,
+    "ok": true,
+    "threads": 16,
+    "commit": "b1afe36",
+    "flash_backend": "fast"
+  },
+  {
+    "grid": [
+      20,
+      20,
+      20
+    ],
+    "n_cells": 8000,
+    "n_unknowns": 48000,
+    "nnz": 1108800,
+    "n_colors": 7,
+    "wall_s": 717.2971612999972,
+    "jac_s": 146.2182,
+    "solve_s": 80.6991,
+    "resid_s": 13.3728,
+    "flash_s": 21.9771,
+    "flash_main_s": 21.9771,
+    "flash_jacobian_s": 13.1388,
+    "n_accept": 5,
+    "n_reject": 3,
+    "newton_its": [
+      3,
+      3,
+      3,
+      3,
+      3
+    ],
+    "n_flash_main": 240000,
+    "n_flash_thermo_jac": 240000,
+    "n_flash_line_search": 160000,
+    "n_jac_reuse": 5,
+    "peak_mib": 169.09019565582275,
+    "mass_rel": 1.66328665839227e-13,
+    "ok": true,
+    "threads": 16,
+    "commit": "b1afe36",
+    "flash_backend": "fast"
+  },
+  {
+    "grid": [
+      30,
+      30,
+      30
+    ],
+    "n_cells": 27000,
+    "n_unknowns": 162000,
+    "nnz": 3790800,
+    "n_colors": 7,
+    "wall_s": 222.66546609999205,
+    "jac_s": 96.9213,
+    "solve_s": 112.892,
+    "resid_s": 5.1937,
+    "flash_s": 7.5277,
+    "flash_main_s": 7.5277,
+    "flash_jacobian_s": 8.0735,
+    "n_accept": 1,
+    "n_reject": 0,
+    "newton_its": [
+      2
+    ],
+    "n_flash_main": 108000,
+    "n_flash_thermo_jac": 162000,
+    "n_flash_line_search": 54000,
+    "n_jac_reuse": 0,
+    "peak_mib": 559.998571395874,
+    "mass_rel": 4.281619253685478e-13,
+    "ok": true,
+    "threads": 16,
+    "commit": "b1afe36",
+    "flash_backend": "fast",
+    "note": "one accepted step t_end=0.05 max_steps=1"
+  },
+  {
+    "kind": "fast_loop",
+    "n": 30,
+    "n_cells": 27000,
+    "first_s": 27.971274199997424,
+    "reuse_s": 0.09319430000323337,
+    "n_factor": 1,
+    "n_reuse": 2,
+    "ok": true,
+    "gate_fast_step_lt_1s": true
+  }
+]

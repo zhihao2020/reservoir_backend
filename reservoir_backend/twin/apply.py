@@ -83,6 +83,42 @@ def attach_two_layer_demo(
     return k_true
 
 
+def attach_cf_demo(
+    twin: DigitalTwin,
+    *,
+    cf_true: float = 5.0e-13,
+    seed: int = 3,
+    holdout: list[str] | tuple[str, ...] | None = None,
+) -> NDArray[np.float64]:
+    """Fill empty observations from H(F(C_f^true)) for the DPDP apply path."""
+    theta_true = twin.parameterization.encode(np.array([float(cf_true)], dtype=float))
+    k_true = np.asarray(twin.parameterization.expand(theta_true), dtype=float).ravel()
+    times = demo_sample_times(twin)
+    t_end = float(times[-1])
+    traj = twin.simulate(parameters=theta_true, t_end=t_end, report_times=times)
+    rng = np.random.default_rng(seed)
+    names = set(holdout or ())
+    obs = []
+    for s in twin.experiment.sensors:
+        vals = []
+        for t in traj.times_s:
+            rates, bhp = traj.rates_and_bhp_at(float(t))
+            vals.append(twin.operator.sample(s, traj.state_at(float(t)), port_rates=rates, port_bhp=bhp))
+        va = np.asarray(vals, dtype=float) + rng.normal(0.0, max(s.sigma, 1.0e-12), size=len(vals))
+        obs.append(
+            ObservationSeries(
+                s.name,
+                s.kind,
+                np.asarray(traj.times_s, dtype=float),
+                va,
+                np.full(len(vals), max(s.sigma, 1.0e-12)),
+                s.name in names,
+            )
+        )
+    twin.experiment.observations = obs
+    return k_true
+
+
 def _layer_means(k: NDArray[np.float64], region_id: NDArray[np.int64]) -> tuple[float, float]:
     rid = np.asarray(region_id, dtype=np.int64).ravel()
     kk = np.asarray(k, dtype=float).ravel()
@@ -129,10 +165,15 @@ def accept_demo(twin: DigitalTwin, posterior, k_true: NDArray[np.float64]) -> di
     """
     from reservoir_backend.twin.offline import predict_from_trajectory, stack_observations
 
-    rid = np.asarray(twin.parameterization.region_id, dtype=np.int64).ravel()
     k_post = np.asarray(posterior.k, dtype=float).ravel()
-    k_lo_t, k_hi_t = _layer_means(k_true, rid)
-    k_lo_p, k_hi_p = _layer_means(k_post, rid)
+    rid = getattr(twin.parameterization, "region_id", None)
+    if rid is None:
+        k_lo_t = k_hi_t = float(np.mean(k_true))
+        k_lo_p = k_hi_p = float(np.mean(k_post))
+    else:
+        rid = np.asarray(rid, dtype=np.int64).ravel()
+        k_lo_t, k_hi_t = _layer_means(k_true, rid)
+        k_lo_p, k_hi_p = _layer_means(k_post, rid)
     contrast_true = k_hi_t / max(k_lo_t, 1.0e-30)
     contrast_post = k_hi_p / max(k_lo_p, 1.0e-30)
     logk_rmse = float(np.sqrt(np.mean((np.log(k_post) - np.log(np.asarray(k_true, dtype=float).ravel())) ** 2)))
@@ -143,8 +184,13 @@ def accept_demo(twin: DigitalTwin, posterior, k_true: NDArray[np.float64]) -> di
     times = np.unique(np.concatenate([o.times_s for o in twin.experiment.observations]))
     t_end = float(times[-1])
     phi = float(getattr(twin.parameterization, "phi", 0.20))
-    true_hist = twin.simulate(Rock(k_true, np.full(twin.grid.n_cells, phi)), t_end=t_end, report_times=times)
-    post_hist = twin.simulate(twin.rock_from_theta(posterior.theta), t_end=t_end, report_times=times)
+    if twin.uses_dpdp():
+        theta_true = twin.parameterization.encode(np.array([float(np.mean(k_true))], dtype=float))
+        true_hist = twin.simulate(parameters=theta_true, t_end=t_end, report_times=times)
+        post_hist = twin.simulate(parameters=posterior.theta, t_end=t_end, report_times=times)
+    else:
+        true_hist = twin.simulate(Rock(k_true, np.full(twin.grid.n_cells, phi)), t_end=t_end, report_times=times)
+        post_hist = twin.simulate(twin.rock_from_theta(posterior.theta), t_end=t_end, report_times=times)
     d_true = predict_from_trajectory(twin.operator, twin.experiment, true_hist, assim)
     d_post = predict_from_trajectory(twin.operator, twin.experiment, post_hist, assim)
     forward_match = float(np.sqrt(np.mean(((d_post - d_true) / stacked.sigma) ** 2)))

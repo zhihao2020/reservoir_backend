@@ -17,6 +17,18 @@ from reservoir_backend.cli.main import main
 from reservoir_backend.io.case import load_case
 
 
+def test_lab_cf_is_v1_dpdp_apply_path() -> None:
+    twin = load_case("examples/lab/lab_cf.yaml")
+    assert twin.uses_dpdp()
+    assert twin.inverse.algorithm == "esmda"
+    assert twin.parameterization.n_params == 1
+    from reservoir_backend.twin.apply import attach_cf_demo
+
+    k_true = attach_cf_demo(twin, holdout=["P_out"])
+    assert twin.experiment.observations
+    assert k_true.size == twin.grid.n_cells
+
+
 def test_lab_apply_case_is_lab_ready() -> None:
     twin = load_case("examples/lab/lab_apply.yaml")
     assert twin.parameterization.n_params == 2

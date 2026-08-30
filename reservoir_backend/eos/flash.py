@@ -28,6 +28,12 @@ class FlashResult:
     v_vap: float
     two_phase: bool
     k: NDArray[np.float64] | None = None
+    converged: bool = True
+    iterations: int = 0
+    fugacity_error: float = 0.0
+    stability_checked: bool = False
+    fallback_used: bool = False
+    stability_margin: float = 0.0
 
     @property
     def v_mix(self) -> float:
@@ -47,7 +53,7 @@ class FlashResult:
 
 
 def rachford_rice(k: NDArray[np.float64], z: NDArray[np.float64], eps: float = _RR_EPS) -> float:
-    """Vapor mole fraction in (1/(1-Kmax), 1/(1-Kmin))."""
+    """Vapor mole fraction in (1/(1-Kmax), 1/(1-Kmin)). Binary is closed-form."""
     k = np.asarray(k, dtype=float).ravel()
     z = np.asarray(z, dtype=float).ravel()
     k1 = k - 1.0
@@ -58,8 +64,25 @@ def rachford_rice(k: NDArray[np.float64], z: NDArray[np.float64], eps: float = _
     if a > b:
         a, b = b, a
     lo, hi = float(a), float(b)
+    if k.size == 2 and abs(float(np.sum(z)) - 1.0) < 1.0e-12:
+        den = float(k1[0] * k1[1])
+        if abs(den) > 1.0e-18:
+            v_bin = -float(z[0] * k1[0] + z[1] * k1[1]) / den
+            return float(np.clip(v_bin, lo, hi))
     v = 0.5 * (lo + hi)
-    for _ in range(80):
+    for _ in range(12):
+        denom = v * k1 + 1.0
+        r = float(np.sum(z * k1 / denom))
+        dr = float(-np.sum(z * k1 * k1 / (denom * denom)))
+        if abs(r) < 1.0e-12:
+            return float(np.clip(v, 0.0, 1.0))
+        if abs(dr) < 1.0e-18:
+            break
+        v_n = v - r / dr
+        if v_n <= lo or v_n >= hi:
+            break
+        v = v_n
+    for _ in range(40):
         v = 0.5 * (lo + hi)
         r = float(np.sum(z * k1 / (v * k1 + 1.0)))
         if abs(r) < 1.0e-12:
@@ -128,7 +151,9 @@ def flash_tp(
     v = v_try
     x = z.copy()
     y = z.copy()
-    for _ in range(int(max_iter)):
+    err = float("inf")
+    n_it = 0
+    for n_it in range(1, int(max_iter) + 1):
         if float(np.max(k)) < 1.0 + 1.0e-10 and float(np.min(k)) > 1.0 - 1.0e-10:
             break
         try:
@@ -143,20 +168,34 @@ def flash_tp(
         ln_v = eos.ln_fugacity_coeff(p, t, y, vapor=True)
         k_new = np.exp(np.clip(ln_l - ln_v, -20.0, 20.0))
         k_new = np.clip(k_new, 1.0e-8, 1.0e8)
-        if float(np.max(np.abs(np.log(k_new / k)))) < float(tol):
+        err = float(np.max(np.abs(np.log(np.maximum(k_new, 1.0e-30) / np.maximum(k, 1.0e-30)))))
+        if err < float(tol):
             k = k_new
             break
         k = 0.6 * k_new + 0.4 * k
 
     v = float(np.clip(v, 0.0, 1.0))
     if v <= 1.0e-8:
-        return _single(eos, p, t, z, vapor=False)
+        fl = _single(eos, p, t, z, vapor=False)
+        fl.k = k
+        fl.iterations = n_it
+        fl.fugacity_error = float(err) if np.isfinite(err) else 0.0
+        fl.converged = True
+        fl.stability_checked = not skip_stability
+        return fl
     if v >= 1.0 - 1.0e-8:
-        return _single(eos, p, t, z, vapor=True)
+        fl = _single(eos, p, t, z, vapor=True)
+        fl.k = k
+        fl.iterations = n_it
+        fl.fugacity_error = float(err) if np.isfinite(err) else 0.0
+        fl.converged = True
+        fl.stability_checked = not skip_stability
+        return fl
     zl, _ = eos.z_roots(p, t, x)
     _, zv = eos.z_roots(p, t, y)
     v_liq = zl * R_GAS * t / max(p, 1.0e-12)
     v_vap = zv * R_GAS * t / max(p, 1.0e-12)
+    ok = bool(np.isfinite(err) and err < float(tol))
     return FlashResult(
         vapor_frac=v,
         x=x,
@@ -167,4 +206,8 @@ def flash_tp(
         v_vap=v_vap,
         two_phase=True,
         k=k,
+        converged=ok,
+        iterations=n_it,
+        fugacity_error=float(err) if np.isfinite(err) else 1.0,
+        stability_checked=not skip_stability,
     )

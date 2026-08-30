@@ -127,7 +127,7 @@ def test_block_jacobian_matches_coloring() -> None:
     ac = np.asarray(jc.todense())
     ab = np.asarray(jb.todense())
     rel = float(np.linalg.norm(ab - ac) / max(float(np.linalg.norm(ac)), 1.0e-30))
-    assert rel < 5.0e-2, f"block vs coloring rel {rel}"
+    assert rel < 1.0e-3, f"block vs coloring rel {rel}"
 
 
 def test_block_jacobian_is_finite_and_sparse() -> None:

@@ -47,6 +47,10 @@ class DualCompStepResult:
     resid_s: float = 0.0
     flash_s: float = 0.0
     flash_jac_s: float = 0.0
+    n_flash_main: int = 0
+    n_flash_thermo_jac: int = 0
+    n_flash_line_search: int = 0
+    n_jac_reuse: int = 0
 
 
 def initialize_dual_state(
@@ -394,6 +398,24 @@ def _well_source_fd(
     return sparse.csc_matrix((data, (rows, cols)), shape=(n_u, n_u))
 
 
+def _clip_newton_step(
+    step: NDArray[np.float64],
+    u: NDArray[np.float64],
+    n_cells: int,
+    nc: int,
+    *,
+    dp_max: float = 5.0e6,
+    dz_max: float = 0.25,
+) -> NDArray[np.float64]:
+    """Cap |Δp| and |Δz| on the Newton increment before line search."""
+    w = np.asarray(step, dtype=float).reshape(2, n_cells, nc + 1)
+    w[:, :, nc] = np.clip(w[:, :, nc], -float(dp_max), float(dp_max))
+    n = np.asarray(u, dtype=float).reshape(2, n_cells, nc + 1)[:, :, :nc]
+    n_tot = np.maximum(np.sum(np.abs(n), axis=2, keepdims=True), 1.0e-18)
+    w[:, :, :nc] = np.clip(w[:, :, :nc], -float(dz_max) * n_tot, float(dz_max) * n_tot)
+    return w.ravel()
+
+
 def solve_dual_comp_step(
     grid: CartesianGrid,
     dual_rock: DualRock,
@@ -438,6 +460,16 @@ def solve_dual_comp_step(
     row_s = residual_scales(n_cells, nc, n_scale, pv_scale)
     props_f = None
     props_m = None
+    jac_hold = None
+    phase_hold = None
+    reuse_left = 0
+    n_flash_main = 0
+    n_flash_thermo_jac = 0
+    n_flash_line_search = 0
+    n_jac_reuse = 0
+    n_cells_flash = 2 * n_cells
+    jacobian_reuse_max = 1 if n_cells > 4 else 0
+    nrm_prev = None
 
     for it in range(int(max_newton)):
         trial = _state_from_u(u, n_cells, nc, t1)
@@ -446,6 +478,7 @@ def solve_dual_comp_step(
             grid, dual_rock, spec, trial, old, dt, transfer, t_f, t_m, ports, cmap, t1, need_bhp=True
         )
         t_flash += float(fls)
+        n_flash_main += n_cells_flash
         t_res += time.perf_counter() - t_r0
         last_res = res
         mass_r, vol_r, nrm = _residual_stats(res, n_cells, nc, row_s)
@@ -466,17 +499,41 @@ def solve_dual_comp_step(
                 resid_s=t_res,
                 flash_s=t_flash,
                 flash_jac_s=t_flash_jac,
+                n_flash_main=n_flash_main,
+                n_flash_thermo_jac=n_flash_thermo_jac,
+                n_flash_line_search=n_flash_line_search,
+                n_jac_reuse=n_jac_reuse,
             )
-        t_j0 = time.perf_counter()
-        jac, fls_j = assemble_block_jacobian(
-            grid, spec, dual_rock, trial, dt, transfer, t_f, t_m, props_f, props_m, n_scale, p_scale
+        phase_now = np.concatenate([props_f.two_phase, props_m.two_phase])
+        can_reuse = (
+            jac_hold is not None
+            and reuse_left > 0
+            and nrm_prev is not None
+            and nrm < 0.5 * float(nrm_prev)
+            and phase_hold is not None
+            and bool(np.array_equal(phase_now, phase_hold))
         )
-        t_flash_jac += float(fls_j)
-        if ports:
-            jac = jac + _well_source_fd(
-                grid, dual_rock, spec, trial, dt, ports, cmap, t1, props_f, props_m, n_scale, p_scale
+        t_j0 = time.perf_counter()
+        if can_reuse:
+            jac = jac_hold
+            reuse_left -= 1
+            n_jac_reuse += 1
+            fls_j = 0.0
+        else:
+            jac, fls_j = assemble_block_jacobian(
+                grid, spec, dual_rock, trial, dt, transfer, t_f, t_m, props_f, props_m, n_scale, p_scale
             )
+            n_flash_thermo_jac += n_cells_flash * (nc + 1)
+            if ports:
+                jac = jac + _well_source_fd(
+                    grid, dual_rock, spec, trial, dt, ports, cmap, t1, props_f, props_m, n_scale, p_scale
+                )
+            jac_hold = jac
+            phase_hold = phase_now
+            reuse_left = int(jacobian_reuse_max)
+        t_flash_jac += float(fls_j)
         t_jac += time.perf_counter() - t_j0
+        nrm_prev = nrm
         jac_s = jac.tocsr().multiply(row_s[:, None]).tocsc()
         t_s0 = time.perf_counter()
         lin = solve_newton_system(jac_s, -(res * row_s))
@@ -484,6 +541,7 @@ def solve_dual_comp_step(
         step = lin.x
         if not np.all(np.isfinite(step)):
             raise PhysicsConvergenceError("DPDP Newton step is not finite")
+        step = _clip_newton_step(step, u, n_cells, nc)
         alpha = 1.0
         accepted = False
         r0 = float(np.linalg.norm(res * row_s))
@@ -499,6 +557,7 @@ def solve_dual_comp_step(
                 grid, dual_rock, spec, trial2, old, dt, transfer, t_f, t_m, ports, cmap, t1, need_bhp=False
             )
             t_flash += float(fls_try)
+            n_flash_line_search += n_cells_flash
             if float(np.linalg.norm(r_try * row_s)) <= (1.0 - 1.0e-4 * alpha) * r0:
                 u = packed
                 last_rates, last_bhp, last_qf, last_qm = rates_try, bhp_try, qf_try, qm_try
@@ -563,6 +622,10 @@ def simulate_dual_comp(
     sum_res = 0.0
     sum_flash = 0.0
     sum_flash_jac = 0.0
+    n_flash_main = 0
+    n_flash_thermo_jac = 0
+    n_flash_line_search = 0
+    n_jac_reuse = 0
 
     while t < t_end - 1.0e-15:
         if n_acc >= int(max_steps):
@@ -598,6 +661,10 @@ def simulate_dual_comp(
         sum_res += float(nxt.resid_s)
         sum_flash += float(nxt.flash_s)
         sum_flash_jac += float(nxt.flash_jac_s)
+        n_flash_main += int(nxt.n_flash_main)
+        n_flash_thermo_jac += int(nxt.n_flash_thermo_jac)
+        n_flash_line_search += int(nxt.n_flash_line_search)
+        n_jac_reuse += int(nxt.n_jac_reuse)
         reports.append(
             StepReport(
                 time_s=t,
@@ -616,6 +683,9 @@ def simulate_dual_comp(
                     f"flash_s={nxt.flash_s:.4f}",
                     f"flash_main_s={nxt.flash_s:.4f}",
                     f"flash_jacobian_s={nxt.flash_jac_s:.4f}",
+                    f"n_flash_main={nxt.n_flash_main}",
+                    f"n_flash_thermo_jac={nxt.n_flash_thermo_jac}",
+                    f"n_flash_line_search={nxt.n_flash_line_search}",
                     f"n_reject={n_reject}",
                 ],
                 newton_its=nxt.newton_iters,
@@ -658,6 +728,10 @@ def simulate_dual_comp(
                 f"sum_flash_s={sum_flash:.4f}",
                 f"sum_flash_main_s={sum_flash:.4f}",
                 f"sum_flash_jacobian_s={sum_flash_jac:.4f}",
+                f"n_flash_main={n_flash_main}",
+                f"n_flash_thermo_jac={n_flash_thermo_jac}",
+                f"n_flash_line_search={n_flash_line_search}",
+                f"n_jac_reuse={n_jac_reuse}",
                 f"n_accept={n_acc}",
                 f"n_reject={n_reject}",
             ]

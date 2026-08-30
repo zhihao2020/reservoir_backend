@@ -47,34 +47,42 @@ _WORKER: tuple[DigitalTwin, list[ObservationSeries], float] | None = None
 
 
 def _init_worker(twin: DigitalTwin, series: list[ObservationSeries], t_end: float) -> None:
-    """Load immutable twin context once per process."""
+    """Load immutable twin context once per process. Cap inner flash threads."""
+    from reservoir_backend.eos.threads import cap_flash_threads, ensemble_flash_threads
+
+    cap_flash_threads(ensemble_flash_threads())
     global _WORKER
     _WORKER = (twin, series, float(t_end))
 
 
-def _forward_theta(job: tuple[int, NDArray[np.float64]]) -> tuple[int, NDArray[np.float64] | None, str]:
-    """Picklable worker: (index, theta) against the process-local twin."""
-    j, theta = job
+def _forward_theta(job: tuple) -> tuple[int, NDArray[np.float64] | None, str, object]:
+    """Picklable worker: (index, theta[, dual_state]) against the process-local twin."""
+    j, theta, *rest = job
+    dual0 = rest[0] if rest else None
     if _WORKER is None:
-        return j, None, "worker twin is not initialized"
+        return j, None, "worker twin is not initialized", None
     twin, series, t_end = _WORKER
     try:
-        yj = np.asarray(twin._forward_vector(theta, series, t_end=t_end), dtype=float)
+        yj = np.asarray(twin._forward_vector(theta, series, t_end=t_end, state0=dual0), dtype=float)
+        dual1 = getattr(twin, "_last_dual", None)
+        if dual1 is not None:
+            dual1 = dual1.copy()
         if not np.all(np.isfinite(yj)):
-            return j, None, "NaN predicted observation"
-        return j, yj, ""
+            return j, None, "NaN predicted observation", dual1
+        return j, yj, "", dual1
     except (PhysicsConvergenceError, TimeStepUnderflow, ValueError, ArithmeticError) as exc:
-        return j, None, f"{type(exc).__name__}: {exc}"
+        return j, None, f"{type(exc).__name__}: {exc}", None
 
 
 def _forward_one(payload: tuple) -> tuple[int, NDArray[np.float64] | None, str]:
-    """Serial path: (index, theta, series, t_end, twin) → predicted column."""
-    j, theta, series, t_end, twin = payload
+    """Serial path: (index, theta, series, t_end, twin[, dual]) → predicted column."""
+    j, theta, series, t_end, twin, *rest = payload
+    dual0 = rest[0] if rest else None
     global _WORKER
     prev = _WORKER
     _WORKER = (twin, series, float(t_end))
     try:
-        return _forward_theta((j, theta))
+        return _forward_theta((j, theta, dual0))
     finally:
         _WORKER = prev
 
@@ -95,15 +103,26 @@ def _forward_ensemble(
     t_end: float,
     *,
     n_workers: int | None = None,
-) -> tuple[NDArray[np.float64], list[dict[str, str]], int]:
+    dual_states: list | None = None,
+) -> tuple[NDArray[np.float64], list[dict[str, str]], int, list]:
     n_obs = stack_observations(series).values.size
     n_ens = members.shape[1]
     y = np.full((n_obs, n_ens), np.nan, dtype=float)
+    duals: list = [None] * n_ens
     failed: list[dict[str, str]] = []
     workers = _worker_count(n_ens, int(twin.grid.n_cells), n_workers)
-    jobs = [(j, members[:, j]) for j in range(n_ens)]
+    from reservoir_backend.eos.threads import cap_flash_threads, ensemble_flash_threads, production_flash_threads
+
+    cap_flash_threads(ensemble_flash_threads() if workers > 1 else production_flash_threads())
+    jobs = []
+    for j in range(n_ens):
+        dual0 = None if dual_states is None or j >= len(dual_states) else dual_states[j]
+        jobs.append((j, members[:, j], dual0))
     if workers <= 1:
-        rows = [_forward_one((j, members[:, j], series, t_end, twin)) for j in range(n_ens)]
+        rows = [
+            _forward_one((j, members[:, j], series, t_end, twin, None if dual_states is None else dual_states[j]))
+            for j in range(n_ens)
+        ]
     else:
         with ProcessPoolExecutor(
             max_workers=workers,
@@ -111,12 +130,13 @@ def _forward_ensemble(
             initargs=(twin, series, float(t_end)),
         ) as pool:
             rows = list(pool.map(_forward_theta, jobs))
-    for j, yj, reason in rows:
+    for j, yj, reason, dual1 in rows:
+        duals[int(j)] = dual1
         if yj is None:
             failed.append({"member": str(j), "reason": reason})
         else:
             y[:, int(j)] = yj
-    return y, failed, n_ens
+    return y, failed, n_ens, duals
 
 
 def _whitened_misfit(predicted: NDArray[np.float64], d: NDArray[np.float64], sigma: NDArray[np.float64]) -> float:
@@ -173,7 +193,7 @@ class HistoryMatchWorkflow:
         failed_all: list[dict[str, str]] = []
         predicted = np.zeros((d_obs.values.size, n_ens), dtype=float)
         for step, alpha in enumerate(alphas):
-            predicted, failed, n_fwd = _forward_ensemble(
+            predicted, failed, n_fwd, _ = _forward_ensemble(
                 twin, members, assim, t_hist, n_workers=n_workers
             )
             n_forward += n_fwd
@@ -182,7 +202,7 @@ class HistoryMatchWorkflow:
                 failed_all.extend({"step": str(step), **row} for row in failed)
                 members = replace_failed_members(members, failed_mask, rng, pstd)
                 members = _clip_members(twin, members)
-                predicted, failed2, n_fwd2 = _forward_ensemble(
+                predicted, failed2, n_fwd2, _ = _forward_ensemble(
                     twin, members, assim, t_hist, n_workers=n_workers
                 )
                 n_forward += n_fwd2
@@ -209,7 +229,7 @@ class HistoryMatchWorkflow:
             )
             members = _clip_members(twin, members)
 
-        predicted, failed, n_fwd = _forward_ensemble(
+        predicted, failed, n_fwd, _ = _forward_ensemble(
             twin, members, assim, t_hist, n_workers=n_workers
         )
         n_forward += n_fwd

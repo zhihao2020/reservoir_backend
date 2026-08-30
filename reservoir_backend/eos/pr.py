@@ -105,24 +105,32 @@ class PengRobinson:
     def nc(self) -> int:
         return int(self.tc.size)
 
-    def _ab_pure(self, temperature: float) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    def _t_pack(self, temperature: float):
+        """Isothermal pack: a_i, b_i, a_ij, Wilson T-factor. Independent of p and z."""
         t = float(temperature)
         key = round(t, 6)
         cached = getattr(self, "_ab_cache", None)
         if cached is not None and cached[0] == key:
-            return cached[1], cached[2]
+            return cached
         tr = t / self.tc
         kap = _kappa(self.omega)
         alpha = np.square(1.0 + kap * (1.0 - np.sqrt(np.maximum(tr, 1.0e-12))))
         a = _OMEGA_A * R_GAS**2 * self.tc**2 / self.pc * alpha
         b = _OMEGA_B * R_GAS * self.tc / self.pc
-        object.__setattr__(self, "_ab_cache", (key, a, b))
-        return a, b
+        aij = (1.0 - self.kij) * np.sqrt(np.outer(a, a))
+        wilson_t = self.pc * np.exp(5.373 * (1.0 + self.omega) * (1.0 - self.tc / t))
+        pack = (key, a, b, aij, wilson_t)
+        object.__setattr__(self, "_ab_cache", pack)
+        return pack
+
+    def _ab_pure(self, temperature: float) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        pack = self._t_pack(temperature)
+        return pack[1], pack[2]
 
     def mix_ab(self, temperature: float, z: NDArray[np.float64]) -> tuple[float, float, NDArray[np.float64], NDArray[np.float64]]:
         z = _frac(z, self.nc)
-        a_i, b_i = self._ab_pure(temperature)
-        aij = (1.0 - self.kij) * np.sqrt(np.outer(a_i, a_i))
+        pack = self._t_pack(temperature)
+        a_i, b_i, aij = pack[1], pack[2], pack[3]
         a = float(z @ aij @ z)
         b = float(z @ b_i)
         return a, b, a_i, b_i
@@ -156,7 +164,7 @@ class PengRobinson:
         A, B, a, b, a_i, b_i = self.reduced_ab(pressure, temperature, z)
         zl, zv = pr_z_factors(A, B)
         zz = zv if vapor else zl
-        aij = (1.0 - self.kij) * np.sqrt(np.outer(a_i, a_i))
+        aij = self._t_pack(temperature)[3]
         sum_a = aij @ z
         b = max(b, 1.0e-18)
         B = max(B, 1.0e-18)

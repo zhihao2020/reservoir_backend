@@ -611,13 +611,16 @@ class DigitalTwin:
         *,
         t_end: float | None = None,
         controls: list[ControlSeries] | None = None,
+        state0: DualCompositionalState | State | None = None,
     ) -> NDArray[np.float64]:
         times = np.unique(np.concatenate([s.times_s for s in series])) if series else None
         if self.uses_dpdp():
-            traj = self.simulate(parameters=theta, controls=controls, t_end=t_end, report_times=times)
+            traj = self.simulate(
+                parameters=theta, controls=controls, t_end=t_end, report_times=times, state0=state0
+            )
         else:
             rock = self.rock_from_theta(theta)
-            traj = self.simulate(rock, controls=controls, t_end=t_end, report_times=times)
+            traj = self.simulate(rock, controls=controls, t_end=t_end, report_times=times, state0=state0)
         return predict_from_trajectory(self.operator, self.experiment, traj, series)
 
     def calibrate(
@@ -817,7 +820,10 @@ class DigitalTwin:
     ) -> dict[str, NDArray[np.float64]]:
         """Point-estimate static K and dynamic fields at ``time_s`` from F(θ)."""
         t_end = max(float(time_s), float(posterior.history.times_s[-1]) if posterior.history.times_s.size else float(time_s))
-        traj = self.simulate(self.rock_from_k(posterior.k), t_end=t_end, report_times=np.array([time_s]))
+        if self.uses_dpdp():
+            traj = self.simulate(parameters=posterior.theta, t_end=t_end, report_times=np.array([time_s]))
+        else:
+            traj = self.simulate(self.rock_from_k(posterior.k), t_end=t_end, report_times=np.array([time_s]))
         st = traj.state_at(time_s)
         sg = np.zeros_like(st.sw) if st.sg is None else st.sg
         so = 1.0 - st.sw - sg

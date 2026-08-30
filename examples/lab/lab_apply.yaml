@@ -1,4 +1,6 @@
-# Lab deliverable case: 300 mm cube, 6 mm probes, 2-region log K.
+# Legacy lab waterflood invert: 300 mm cube, 6 mm probes, 2-region log K + LM.
+# V1 compositional DPDP + log Cf + ES-MDA apply path is examples/lab/lab_cf.yaml:
+#   reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab_cf
 # 25 mm mesh so apply finishes in about a minute. Full 10 mm / 30³ is lab_30cm.yaml.
 # Inlet/outlet are vertical columns so both layers are driven. p_init > p_prod
 # so the window has Δp; rate is large enough for the water front to move.

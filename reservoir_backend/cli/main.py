@@ -210,7 +210,13 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
     """Lab invert you can actually run. Not a CMG field matcher."""
     import yaml
 
-    from reservoir_backend.twin.apply import accept_demo, attach_two_layer_demo, plot_posterior_fields, write_observation_csv
+    from reservoir_backend.twin.apply import (
+        accept_demo,
+        attach_cf_demo,
+        attach_two_layer_demo,
+        plot_posterior_fields,
+        write_observation_csv,
+    )
 
     output = output or Path("results/apply")
     output.mkdir(parents=True, exist_ok=True)
@@ -223,9 +229,13 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
             raise SystemExit(
                 "no observations in the case. Put a CSV in experiment.observations "
                 "(see examples/lab/observations_template.csv), "
-                "or run: reservoir apply examples/lab/lab_apply.yaml --demo --output results/lab"
+                "or run: reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab "
+                "(V1 log Cf + DPDP) or examples/lab/lab_apply.yaml --demo (legacy two-region log K)"
             )
-        k_true = attach_two_layer_demo(twin, holdout=hold)
+        if twin.uses_dpdp():
+            k_true = attach_cf_demo(twin, holdout=hold)
+        else:
+            k_true = attach_two_layer_demo(twin, holdout=hold)
         write_observation_csv(output / "observations.csv", twin)
     post = twin.calibrate()
     t_rec = float(post.history.times_s[-1])

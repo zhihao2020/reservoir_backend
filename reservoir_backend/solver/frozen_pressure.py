@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import numpy as np
 from numpy.typing import NDArray
+from dataclasses import dataclass
+
 from scipy import sparse
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import splu, spsolve
 
 from reservoir_backend.domain.types import ControlSeries
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -128,6 +130,33 @@ def _well_terms(
     return diag_f, rhs_f, diag_m, rhs_m
 
 
+def _control_signature(ports: list[FlowPort] | None, cmap: dict) -> tuple:
+    if not ports:
+        return ()
+    rows = []
+    for port in ports:
+        has_p = (port.name, "pressure") in cmap
+        has_q = (port.name, "rate") in cmap
+        rows.append((port.name, str(port.control), str(getattr(port, "continuum_coupling", "fracture")), has_p, has_q))
+    return tuple(rows)
+
+
+@dataclass
+class FrozenPressureContext:
+    """Reuse the frozen-λ pressure LU between slow-loop refreshes."""
+
+    lu: object | None = None
+    acc_f: NDArray[np.float64] | None = None
+    acc_m: NDArray[np.float64] | None = None
+    n: int = 0
+    key: tuple | None = None
+    n_reuse: int = 0
+    n_factor: int = 0
+
+    def matches(self, key: tuple) -> bool:
+        return self.lu is not None and self.key == key
+
+
 def step_frozen_pressure(
     grid: CartesianGrid,
     ctx: DPDPModelContext,
@@ -146,6 +175,7 @@ def step_frozen_pressure(
     t_eval: float = 0.0,
     v_mix_fracture: NDArray[np.float64] | None = None,
     v_mix_matrix: NDArray[np.float64] | None = None,
+    factor: FrozenPressureContext | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Implicit pressure step. Mobility and composition are frozen."""
     n = grid.n_cells
@@ -153,6 +183,36 @@ def step_frozen_pressure(
     pm = np.asarray(p_matrix, dtype=float).ravel()
     lf = np.maximum(np.asarray(lam_fracture, dtype=float).ravel(), 1.0e-18)
     lm = np.maximum(np.asarray(lam_matrix, dtype=float).ravel(), 1.0e-18)
+    cmap = {}
+    if ports:
+        cmap = controls if isinstance(controls, dict) else _control_map(list(controls or []))
+    ct_f_arr = np.asarray(ct_fracture if ct_fracture is not None else np.full(n, 1.0e-9), dtype=float).ravel()
+    ct_m_arr = np.asarray(ct_matrix if ct_matrix is not None else np.full(n, 1.0e-9), dtype=float).ravel()
+    key = (
+        n,
+        float(dt),
+        float(np.sum(lf)),
+        float(np.sum(lm)),
+        float(np.sum(ct_f_arr)),
+        float(np.sum(ct_m_arr)),
+        _control_signature(list(ports or []), cmap),
+    )
+    if factor is not None and factor.matches(key):
+        rhs_f = factor.acc_f * pf
+        rhs_m = factor.acc_m * pm
+        if ports:
+            vf = np.asarray(v_mix_fracture if v_mix_fracture is not None else np.full(n, 1.0e-4), dtype=float).ravel()
+            vm = np.asarray(v_mix_matrix if v_mix_matrix is not None else np.full(n, 1.0e-4), dtype=float).ravel()
+            _d_f, r_f, _d_m, r_m = _well_terms(
+                grid, dual_rock, list(ports), cmap, pf, pm, lf, lm, vf, vm, float(t_eval)
+            )
+            rhs_f = rhs_f + r_f
+            rhs_m = rhs_m + r_m
+        x = np.asarray(factor.lu.solve(np.concatenate([rhs_f, rhs_m])), dtype=float).ravel()
+        factor.n_reuse += 1
+        if x.size != 2 * n or not np.all(np.isfinite(x)):
+            return pf.copy(), pm.copy()
+        return x[:n], x[n:]
     t_f, t_m = ctx.transmissibilities(dual_rock)
     rows: list[int] = []
     cols: list[int] = []
@@ -169,8 +229,8 @@ def step_frozen_pressure(
         _add_tpfa(rows, cols, data, left, right, t, lam, p, off)
     vol = ctx.cell_volumes
     dt = max(float(dt), 1.0e-12)
-    ct_f = np.asarray(ct_fracture if ct_fracture is not None else np.full(n, 1.0e-9), dtype=float).ravel()
-    ct_m = np.asarray(ct_matrix if ct_matrix is not None else np.full(n, 1.0e-9), dtype=float).ravel()
+    ct_f = ct_f_arr
+    ct_m = ct_m_arr
     acc_f = np.asarray(dual_rock.fracture.porosity, dtype=float).ravel() * vol * ct_f / dt
     acc_m = np.asarray(dual_rock.matrix.porosity, dtype=float).ravel() * vol * ct_m / dt
     idx = np.arange(n, dtype=np.int64)
@@ -199,7 +259,6 @@ def step_frozen_pressure(
     rhs_f = acc_f * pf
     rhs_m = acc_m * pm
     if ports:
-        cmap = controls if isinstance(controls, dict) else _control_map(list(controls or []))
         vf = np.asarray(v_mix_fracture if v_mix_fracture is not None else np.full(n, 1.0e-4), dtype=float).ravel()
         vm = np.asarray(v_mix_matrix if v_mix_matrix is not None else np.full(n, 1.0e-4), dtype=float).ravel()
         d_f, r_f, d_m, r_m = _well_terms(grid, dual_rock, list(ports), cmap, pf, pm, lf, lm, vf, vm, float(t_eval))
@@ -213,7 +272,17 @@ def step_frozen_pressure(
         rhs_m = rhs_m + r_m
     a = sparse.csr_matrix((data, (rows, cols)), shape=(2 * n, 2 * n))
     rhs = np.concatenate([rhs_f, rhs_m])
-    x = np.asarray(spsolve(a.tocsc(), rhs), dtype=float).ravel()
+    a_csc = a.tocsc()
+    if factor is not None:
+        factor.lu = splu(a_csc)
+        factor.acc_f = acc_f
+        factor.acc_m = acc_m
+        factor.n = n
+        factor.key = key
+        factor.n_factor += 1
+        x = np.asarray(factor.lu.solve(rhs), dtype=float).ravel()
+    else:
+        x = np.asarray(spsolve(a_csc, rhs), dtype=float).ravel()
     if x.size != 2 * n or not np.all(np.isfinite(x)):
         return pf.copy(), pm.copy()
     return x[:n], x[n:]

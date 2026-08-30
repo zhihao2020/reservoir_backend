@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 import tracemalloc
 
@@ -32,7 +33,7 @@ def _notes(reports) -> dict[str, str]:
     return out
 
 
-def run_level(nxyz: tuple[int, int, int], dx: float, t_end: float) -> dict:
+def run_level(nxyz: tuple[int, int, int], dx: float, t_end: float, *, max_steps: int = 8) -> dict:
     nx, ny, nz = nxyz
     grid = CartesianGrid.uniform((nx * dx, ny * dx, nz * dx), (dx, dx, dx))
     spec = fluid_from_name("example", temperature_k=350.0)
@@ -55,7 +56,7 @@ def run_level(nxyz: tuple[int, int, int], dx: float, t_end: float) -> dict:
         t_end=t_end,
         dt_init=min(0.5, t_end),
         dt_max=t_end,
-        max_steps=8,
+        max_steps=int(max_steps),
         context=ctx,
     )
     wall = time.perf_counter() - t0
@@ -82,17 +83,34 @@ def run_level(nxyz: tuple[int, int, int], dx: float, t_end: float) -> dict:
         "n_accept": int(float(meta.get("n_accept", len(traj.reports)))),
         "n_reject": int(float(meta.get("n_reject", 0))),
         "newton_its": its,
+        "n_flash_main": int(float(meta.get("n_flash_main", 0))),
+        "n_flash_thermo_jac": int(float(meta.get("n_flash_thermo_jac", 0))),
+        "n_flash_line_search": int(float(meta.get("n_flash_line_search", 0))),
+        "n_jac_reuse": int(float(meta.get("n_jac_reuse", 0))),
         "peak_mib": peak / (1024 * 1024),
         "mass_rel": rel,
         "ok": rel < 1.0e-4 and bool(traj.reports),
+        "threads": int(os.cpu_count() or 1),
+        "commit": _git_sha(),
+        "flash_backend": os.environ.get("RESERVOIR_FLASH", "fast"),
     }
     return rec
+
+
+def _git_sha() -> str:
+    try:
+        import subprocess
+
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+    except Exception:
+        return ""
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--max-n", type=int, default=30)
     p.add_argument("--t-end", type=float, default=0.5)
+    p.add_argument("--max-steps", type=int, default=8)
     p.add_argument("--json-out", type=str, default="")
     args = p.parse_args()
     ladder = [
@@ -108,9 +126,9 @@ def main() -> None:
         if nxyz[0] == nxyz[1] == nxyz[2] and edge > int(args.max_n):
             print(f"skip {nxyz}")
             continue
-        rec = run_level(nxyz, dx, float(args.t_end))
+        rec = run_level(nxyz, dx, float(args.t_end), max_steps=int(args.max_steps))
         rows.append(rec)
-        print(json.dumps(rec))
+        print(json.dumps(rec), flush=True)
         if not rec["ok"]:
             raise SystemExit(f"level {nxyz} failed mass_rel={rec['mass_rel']}")
     if args.json_out:

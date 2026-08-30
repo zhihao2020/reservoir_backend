@@ -8,6 +8,7 @@ loop updates the previous posterior ensemble with a parameter EnKF.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 
 import numpy as np
 from numpy.typing import NDArray
@@ -17,7 +18,7 @@ from reservoir_backend.domain.types import ObservationSeries, State
 from reservoir_backend.inverse.ensemble import sample_log_prior
 from reservoir_backend.inverse.parameter_enkf import analysis_parameters, forecast_parameters
 from reservoir_backend.physics.rock import LOGK_MAX, LOGK_MIN
-from reservoir_backend.solver.frozen_pressure import step_frozen_pressure
+from reservoir_backend.solver.frozen_pressure import FrozenPressureContext, step_frozen_pressure
 from reservoir_backend.solver.impes import Trajectory
 from reservoir_backend.exceptions import AssimilationError
 from reservoir_backend.inverse.ensemble import replace_failed_members
@@ -31,6 +32,15 @@ from reservoir_backend.twin.offline import (
 
 
 @dataclass
+class OnlineMemberState:
+    """Per-member sequential-filter checkpoint. Flash cache is a guess only."""
+
+    theta: NDArray[np.float64]
+    dual_state: DualCompositionalState | None = None
+    flash_cache: object | None = None  # FlashCache; guess only
+
+
+@dataclass
 class TwinLoops:
     """1 s frozen-λ pressure; Parameter EnKF on ``slow_interval_s``."""
 
@@ -40,9 +50,12 @@ class TwinLoops:
     last_traj: Trajectory | None = None
     last_theta: NDArray[np.float64] | None = None
     members: NDArray[np.float64] | None = None
+    dual_states: list[DualCompositionalState] | None = None
     notes: list[str] = field(default_factory=list)
     q_std: float = 0.02
     rng_seed: int | None = None
+    last_full_s: float = 0.0
+    _frozen: FrozenPressureContext | None = field(default=None, repr=False)
 
     @classmethod
     def from_posterior(cls, twin: DigitalTwin, posterior: Posterior, **kwargs) -> TwinLoops:
@@ -55,6 +68,9 @@ class TwinLoops:
         loops.last_traj = posterior.history
         if posterior.history is not None and posterior.history.times_s.size:
             loops.last_slow_s = float(posterior.history.times_s[-1])
+        last = getattr(twin, "_last_dual", None)
+        if last is not None:
+            loops.dual_states = [last.copy() for _ in range(loops.members.shape[1])]
         return loops
 
     def fast_state(self, t: float) -> State:
@@ -73,6 +89,8 @@ class TwinLoops:
         if ctx is None or rock is None:
             raise RuntimeError("DPDP context missing")
         t_eval = float(dual.time_s) + float(dt)
+        if self._frozen is None:
+            self._frozen = FrozenPressureContext()
         pf, pm = step_frozen_pressure(
             self.twin.grid,
             ctx,
@@ -90,6 +108,7 @@ class TwinLoops:
             t_eval=t_eval,
             v_mix_fracture=None if self.twin._v_mix_f is None else np.asarray(self.twin._v_mix_f, dtype=float),
             v_mix_matrix=None if self.twin._v_mix_m is None else np.asarray(self.twin._v_mix_m, dtype=float),
+            factor=self._frozen,
         )
         dual.fracture.pressure = pf
         dual.matrix.pressure = pm
@@ -124,7 +143,8 @@ class TwinLoops:
     ) -> Posterior | None:
         """Parameter EnKF from the previous posterior ensemble. Not a full ES-MDA rerun."""
         t = float(t)
-        if not force and (t - self.last_slow_s) < float(self.slow_interval_s) - 1.0e-12:
+        interval = max(float(self.slow_interval_s), float(self.last_full_s))
+        if not force and (t - self.last_slow_s) < interval - 1.0e-12:
             return None
         if observations is not None:
             self.twin.experiment.observations = list(observations)
@@ -149,12 +169,17 @@ class TwinLoops:
             self.members = _clip_members(self.twin, self.members)
         members = forecast_parameters(self.members, self.q_std, rng)
         members = _clip_members(self.twin, members)
-        predicted, failed, n_fwd = _forward_ensemble(self.twin, members, series, t)
+        checkpoints = self.dual_states
+        predicted, failed, n_fwd, _ = _forward_ensemble(
+            self.twin, members, series, t, dual_states=checkpoints
+        )
         failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(members.shape[1])])
         if np.any(failed_mask):
             members = replace_failed_members(members, failed_mask, rng, pstd)
             members = _clip_members(self.twin, members)
-            predicted, failed, n_fwd2 = _forward_ensemble(self.twin, members, series, t)
+            predicted, failed, n_fwd2, _ = _forward_ensemble(
+                self.twin, members, series, t, dual_states=checkpoints
+            )
             n_fwd += n_fwd2
             failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(members.shape[1])])
             if np.any(failed_mask):
@@ -168,7 +193,16 @@ class TwinLoops:
         self.members = xa
         theta_mean = np.mean(xa, axis=1)
         theta_std = np.std(xa, axis=1, ddof=1) if xa.shape[1] > 1 else np.zeros_like(theta_mean)
-        hist = self.twin.simulate(parameters=theta_mean, t_end=t, report_times=d_obs.times)
+        _, _, n_post, duals_post = _forward_ensemble(self.twin, xa, series, t, dual_states=checkpoints)
+        n_fwd += n_post
+        self.dual_states = duals_post
+        j_mean = int(np.argmin(np.linalg.norm(xa - theta_mean[:, None], axis=0)))
+        state0 = None if checkpoints is None else checkpoints[j_mean]
+        t0 = time.perf_counter()
+        hist = self.twin.simulate(
+            parameters=theta_mean, t_end=t, report_times=d_obs.times, state0=state0
+        )
+        self.last_full_s = time.perf_counter() - t0
         k_mean = np.asarray(self.twin.parameterization.expand(theta_mean), dtype=float).ravel()
         post = Posterior(
             theta=theta_mean,
@@ -185,5 +219,10 @@ class TwinLoops:
         self.last_traj = hist
         self.last_theta = np.asarray(theta_mean, dtype=float)
         self.last_slow_s = t
+        self._frozen = None
         self.notes.append(f"slow parameter EnKF at t={t}")
+        if self.last_full_s > float(self.slow_interval_s):
+            self.notes.append(
+                f"slow interval stretched to {self.last_full_s:.3g}s (full solve)"
+            )
         return post

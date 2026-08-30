@@ -10,6 +10,9 @@ from numpy.typing import NDArray
 
 from reservoir_backend.comp.fluid import CompSpec
 from reservoir_backend.eos.flash import flash_tp
+from reservoir_backend.eos.flash_backend import get_flash_backend
+from reservoir_backend.eos.flash_batch import wilson_k_batch
+from reservoir_backend.eos.flash_counters import bump
 
 _LAST_FLASH_S = 0.0
 
@@ -134,54 +137,68 @@ def flash_state(
     t = float(spec.temperature_k)
     vw = spec.water_vw(p) if spec.has_water else np.zeros(n_cells)
     t_flash = time.perf_counter()
-    for c in idx:
-        nh = n[c, :n_hc]
-        tot = float(np.sum(nh))
-        z = nh / tot if tot > 1.0e-18 else spec.z_init
-        prev_p = float(out.p_flash[c])
-        k_guess = None
-        skip = False
-        single_vapor = None
-        jac_fd = cells is not None
-        # Jacobian FD stays on Wilson so J matches R. Reuse K only on full residual.
-        if (not jac_fd) and prev_p > 0.0 and out.k_flash is not None and bool(out.two_phase[c]):
-            rel_p = abs(float(p[c]) - prev_p) / max(abs(float(p[c])), 1.0)
-            if rel_p < 0.05:
-                k_guess = out.k_flash[c]
-        fl = flash_tp(
-            spec.eos,
-            float(p[c]),
-            t,
-            z,
-            k_guess=k_guess,
-            skip_stability=skip,
-            single_vapor=single_vapor,
-        )
-        out.x[c] = fl.x
-        out.y[c] = fl.y
-        out.v_mix[c] = max(fl.v_mix, 1.0e-12)
-        out.xi_l[c] = 1.0 / max(fl.v_liq, 1.0e-12)
-        out.xi_v[c] = 1.0 / max(fl.v_vap, 1.0e-12)
-        sl = fl.sl
-        sv = fl.sv
-        sw = 0.0
-        if spec.has_water:
-            out.vw[c] = float(vw[c]) if vw.ndim else float(vw)
-            n_w = float(n[c, n_hc])
-            # Sw from water occupancy; HC saturations fill the rest.
-            sw = float(np.clip(n_w * out.vw[c] / max(out.v_mix[c] * tot + n_w * out.vw[c], 1.0e-18), 0.0, 0.999))
-            sl = sl * (1.0 - sw)
-            sv = sv * (1.0 - sw)
-            out.xi_w[c] = 1.0 / max(out.vw[c], 1.0e-12)
-        out.sl[c] = sl
-        out.sv[c] = sv
-        out.sw[c] = sw
-        out.vapor_frac[c] = fl.vapor_frac
-        out.two_phase[c] = fl.two_phase
-        out.p_flash[c] = float(p[c])
-        out.z_flash[c] = z[:n_hc]
-        if fl.k is not None:
-            out.k_flash[c] = np.asarray(fl.k, dtype=float).ravel()[:n_hc]
+    n_idx = int(idx.size)
+    z_all = np.zeros((n_idx, n_hc))
+    tot = np.sum(n[idx, :n_hc], axis=1)
+    use = tot > 1.0e-18
+    z_all[use] = n[idx[use], :n_hc] / tot[use, None]
+    if spec.z_init is not None:
+        z_all[~use] = np.asarray(spec.z_init, dtype=float).ravel()[:n_hc]
+    jac_fd = cells is not None
+    k_guess = None
+    n_warm = 0
+    if (not jac_fd) and out.k_flash is not None and out.p_flash is not None:
+        prev_p = np.asarray(out.p_flash[idx], dtype=float)
+        rel_p = np.abs(p[idx] - prev_p) / np.maximum(np.abs(p[idx]), 1.0)
+        warm = (prev_p > 0.0) & np.asarray(out.two_phase[idx], dtype=bool) & (rel_p < 0.05)
+        if np.any(warm):
+            k_guess = np.clip(wilson_k_batch(spec.eos, p[idx], t), 1.0e-8, 1.0e8)
+            k_guess[warm] = out.k_flash[idx[warm]]
+            n_warm = int(np.count_nonzero(warm))
+    backend = get_flash_backend()
+    arr = backend.evaluate_batch(spec.eos, p[idx], t, z_all, k_guess=k_guess)
+    n_fallback = 0
+    if np.any(~arr.converged):
+        bad = np.where(~arr.converged)[0]
+        cold = backend.evaluate_batch(spec.eos, p[idx[bad]], t, z_all[bad])
+        arr.vapor_frac[bad] = cold.vapor_frac
+        arr.x[bad] = cold.x
+        arr.y[bad] = cold.y
+        arr.z_liq[bad] = cold.z_liq
+        arr.z_vap[bad] = cold.z_vap
+        arr.v_liq[bad] = cold.v_liq
+        arr.v_vap[bad] = cold.v_vap
+        arr.two_phase[bad] = cold.two_phase
+        arr.k[bad] = cold.k
+        arr.converged[bad] = cold.converged
+        arr.fallback_used[bad] = True
+        n_fallback = int(bad.size)
+    out.x[idx] = arr.x
+    out.y[idx] = arr.y
+    out.v_mix[idx] = np.maximum(arr.v_mix, 1.0e-12)
+    out.xi_l[idx] = 1.0 / np.maximum(arr.v_liq, 1.0e-12)
+    out.xi_v[idx] = 1.0 / np.maximum(arr.v_vap, 1.0e-12)
+    sl = (1.0 - arr.vapor_frac) * arr.v_liq / np.maximum(arr.v_mix, 1.0e-30)
+    sv = 1.0 - sl
+    sw = np.zeros(n_idx)
+    if spec.has_water:
+        vw_c = np.asarray(vw, dtype=float).ravel()
+        out.vw[idx] = vw_c[idx] if vw_c.size == n_cells else float(vw_c.flat[0])
+        n_w = n[idx, n_hc]
+        den = np.maximum(out.v_mix[idx] * tot + n_w * out.vw[idx], 1.0e-18)
+        sw = np.clip(n_w * out.vw[idx] / den, 0.0, 0.999)
+        sl = sl * (1.0 - sw)
+        sv = sv * (1.0 - sw)
+        out.xi_w[idx] = 1.0 / np.maximum(out.vw[idx], 1.0e-12)
+    out.sl[idx] = sl
+    out.sv[idx] = sv
+    out.sw[idx] = sw
+    out.vapor_frac[idx] = arr.vapor_frac
+    out.two_phase[idx] = arr.two_phase
+    out.p_flash[idx] = p[idx]
+    out.z_flash[idx] = z_all
+    out.k_flash[idx] = arr.k[:, :n_hc]
+    bump(n_cells=n_idx, n_warm_start=n_warm, n_warm_fallback=n_fallback)
     global _LAST_FLASH_S
     _LAST_FLASH_S = time.perf_counter() - t_flash
     if spec.has_water:
@@ -247,7 +264,9 @@ def moles_from_z(
         for c in range(n_cells):
             _fill(c, vm, vw0)
         return n
+    backend = get_flash_backend()
+    arr = backend.evaluate_batch(spec.eos, p, t, np.broadcast_to(zz, (n_cells, zz.size)).copy())
+    vm = np.maximum(arr.v_mix, 1.0e-12)
     for c in range(n_cells):
-        fl = flash_tp(spec.eos, float(p[c]), t, zz)
-        _fill(c, max(fl.v_mix, 1.0e-12), float(vw[c]) if spec.has_water else 1.0)
+        _fill(c, float(vm[c]), float(vw[c]) if spec.has_water else 1.0)
     return n

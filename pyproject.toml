@@ -21,6 +21,9 @@ reservoir = "reservoir_backend.cli.main:main"
 dev = [
     "pytest>=8.0",
 ]
+perf = [
+    "numba>=0.59",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
