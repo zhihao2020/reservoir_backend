@@ -1,842 +1,1048 @@
-是的，而且现在“费时间”不是偶然，是当前实现方式决定的。对照 OPM Flow、GEOS、JutulDarcy、MRST、ERT 后，我建议不要只做“把 dense Jacobian 换 sparse”这一项，而是改成一个明确的 **High-fidelity / Online 双层计算架构**。
+我重新检查了最新 `main`。现在最新提交已经到 **`e81089f`**，相比上一轮确实改了很多，而且大方向是对的：**dense Jacobian 已经退出主路径，DPDP 求解器开始进入工程优化阶段。**
 
-## 先判断你现在到底慢在哪里
+但我检查实现后，结论是：
 
-当前仓库至少有两个明显的大头。
-
-第一，`fi_comp_dual.py` 仍然在构造完整 dense FD Jacobian，然后用 dense `scipy.linalg.solve`。 30³、二组分 DPDP 已经有：
-
-$$
-N_u=2\times27000\times(2+1)=162000
-$$
-
-个未知量，这条路径本身就不具备扩展性。
-
-第二，**组分 Flash 也很贵**。现在 `flash_state()` 是逐 cell Python 循环，每个 cell 调 `flash_tp()`；而一次 flash 内又可能有 stability test、最多 80 次 Rachford–Rice 二分，以及最多 20 次 EOS fugacity iteration。
-
-因此实际成本大致是：
-
-$$
-\text{Cost}
-\approx
-N_{\text{Newton}}
-\times
-(
-\text{Flash}
-+
-\text{Jacobian assembly}
-+
-\text{linear solve}
-)
-$$
-
-再做 ES-MDA：
-
-$$
-\boxed{
-\text{Total Cost}
-\approx
-N_aN_e
-\times
-\text{Forward Cost}
-}
-$$
-
-比如：
-
-$$
-N_a=4,\quad N_e=32
-$$
-
-就是约 **128 次完整 forward**。
-
-所以只优化一点 NumPy 没意义。
+> **现在已经解决了“内存根本跑不了”的问题，但还没有真正解决“30³ 为什么慢”的核心问题。**
+>
+> 当前下一瓶颈已经非常明确：
+>
+> $$
+> \boxed{\text{Colored-FD Jacobian + Flash}}
+> $$
+>
+> 而不是 sparse linear solve。
 
 ---
 
-# 相关成熟项目都是怎么做的
+# 1. 这轮修改中，真正做对了什么
 
-它们的路线其实高度一致。
+首先值得肯定的是 sparse Newton 这条路线已经落地了。
 
-| 项目             | 核心做法                                                                                |
-| -------------- | ----------------------------------------------------------------------------------- |
-| **OPM Flow**   | FIM + 自动微分 + block sparse Jacobian + CPR/AMG + adaptive timestep + nonlinear solver |
-| **GEOS**       | sparse FIM + GMRES/FGMRES + HYPRE MGR + line search + adaptive timestep             |
-| **JutulDarcy** | AD + 动态稀疏结构 + block ILU/CPR + MPI + fast flash                                      |
-| **MRST**       | AD 自动生成 Jacobian，适合快速开发复杂组分模型；支持整体组分 formulation                                    |
-| **ERT**        | 不负责加快单次 simulator，而是并行跑 realizations、失败恢复、restart ensemble、ES-MDA 调度                |
-
-OPM Flow 当前默认就是 **BiCGSTAB + CPRW**，还支持 ILU、CPR 和 GPU 线性求解器。([opm-project.org][1]) GEOS 对大型 compositional multiphase 问题直接推荐 **GMRES/FGMRES + HYPRE MGR**。([geosx-geosx.readthedocs-hosted.com][2])
-
-JutulDarcy 更值得你参考：它使用 AD、动态 sparsity、CPR-BILU，并已经做到数万甚至十几万 cell 的 CPU reservoir simulation；其 README 给出的例子包括 44,417-cell Norne 和 192,750-cell OLYMPUS。([GitHub][3])
-
-所以成熟项目根本不会：
-
-```text
-residual
-→ 对每个未知量 FD
-→ dense Jacobian
-→ dense solve
-```
-
----
-
-# 你现在应该分三层解决
-
-## 第一层：开发时先别每次都跑重模型
-
-这是你马上就能做的。
-
-建立四档：
-
-```text
-smoke:
-    3×1×1
-    Ne=4
-    Na=1
-
-unit:
-    4×3×2
-    no ES-MDA
-
-integration:
-    5³ / 10³
-    Ne=8
-    Na=2
-
-production:
-    30³
-    real observations
-```
-
-普通 Codex 开发：
-
-```text
-只跑 smoke + targeted unit tests
-```
-
-提交前：
-
-```text
-integration
-```
-
-真正 milestone 才：
-
-```text
-30³
-```
-
-ERT 自己也是这么干的：官方 README 明确说完整 pytest 很慢，所以开发过程中提供 `rapid-tests`，完整检查再并行执行。([GitHub][4])
-
-所以第一件事其实应该增加：
-
-```text
-pytest -m "not slow"
-pytest -m dpdp
-pytest -m assimilation
-pytest -m scalability
-```
-
-不要让 Codex 每改一个函数都把大型 ES-MDA demo 重跑一遍。
-
----
-
-# 第二层：把单次高保真正演真正做快
-
-这是核心。
-
-## A. Sparse Jacobian
-
-现在最优先：
+现在 Jacobian 明确采用：
 
 $$
-\boxed{\text{dense FD}\rightarrow\text{sparse colored FD}}
+J=
+\begin{bmatrix}
+J_{ff}&J_{fm}\\
+J_{mf}&J_{mm}
+\end{bmatrix}
 $$
 
-先不要急着 AD。
+只保存：
 
-保留现有物理公式和 coloring，只把矩阵变成：
+* 同连续体相邻 cell；
+* 同 cell matrix-fracture transfer；
 
-$$
-J\in sparse\ CSR/BSR
-$$
+不再构造 \(N_u^2\) 的 dense matrix。
 
-因为 DPDP 本身只有局部耦合：
+线性求解也已经变成：
 
 ```text
-fracture cell
-  ├─ 6 fracture neighbours
-  └─ same-cell matrix
+小规模 → spsolve
 
-matrix cell
-  ├─ 6 matrix neighbours
-  └─ same-cell fracture
+大规模 → GMRES + ILU
 ```
 
-所以：
-
-$$
-nnz(J)\ll N_u^2
-$$
-
-这一步可以产生数量级提升。
-
----
-
-## B. 第一版用 GMRES + ILU
-
-路线：
-
-```text
-V1:
-CSR/BSR
-+
-GMRES
-+
-ILU
-
-V2:
-CPR
-+
-AMG pressure solve
-```
-
-不要第一天就复制 OPM 的完整 CPR。
-
-先证明：
-
-$$
-30^3
-$$
-
-可以稳定跑。
-
-之后再做：
-
-$$
-\boxed{\text{CPR}}
-$$
-
-因为 compositional reservoir equations 最经典的问题就是 pressure mode 很难收敛，CPR 专门针对这个。
-
-OPM 默认采用 CPR 类预条件，JutulDarcy 大模型也使用 CPR-block-ILU。([opm-project.org][1])
-
----
-
-# 第三层：Flash 必须专门优化
-
-这个我现在认为甚至可能是你 sparse solver 完成后的**第二大瓶颈**。
-
-JutulDarcy 很有参考价值，它专门提供：
-
-```text
-fast_flash
-flash_reuse_guess
-flash_stability_bypass
-```
-
-核心思想是：
-
-> 如果某个 cell 上一步就是两相状态，那么下一 Newton iteration 不要重新从 Wilson K 开始猜。
-
-以及：
-
-> 如果 cell 明显远离相边界，就不要每一次都重新跑昂贵 stability test。
-
-JutulDarcy 文档明确说这两个选项就是为了加速 compositional flash。([Sintef Math][5])
-
-你现在 `flash_tp()` 每一次基本重新：
-
-```text
-Wilson K
-↓
-stability
-↓
-RR
-↓
-EOS fugacity
-↓
-iteration
-```
-
-这很浪费。
-
-应该让每个 cell 保存：
+而且上一版那个：
 
 ```python
-FlashCache:
-    phase_state
-    K
-    vapor_fraction
-    x
-    y
-    previous_p
-    previous_z
+line search failed
+→ 强制走 0.1 Newton step
 ```
 
-然后：
-
-### Cell 仍处于两相附近
-
-使用：
+已经删掉，现在正确地抛出 `PhysicsConvergenceError`，由外层：
 
 $$
-K^{old}
+\Delta t\rightarrow\frac12\Delta t
 $$
 
-作为初始 guess。
+重新算。
 
-### Cell 明显单相且状态变化小
-
-直接：
-
-```text
-bypass stability
-```
-
-### 只有状态变化明显的 cell
-
-才完整：
-
-```text
-stability + flash
-```
+这一点非常重要。
 
 ---
 
-# 还可以更进一步：向量化 Flash
+# 2. Static Context 也改对了
+
+现在已经把：
+
+* neighbors；
+* coloring；
+* sparsity pattern；
+* cell volumes；
+* unit transmissibility；
+
+放进：
+
+```python
+DPDPModelContext
+```
+
+缓存。
+
+对于当前 scalar \(C_f\)：
+
+$$
+T_f=C_fT_{\text{unit}}
+$$
+
+对于固定 \(k_m\)：
+
+$$
+T_m=k_mT_{\text{unit}}
+$$
+
+所以 ensemble member 不需要重新构造整个 TPFA topology。
+
+这是很正确的优化。
+
+---
+
+# 3. Observation 和 Port 语义也比之前完整
+
+现在 Sensor 已经支持：
+
+```text
+fracture
+matrix
+bulk
+```
+
+而不是默认把所有传感器都看成 fracture observation。
+
+并且 bulk 使用孔隙体积相关权重组合 matrix/fracture 状态。
+
+Port 也加入了：
+
+```text
+fracture
+matrix
+split
+```
+
+的 continuum coupling。
+
+这至少解决了之前“所有注采默认只连 fracture continuum”的架构问题。
+
+---
+
+# 4. ES-MDA 也开始做 ensemble 并行了
 
 现在：
-
-```python
-for c in idx:
-    flash_tp(...)
-```
-
-是 Python 层循环。
-
-对于 30³ DPDP：
-
-$$
-54000
-$$
-
-个 continuum cells。
-
-应该逐步把：
-
-* Wilson K；
-* Rachford–Rice；
-* PR \(a,b\) mixture；
-* cubic EOS；
-
-做成 batch operations。
-
-不一定一次彻底 vectorize 整个 flash。
-
-先把最常用路径：
-
-```text
-stable single phase
-```
-
-和：
-
-```text
-two-phase with cached K
-```
-
-批量化。
-
-这通常比马上上 GPU更值。
-
----
-
-# 不要现在上 GPU
-
-OPM 确实已经支持 GPU linear solver，而且 2026 Summit 还在推进 GPU matrix assembly。([opm-project.org][1])
-
-但你的情况现在 GPU 不是第一解。
-
-因为目前最大的问题是：
-
-```text
-Python loops
-dense matrix
-FD residual evaluations
-scalar flash
-```
-
-这些不先解决，即使把 sparse linear solve 扔到 GPU：
-
-$$
-\text{overall speedup}
-$$
-
-也不会特别大。
-
-正确顺序：
-
-$$
-\boxed{
-\text{Algorithm}
-\rightarrow
-\text{Sparse}
-\rightarrow
-\text{Cache}
-\rightarrow
-\text{Parallel CPU}
-\rightarrow
-\text{GPU}
-}
-$$
-
----
-
-# 还有一个非常关键的办法：组分数不要无限增长
-
-目前你的 EXAMPLE fluid 实际只是：
-
-$$
-C1+nC10
-$$
-
-二元体系。
-
-所以现在不是问题。
-
-但以后真正页岩油 PVT 如果有：
-
-$$
-C1,C2,C3,C4,C5,C6,C7,C8,\dots,C30+
-$$
-
-你绝对不能原样全部扔进 reservoir simulator。
-
-工业组分模拟通常会做 EOS characterization / component lumping。
-
-MRST 自己的 compositional 示例也明确使用过六个组分，其中多个并不是单一分子，而是**相似分子量 hydrocarbons 的 lumped groups**。([SINTEF][6])
-
-例如以后可以是：
-
-$$
-C_1
-$$
-
-$$
-C_2-C_3
-$$
-
-$$
-C_4-C_6
-$$
-
-$$
-C_7-C_{12}
-$$
-
-$$
-C_{13+}
-$$
-
-之类。
-
-不是说固定这样分，而是：
-
-> 先通过实验 PVT 把 EOS 拟合好，然后选能够保持相态/密度/黏度/泡点等关键性质的最小 pseudo-component 集合。
-
-这样未知量数量直接下降。
-
-如果 8 个 HC components：
-
-$$
-N_u
-=
-2\times27000\times9
-=
-486000
-$$
-
-二组分则只有：
-
-$$
-162000
-$$
-
-区别非常大。
-
----
-
-# 时间步也不要机械用 1 秒
-
-这个和你实验传感器“每秒采样”是两个概念。
-
-**数据每秒输出：**
-
-$$
-t=1,2,3,\dots
-$$
-
-不代表 PDE 必须：
-
-$$
-\Delta t=1s
-$$
-
-成熟 simulator 都使用 adaptive timestep。OPM 明确把 adaptive step-size control 作为核心求解技术之一；GEOS 同样提供 nonlinear convergence 和 timestep heuristics。([opm-project.org][7])
-
-例如物理状态平稳：
-
-$$
-\Delta t=5s
-$$
-
-甚至：
-
-$$
-20s
-$$
-
-然后报告：
-
-$$
-p(x,1s),p(x,2s),...
-$$
-
-可以通过 step endpoint/interpolation 或强制 report time 实现。
-
-状态快速变化时：
-
-$$
-\Delta t\downarrow
-$$
-
-稳定后：
-
-$$
-\Delta t\uparrow
-$$
-
-你现在应该采用：
-
-$$
-\Delta t_{n+1}
-=
-f(
-N_{Newton},
-\Delta p,
-\Delta S,
-\Delta z
-)
-$$
-
-JutulDarcy 就明确限制：
-
-$$
-\Delta p,\Delta S,\Delta z
-$$
-
-来控制 nonlinear step。([Sintef Math][5])
-
----
-
-# ES-MDA 不要串行
-
-当单次 forward 快起来以后，最自然的就是：
-
-$$
-\boxed{\text{ensemble-level parallelism}}
-$$
-
-ERT 基本就是这个思想。
-
-它把：
-
-$$
-m_1,m_2,\dots,m_{N_e}
-$$
-
-送去独立 simulation jobs，然后汇总 response 做 assimilation。ERT 本身就是为运行 reservoir-model ensembles 而设计的。([GitHub][4])
-
-你第一版不用集群。
-
-直接：
 
 ```python
 ProcessPoolExecutor
 ```
 
-比如机器 16 核：
+已经接入，每个 realization 可以独立运行。
+
+同时测试也分成：
 
 ```text
-8 workers
+默认 not slow
+dpdp
+assimilation
+scalability
 ```
 
-每个 worker 跑一个 realization。
+不会每改一点代码就完整跑 10³ + ES-MDA。
 
-不要：
-
-```text
-一个 forward 内部 16 核
-×
-16 个 ensemble 同时
-```
-
-造成 oversubscription。
-
-甚至 ERT 今年就有 issue 专门讨论这种 simulator 内部并行和 ensemble 并行资源冲突。([GitHub][8])
-
-你这里更适合：
-
-> **forward 内部少线程，ensemble 外层并行。**
-
-因为模型只有 27k cells，不算超大型 reservoir case。
+这对开发体验改善很大。
 
 ---
 
-# 但你的“在线数字孪生”还应该再改变一层
+# 5. 但是我发现：当前真正的性能瓶颈还没有解决
 
-这可能是最重要的产品设计。
+这是现在最重要的结论。
 
-**工业系统不会每秒重新跑一次完整 ES-MDA。**
+虽然 Jacobian 已经 sparse，但**Jacobian 的数值导数仍然非常贵**。
 
-ERT 文档甚至直接举例：
-
-> 一个 ES-MDA iteration 可能运行 hours or days。
-
-([ert.readthedocs.io][9])
-
-所以你以后应该是：
+现在 `_coloring_jacobian()` 还是：
 
 ```text
-FAST LOOP                   SLOW LOOP
+for color
+    for continuum
+        for primary variable
+            perturb
+            full residual
+            flash
+```
 
-每 1 s                      每 30 s / 60 s /
-│                           event trigger
-│                              │
-预测状态                       收集一段 observations
-│                              │
-输出 p/S                       ensemble forward
-│                              │
-                              Cf update
-                                │
-                              rerun
-                                │
-                  ◄─────────────┘
+目前 `_cell_colors()` 沿用原来的：
+
+$$
+3\times3\times3=27
+$$
+
+种颜色。
+
+如果二元组分：
+
+$$
+N_c=2
+$$
+
+每个 continuum 的未知量：
+
+$$
+N_c+1=3
+$$
+
+于是一次 Jacobian 大约需要：
+
+$$
+27\times2\times3
+=
+\boxed{162}
+$$
+
+次 residual evaluation。
+
+**每一个 Newton iteration 162 次。**
+
+所以现在虽然：
+
+$$
+\text{sparse solve}
+$$
+
+已经很便宜，
+
+但：
+
+$$
+\boxed{\text{Jacobian assembly}}
+$$
+
+依旧非常贵。
+
+这也和仓库自己的 performance profile 一致：目前判断 flash + colored-FD residual 是主要成本，而 sparse solve 相对较小。
+
+---
+
+# 6. 这里有一个很大的优化机会：27-color 可以尝试降到 7-color
+
+对 Cartesian 3D 7-point stencil，当前：
+
+```python
+(i % 3)
++ 3*(j % 3)
++ 9*(k % 3)
+```
+
+这种 27-color 是非常保守的 distance-2 coloring。
+
+实际上可以构造 7-color，例如类似：
+
+$$
+c(i,j,k)
+=
+(i+2j+3k)\bmod7
+$$
+
+再严格验证：
+
+> 所有会同时影响同一个 residual row 的 unknown 不得同色。
+
+如果成立，那么 Jacobian residual 次数直接从：
+
+$$
+27\times2\times3=162
+$$
+
+降成：
+
+$$
+7\times2\times3=42
+$$
+
+理论上 Jacobian assembly 调用次数接近：
+
+$$
+\boxed{3.9\times}
+$$
+
+下降。
+
+我认为这应该成为**下一轮第一性能任务**。
+
+但必须有自动检查：
+
+```text
+verify_coloring_no_row_collision()
+```
+
+不能凭公式直接换。
+
+---
+
+# 7. 更关键的问题：刚加的 Flash Cache 实际没有作用在最贵的 Jacobian 路径上
+
+这个我认为是当前代码里最值得马上修的地方。
+
+你现在确实增加了：
+
+```text
+k_flash
+p_flash
+z_flash
+```
+
+缓存。
+
+并且支持：
+
+```text
+previous K
+stability bypass
+```
+
+这很好。
+
+但是代码紧接着：
+
+```python
+jac_fd = cells is not None
+```
+
+然后：
+
+```python
+if (not jac_fd) and prev_p > 0:
+    ...
+    k_guess = ...
+```
+
+也就是说：
+
+> **只要是 Jacobian finite-difference flash，就禁用 K reuse。**
+
+偏偏 Jacobian 才是现在 Flash 被调用最多的地方。
+
+所以现在实际是：
+
+```text
+普通 residual
+    → 可能 reuse K
+
+Jacobian FD
+    → 不 reuse
+```
+
+而一次 Newton：
+
+```text
+普通 residual：1 次
+
+Jacobian residual：几十到一百多次
+```
+
+所以优化命中了较小的部分，没有命中最大的部分。
+
+---
+
+# 8. 应该怎么改 Flash Cache
+
+这里应该区分：
+
+### K-value reuse
+
+可以在 Jacobian FD 中使用：
+
+$$
+K^{old}
+$$
+
+作为 flash 的**初始猜测**。
+
+因为只要最终 flash 收敛到同一个热力学解，它不改变模型，只改变收敛速度。
+
+所以：
+
+```text
+Jacobian FD:
+    allow k_guess
+```
+
+---
+
+### Stability bypass
+
+这个更加敏感。
+
+Jacobian FD 时最好先：
+
+```text
+disable stability bypass
+```
+
+因为如果扰动后跨相态边界，而你直接认为还是单相，会污染数值导数。
+
+所以应该：
+
+```text
+FD flash:
+    reuse K       = YES
+    skip stability = NO
+
+normal Newton:
+    reuse K        = YES
+    skip stability = conditionally YES
+```
+
+而不是当前：
+
+```text
+FD:
+    两个都 NO
+```
+
+---
+
+# 9. 当前 Flash cache 还有第二个问题
+
+每个 Newton iteration 的主 residual：
+
+```python
+_residual(...)
+```
+
+调用时：
+
+```text
+props_f=None
+props_m=None
+```
+
+于是会重新创建：
+
+```python
+PhaseProps(...)
+```
+
+也就是说**前一个 Newton iteration 的 cache 并没有天然传入下一个 Newton iteration**。
+
+所以真正应该持久化：
+
+```text
+props_f_cache
+props_m_cache
+```
+
+生命周期至少覆盖：
+
+$$
+\boxed{\text{整个 timestep 的 Newton iterations}}
+$$
+
+而不是仅仅覆盖一次 `_coloring_jacobian()`。
+
+正确结构应该是：
+
+```text
+begin timestep
+
+flash cache
+    ↓
+Newton 1
+    ↓ reuse
+Newton 2
+    ↓ reuse
+Newton 3
+
+end timestep
+```
+
+而不是：
+
+```text
+Newton 1 → 创建 cache → 丢掉
+Newton 2 → 创建 cache → 丢掉
+```
+
+---
+
+# 10. 我发现 frozen-λ 快环现在还不能用于真实在线实验
+
+这是这次检查最严重的功能问题之一。
+
+`step_frozen_pressure()` 当前参数是：
+
+```python
+grid
+context
+dual_rock
+transfer
+pf
+pm
+lambda_f
+lambda_m
+dt
+```
+
+**没有：**
+
+```text
+ports
+controls
+source
+boundary condition
+```
+
+所以如果实验正在：
+
+$$
+Q_{inj}>0
+$$
+
+同时：
+
+$$
+P_{prod}=const
+$$
+
+fast loop 根本不知道。
+
+它现在只能做：
+
+```text
+原压力场
+↓
+continuum 内重新平衡
++
+matrix-fracture exchange
+```
+
+不会响应新的注采。
+
+所以目前：
+
+$$
+\boxed{\text{frozen-pressure fast loop 还不是在线预测器}}
+$$
+
+它只是一个 pressure relaxation prototype。
+
+---
+
+# 11. 而且 fast loop 说“不 Flash”，实际上最后还是 Flash 了
+
+`TwinLoops.fast_step()`：
+
+```python
+pf, pm = step_frozen_pressure(...)
+```
+
+这一步确实没有 flash。
+
+但是最后返回：
+
+```python
+dual_to_state(...)
+```
+
+而 `dual_to_state()` 内部又：
+
+```python
+flash_state(fracture)
+flash_state(matrix)
+```
+
+两个 continuum 全部 flash。
+
+所以：
+
+```text
+fast loop:
+    no flash
+```
+
+这个设计目标目前实际上没有实现。
+
+### 正确做法
+
+fast loop 应该：
+
+* 更新 \(p_f,p_m\)；
+* composition 不更新；
+* saturation 可以冻结上一次 slow full model 的值；
+* UI 每秒输出压力；
+* 饱和度注明为 last full-model state / held state。
+
+而不是为了返回 `State` 又重新把 54,000 个 continuum cell flash 一遍。
+
+---
+
+# 12. frozen-pressure 还有一个物理问题：压缩性写死成 \(10^{-9}\)
+
+现在：
+
+```python
+_C_PA = 1.0e-9
+```
+
+然后：
+
+$$
+A=
+\phi V c/\Delta t
+$$
+
+这实际上人为决定了 fast-loop 压力传播速度。
+
+这个不能最终保留。
+
+应该在 slow full compositional solve 后计算：
+
+$$
+c_t^f(x)
+$$
+
+$$
+c_t^m(x)
+$$
+
+或者更准确：
+
+$$
+\frac{\partial N}{\partial p}
+$$
+
+的局部 accumulation derivative，然后 freeze 到 fast window。
+
+这样：
+
+```text
+full compositional model
+     ↓
+linearized pressure coefficients
+     ↓
+fast predictor
+```
+
+才是真正物理一致的 reduced model。
+
+---
+
+# 13. 现在 Online slow loop 也还是“重新历史拟合”，不是真正 sequential
+
+`TwinLoops.maybe_slow()` 当前直接：
+
+```python
+post = self.twin.calibrate()
+```
+
+而 `calibrate()` 的 ES-MDA 会重新：
+
+```text
+sample_log_prior(...)
+```
+
+生成一套 prior ensemble。
+
+所以每 30 秒当前逻辑接近：
+
+```text
+original prior
+↓
+重新跑 ES-MDA
+↓
+posterior
+```
+
+而不是：
+
+```text
+previous posterior ensemble
+↓
+new observations
+↓
+parameter filter
+↓
+new posterior
+```
+
+这既慢，又不符合我们之前确定的 online update 设计。
+
+---
+
+# 14. 其实仓库已经有更合适的东西
+
+现在已有：
+
+```python
+OnlineAssimilationWorkflow
+```
+
+它已经是：
+
+```text
+checkpoint
+→ parameter forecast
+→ H(F)
+→ QC
+→ parameter EnKF
+→ posterior
+```
+
+因此推荐：
+
+### Offline
+
+保留：
+
+$$
+\boxed{ES\text{-}MDA}
+$$
+
+### Online slow loop
+
+不要再：
+
+```python
+twin.calibrate()
+```
+
+而改成：
+
+$$
+\boxed{\text{Parameter EnKF}}
+$$
+
+使用上一时刻：
+
+$$
+C_f^{posterior}
+$$
+
+ensemble。
+
+这样在线 slow update 从：
+
+$$
+N_aN_e
+$$
+
+次 forward，
+
+下降到约：
+
+$$
+N_e
+$$
+
+次 forward。
+
+这对在线速度意义极大。
+
+---
+
+# 15. 我还发现一个比性能更严重的状态重启问题
+
+现在 DPDP 的：
+
+```python
+DigitalTwin.simulate(... state0=...)
+```
+
+进入 DPDP 分支以后，代码首先：
+
+```python
+dual0 = initialize_dual_state(...)
+```
+
+然后如果有 `state0`：
+
+```python
+dual0.time_s = state0.time_s
+```
+
+也就是说：
+
+> **只继承了时间，没有继承真正的 matrix/fracture pressure、moles/composition。**
+
+所以现在所谓：
+
+```text
+forecast from posterior state
+rollback → rerun
+online continuation
+```
+
+存在严重问题：
+
+物理场实际上可能重新初始化，只是时间改成了后面的时间。
+
+这要在继续做 online 之前优先修。
+
+---
+
+# 16. 正确的 restart 必须直接保存 DualCompositionalState
+
+接口应该允许：
+
+```python
+simulate(
+    state0: DualCompositionalState
+)
+```
+
+直接恢复：
+
+$$
+p_f,n_f,p_m,n_m
+$$
+
+而不是通过展示用的：
+
+```python
+State
+```
+
+恢复。
+
+因为普通 `State` 当前只有：
+
+```text
+fracture moles
+matrix pressure
+matrix saturation
+```
+
+并没有完整：
+
+$$
+n_{m,i}
+$$
+
+无法无损恢复 compositional matrix state。
+
+所以 checkpoint 的真实物理状态应该始终是：
+
+$$
+\boxed{DualCompositionalState}
+$$
+
+---
+
+# 17. ProcessPool 也已经有了，但还有明显优化空间
+
+现在每个 job：
+
+```python
+(j, theta, series, t_end, twin)
+```
+
+直接把整个：
+
+```python
+DigitalTwin
+```
+
+放进 payload。
+
+这意味着多进程可能反复 pickle：
+
+* grid；
+* observations；
+* context；
+* EOS；
+* ports；
+* configuration。
+
+尤其在 spawn 型 multiprocessing 环境下开销会非常明显。
+
+更合理的是：
+
+```text
+ProcessPool initializer
+    ↓
+每个 worker 初始化一次 immutable TwinContext
+
+每个 job:
+    只传 theta
 ```
 
 也就是：
 
+```python
+_pool_context = ...
+
+def init_worker(context):
+    ...
+
+def run_member(theta):
+    ...
+```
+
+不要每个 ensemble member 都重新序列化完整 twin。
+
+---
+
+# 18. Sparse Jacobian 还需要一个数值等价测试
+
+现在：
+
+`test_dpdp_sparse.py`
+
+主要验证：
+
+* pattern 有 transfer block；
+* 有 neighbor block；
+* nnz < dense；
+* \(T_f\) 随 \(C_f\) scaling。
+
+但是还没有看到：
+
 $$
 \boxed{
-\text{高频状态预测}
-+
-\text{低频参数更新}
+J_{\text{sparse}}
+\approx
+J_{\text{brute-force dense FD}}
 }
 $$
 
-不是：
+这种测试。
+
+建议在：
 
 $$
-1s
-\rightarrow
-ES\text{-}MDA
-\rightarrow
-1s
-\rightarrow
-ES\text{-}MDA
+2\times2\times1
 $$
+
+极小网格上建立：
+
+```text
+brute force one-column-at-a-time FD Jacobian
+```
+
+然后：
+
+$$
+\frac{\|J_s-J_d\|}
+{\|J_d\|}
+<10^{-6}\sim10^{-4}
+$$
+
+这样才能真正证明 coloring 没有漏耦合。
+
+尤其如果下一步把 27-color 改成 7-color，这个测试是必须的。
 
 ---
 
-# 我甚至建议再分 High-Fidelity 和 Online Predictor
+# 19. 目前 30³ 仍然没有实际通过证据
 
-最终最好变成：
+现在已经有很好的：
 
-```text
-              High Fidelity Model
-              Compositional DPDP
-                     │
-                     │ periodically calibrate
-                     ▼
-                posterior Cf
-                     │
-          ┌──────────┴─────────┐
-          ▼                    ▼
-    Fast Online Model     Full DPDP forecast
-    frozen / reduced       validation
-    fluid properties
-          │
-          ▼
-      1 s field output
+```python
+scripts/dpdp_scale_bench.py
 ```
 
-注意这里的 fast model **不是神经网络瞎预测**。
+会记录：
 
-可以先做一个物理降阶：
+* cells；
+* unknowns；
+* nnz；
+* wall time；
+* Jacobian time；
+* solve time；
+* residual；
+* peak memory；
+* mass balance。
 
-在很短时间窗口内冻结：
+但仓库里我没有找到提交进去的：
 
-$$
-\rho,\mu,\lambda
-$$
+```text
+20³ benchmark result
+30³ benchmark result
+```
 
-由上一次 full compositional flash 给出。
-
-然后快速求：
-
-$$
-p_f,p_m
-$$
-
-压力 propagation。
-
-等到：
-
-* 压力变化超过阈值；
-* 相态变化；
-* composition 变化；
-* assimilation trigger；
-
-再完整调用：
+当前 pytest 最大只真正写到了：
 
 $$
-EOS+flash+DPDP
+10^3=1000\ cells
 $$
 
-这和“PVT 必须参与正演”并不冲突。
+而且已经标记为 `slow`。
 
-因为它是：
+所以现在不能说：
 
-> **full model 周期性校正 + 短时间窗口物性 lagging**
+> 30³ 已经跑通。
 
-而不是永久不算 EOS。
+只能说：
+
+> **已经具备冲击 30³ 的架构。**
+
+另外最新 commit 我仍没有看到 CI status/check run，因此完整测试是否在干净环境全绿，我不能替仓库确认。
 
 ---
 
-# 我给你一个实际的优化顺序
+# 我现在给当前版本的评价
 
-现在让 Codex **不要一次全干**，按下面四轮。
+和上一版相比：
 
-### 第一轮：马上降低开发等待
+| 项目                    |    上一版 |           现在 |
+| --------------------- | -----: | -----------: |
+| DPDP 数学结构             |    80% |      **85%** |
+| Sparse scalability 架构 |    20% |      **70%** |
+| Linear solver         |    20% |      **65%** |
+| Flash 性能              |    10% |      **30%** |
+| 30³ 实际能力              | 10–20% |   **40–50%** |
+| Ensemble 并行           |    10% |      **50%** |
+| Online twin           |    25% |      **40%** |
+| 完整 V1 core            |   ~60% | **约 70–75%** |
 
-```text
-fast / integration / production test profiles
-pytest markers
-小网格默认
-Ne=4 smoke
-不自动跑 slow ES-MDA
-```
+现在已经明显不是“dense Python 教学原型”了。
 
-### 第二轮：单 forward 性能
-
-```text
-dense → sparse BSR/CSR
-dense solve → GMRES+ILU
-residual scaling
-adaptive dt
-static topology cache
-```
-
-目标：
-
-$$
-10^3
-$$
-
-和：
-
-$$
-20^3
-$$
-
-快速稳定。
-
-### 第三轮：Flash
-
-```text
-flash cache
-reuse K
-stability bypass
-batch single-phase
-profile flash time
-```
-
-然后真正冲：
+但是距离真正的：
 
 $$
 30^3
++
+\text{compositional DPDP}
++
+N_e\text{ ensemble}
++
+\text{online}
 $$
 
-### 第四轮：Assimilation
-
-```text
-ProcessPool ensemble
-Ne 8 → 16 → 32
-failed-member handling
-checkpoint
-```
+还有一段很关键的性能工程。
 
 ---
 
-## 最后的目标不要定成“和 MRST 一样复杂”
+# 我建议下一轮 Codex 只做 6 件事
 
-我认为你的最佳目标不是做第二个 OPM/GEOS。
+按优先级：
 
-因为你的问题非常受限：
+**P0 — Correctness**
 
-$$
-30^3
-$$
+1. 修 DPDP restart：`DualCompositionalState` 必须完整续算，不能只继承 `time_s`。
+2. 修 fast loop：必须加入实时 `controls/ports`，并删除固定 `_C_PA=1e-9`，改为 slow model 输出的线性化 accumulation。
 
-Cartesian；
+**P1 — 最大性能收益**
 
-TPFA；
+3. 把 27-color 验证后降成 7-color，增加 sparse-vs-brute-force Jacobian 等价测试。
+4. Flash cache 跨 Newton iteration 持久化；Jacobian FD 允许复用 \(K\) 初值，但仍做 stability determination。
 
-固定 \(k_m,\phi_m\)；
+**P2 — Online/ensemble**
 
-固定 EOS/PVT；
+5. `TwinLoops.maybe_slow()` 不再完整重新 `calibrate()`；改为上一 posterior ensemble → Parameter EnKF。
+6. ProcessPool 用 initializer 初始化一次 TwinContext，每个 worker job 只传 \(\theta\)。
 
-固定相渗；
-
-scalar \(C_f\)；
-
-DPDP；
-
-几个观测类型。
-
-这个限制反而是优势。
-
-成熟模拟器需要支持百万 cell、复杂 wells、corner point、fault、NNC、几十种 physics，所以架构必须非常重。
-
-你的系统完全可以针对：
+做完以后再实际跑：
 
 $$
-\boxed{\text{27k-cell shale-oil lab DPDP}}
+5^3\rightarrow10^3\rightarrow20^3\rightarrow30^3
 $$
 
-专门优化。
+并把 JSON benchmark **提交进仓库**。
 
-如果做好：
+我认为下一阶段最关键的目标可以直接写成一个门槛：
 
-* sparse block Jacobian；
-* fast flash；
-* adaptive dt；
-* outer ensemble parallel；
+$$
+\boxed{
+30^3\text{ 单次 full DPDP forward 稳定通过}
+}
+$$
 
-**27k cells 本身并不算大。**
-
-JutulDarcy 公开 benchmark 已经能在单 CPU 上处理 44k、192k cell 的完整 reservoir cases，这至少说明从数量级上，27k 并不是“不可能实时化”的规模；你当前慢，主要还是当前 prototype 算法路径太昂贵，而不是这个物理问题天然算不动。([GitHub][3])
-
-下一步最值得 Codex 做的，不是再加功能，而是先产出一份 `performance_profile.md`：把 **Flash / residual / Jacobian / linear solve / Newton / 单 forward / ensemble** 的耗时百分比全部打出来。之后我们就可以按真实瓶颈一项项砍，而不是继续凭感觉优化。
-
-[1]: https://opm-project.org/?page_id=1798&utm_source=chatgpt.com "Customizing the linear solver in OPM Flow | OPM"
-[2]: https://geosx-geosx.readthedocs-hosted.com/en/develop/docs/sphinx/basicExamples/multiphaseFlow/Example.html?utm_source=chatgpt.com "Multiphase Flow — GEOS documentation"
-[3]: https://github.com/sintefmath/JutulDarcy.jl/blob/main/README.md?utm_source=chatgpt.com "JutulDarcy.jl/README.md at main · sintefmath/JutulDarcy.jl · GitHub"
-[4]: https://github.com/equinor/ert?utm_source=chatgpt.com "GitHub - equinor/ert: ERT - Ensemble based Reservoir Tool - is designed for running ensembles of dynamical models such as reservoir models, in order to do sensitivity analysis and data assimilation. ERT supports data assimilation using the Ensemble Smoother (ES) and Ensemble Smoother with Multiple Data Assimilation (ES-MDA). · GitHub"
-[5]: https://sintefmath.github.io/JutulDarcy.jl/v0.2.35/man/highlevel?utm_source=chatgpt.com "High-level API | JutulDarcy.jl"
-[6]: https://www.sintef.no/contentassets/2551f5f85547478590ceca14bc13ad51/compositional.html?utm_source=chatgpt.com "compositional: Equation-of-state compositional solvers — The Matlab Reservoir Simulation Toolbox 2019b documentation"
-[7]: https://opm-project.org/?page_id=19&utm_source=chatgpt.com "Flow | OPM"
-[8]: https://github.com/equinor/ert/issues/13832?utm_source=chatgpt.com "Block parallel Eclipse runs when NUM_CPU is set to 1 · Issue #13832 · equinor/ert · GitHub"
-[9]: https://ert.readthedocs.io/en/latest/getting_started/howto/esmda_select_prior.html?utm_source=chatgpt.com "Running from prior ES-MDA - ERT 25.0 documentation"
+只有它通过以后，才讨论 16/32-member ES-MDA 到底多快。现在继续上 GPU、CPR、Zonal \(C_f\) 都还早。

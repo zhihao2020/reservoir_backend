@@ -71,3 +71,9 @@ def test_transfer_units_regression() -> None:
     q = wr.compute_transfer(2.0e5, 1.0e5, 0.001)
     assert q == pytest.approx(4.0 * 1.0e-15 * 0.001 * 1.0e5)
     assert q > 0.0
+    q_rev = wr.compute_transfer(1.0e5, 2.0e5, 0.001)
+    assert q_rev == pytest.approx(-float(q))
+    wr2 = WarrenRootTransfer(shape_factor=1.0, k_matrix_m2=1.0e-14)
+    qv = wr2.compute_transfer(np.array([2.0, 3.0]), np.array([1.0, 1.0]), np.array([1.0, 2.0]))
+    assert qv.shape == (2,)
+    assert qv[1] == pytest.approx(2.0 * qv[0])

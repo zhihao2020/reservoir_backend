@@ -43,9 +43,21 @@ def _clip_members(twin: DigitalTwin, members: NDArray[np.float64]) -> NDArray[np
     return x
 
 
-def _forward_one(payload: tuple) -> tuple[int, NDArray[np.float64] | None, str]:
-    """Picklable worker: (index, theta, series, t_end, twin) → predicted column."""
-    j, theta, series, t_end, twin = payload
+_WORKER: tuple[DigitalTwin, list[ObservationSeries], float] | None = None
+
+
+def _init_worker(twin: DigitalTwin, series: list[ObservationSeries], t_end: float) -> None:
+    """Load immutable twin context once per process."""
+    global _WORKER
+    _WORKER = (twin, series, float(t_end))
+
+
+def _forward_theta(job: tuple[int, NDArray[np.float64]]) -> tuple[int, NDArray[np.float64] | None, str]:
+    """Picklable worker: (index, theta) against the process-local twin."""
+    j, theta = job
+    if _WORKER is None:
+        return j, None, "worker twin is not initialized"
+    twin, series, t_end = _WORKER
     try:
         yj = np.asarray(twin._forward_vector(theta, series, t_end=t_end), dtype=float)
         if not np.all(np.isfinite(yj)):
@@ -53,6 +65,18 @@ def _forward_one(payload: tuple) -> tuple[int, NDArray[np.float64] | None, str]:
         return j, yj, ""
     except (PhysicsConvergenceError, TimeStepUnderflow, ValueError, ArithmeticError) as exc:
         return j, None, f"{type(exc).__name__}: {exc}"
+
+
+def _forward_one(payload: tuple) -> tuple[int, NDArray[np.float64] | None, str]:
+    """Serial path: (index, theta, series, t_end, twin) → predicted column."""
+    j, theta, series, t_end, twin = payload
+    global _WORKER
+    prev = _WORKER
+    _WORKER = (twin, series, float(t_end))
+    try:
+        return _forward_theta((j, theta))
+    finally:
+        _WORKER = prev
 
 
 def _worker_count(n_ens: int, n_cells: int, requested: int | None) -> int:
@@ -77,12 +101,16 @@ def _forward_ensemble(
     y = np.full((n_obs, n_ens), np.nan, dtype=float)
     failed: list[dict[str, str]] = []
     workers = _worker_count(n_ens, int(twin.grid.n_cells), n_workers)
-    jobs = [(j, members[:, j], series, t_end, twin) for j in range(n_ens)]
+    jobs = [(j, members[:, j]) for j in range(n_ens)]
     if workers <= 1:
-        rows = [_forward_one(job) for job in jobs]
+        rows = [_forward_one((j, members[:, j], series, t_end, twin)) for j in range(n_ens)]
     else:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            rows = list(pool.map(_forward_one, jobs))
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_init_worker,
+            initargs=(twin, series, float(t_end)),
+        ) as pool:
+            rows = list(pool.map(_forward_theta, jobs))
     for j, yj, reason in rows:
         if yj is None:
             failed.append({"member": str(j), "reason": reason})

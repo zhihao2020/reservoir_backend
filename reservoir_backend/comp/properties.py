@@ -133,7 +133,6 @@ def flash_state(
     idx = np.arange(n_cells, dtype=np.int64) if cells is None else np.asarray(cells, dtype=np.int64).ravel()
     t = float(spec.temperature_k)
     vw = spec.water_vw(p) if spec.has_water else np.zeros(n_cells)
-    jac_fd = cells is not None
     t_flash = time.perf_counter()
     for c in idx:
         nh = n[c, :n_hc]
@@ -143,14 +142,12 @@ def flash_state(
         k_guess = None
         skip = False
         single_vapor = None
-        if (not jac_fd) and prev_p > 0.0:
+        jac_fd = cells is not None
+        # Jacobian FD stays on Wilson so J matches R. Reuse K only on full residual.
+        if (not jac_fd) and prev_p > 0.0 and out.k_flash is not None and bool(out.two_phase[c]):
             rel_p = abs(float(p[c]) - prev_p) / max(abs(float(p[c])), 1.0)
-            rel_z = float(np.max(np.abs(z - out.z_flash[c])))
-            if bool(out.two_phase[c]) and rel_p < 0.05:
+            if rel_p < 0.05:
                 k_guess = out.k_flash[c]
-            elif (not bool(out.two_phase[c])) and 1.0e-4 < rel_p < 2.0e-3 and rel_z < 1.0e-3:
-                skip = True
-                single_vapor = float(out.vapor_frac[c]) > 0.5
         fl = flash_tp(
             spec.eos,
             float(p[c]),
@@ -199,6 +196,24 @@ def flash_state(
         out.lam_w[:] = 0.0
         out.sw[:] = 0.0
     return out
+
+
+def flash_compressibility(
+    spec: CompSpec,
+    p: NDArray[np.float64],
+    n: NDArray[np.float64],
+    props: PhaseProps,
+    *,
+    rel: float = 1.0e-5,
+) -> NDArray[np.float64]:
+    """c_t = -(1/v) ∂v/∂p at frozen moles, from one extra flash with K reuse."""
+    p = np.asarray(p, dtype=float).ravel()
+    p2 = np.maximum(p * (1.0 + float(rel)), p + 1.0)
+    trial = flash_state(spec, p2, n, out=props.copy())
+    dv = trial.v_mix - props.v_mix
+    dp = np.maximum(p2 - p, 1.0)
+    ct = -dv / np.maximum(props.v_mix * dp, 1.0e-30)
+    return np.clip(np.asarray(ct, dtype=float), 1.0e-12, 1.0e-6)
 
 
 def moles_from_z(

@@ -10,7 +10,8 @@ forward ≈ N_Newton × (flash + Jacobian FD + linear solve)
 ES-MDA  ≈ N_a × N_e × forward
 ```
 
-Jacobian is colored FD: 27 colours × 2 continua × \((N_c+1)\) residual evaluations.
+Jacobian is colored FD: 7 colours × 2 continua × \((N_c+1)\) residual evaluations
+(Cartesian 7-point distance-2 coloring, verified by `verify_coloring_no_row_collision`).
 Flash was the dominant term because `flash_tp` restarted from Wilson K and a stability test on every cell.
 
 ## Mitigations in tree
@@ -20,10 +21,10 @@ Flash was the dominant term because `flash_tp` restarted from Wilson K and a sta
 | Tests | `slow` / `dpdp` / `assimilation` / `scalability`. Default: `not slow` |
 | Sparse J | CSC colored FD + GMRES/ILU (`solver/dpdp_jacobian.py`, `solver/linear.py`) |
 | Cache | `DPDPModelContext` topology and \(T(k=1)\) |
-| Flash | reuse K on two-phase cells; skip stability when single-phase and \(\Delta p,\Delta z\) small |
+| Flash | reuse K on full residual (two-phase); Jacobian FD stays Wilson so J matches R |
 | Δt | Newton count + \(\Delta p\), \(\Delta z\) chop |
 | Ensemble | `ProcessPoolExecutor` when `n_cells ≥ 125` |
-| Online | `TwinLoops`: 1 s hold of last F(m); ES-MDA on `slow_interval_s` |
+| Online | `TwinLoops`: 1 s frozen-λ pressure with live wells; Parameter EnKF on `slow_interval_s` |
 
 ## How to measure
 
@@ -38,7 +39,15 @@ Step reports include `jac_s`, `solve_s`, `resid_s` (flash lives in residual/Jaco
 
 ## Measured split
 
-Step notes record `jac_s`, `solve_s`, `resid_s`, `flash_s`. On 5³ closed transfer (one short step), flash + colored FD residual dominate; `spsolve` is small. 10³ is `pytest -m slow`. 20³/30³ stay on `scripts/dpdp_scale_bench.py`, not default pytest.
+Step notes record `jac_s`, `solve_s`, `resid_s`, `flash_s`. Measured (`docs/bench/dpdp_scale.json`, one accepted step, 7 colours):
+
+| grid | wall_s | jac_s | flash_s | solve_s |
+|------|--------|-------|---------|---------|
+| 4×3×2 | 18 | 8.9 | 6.9 | 0.003 |
+| 5³ | 97 | 45 | 38 | 0.013 |
+| 10³ | 757 | 359 | 278 | 0.47 |
+
+Flash + colored FD dominate; sparse solve is small. 20³/30³ stay on `scripts/dpdp_scale_bench.py`, not default pytest.
 
 ES-MDA wall time ≈ \(N_a N_e\) × forward. Smoke is `3×1×1`, Ne=4, Na=1 (`tests/inverse/test_esmda_smoke.py`).
 

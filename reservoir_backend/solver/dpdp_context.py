@@ -11,7 +11,35 @@ from reservoir_backend.discretization.tpfa import geometric_transmissibility
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.dual_rock import DualRock
 from reservoir_backend.solver.dpdp_jacobian import DPDPJacobianPattern, build_sparsity_pattern
-from reservoir_backend.solver.fi_comp import _cell_colors, _neighbor_cells
+from reservoir_backend.solver.fi_comp import _neighbor_cells
+
+
+def cartesian_cell_colors(grid: CartesianGrid) -> NDArray[np.int64]:
+    """Distance-2 coloring of the 7-point stencil: (i + 2j + 3k) mod 7."""
+    n = grid.n_cells
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    c = np.arange(n, dtype=np.int64)
+    i = c % nx
+    j = (c // nx) % ny
+    k = c // (nx * ny)
+    return (i + 2 * j + 3 * k) % 7
+
+
+def verify_coloring_no_row_collision(neighbors: list[list[int]], colors: NDArray[np.int64]) -> None:
+    """Same-color cells must not share a residual row (graph distance > 2)."""
+    n = len(neighbors)
+    colors = np.asarray(colors, dtype=np.int64).ravel()
+    n_colors = int(np.max(colors)) + 1 if n else 0
+    for color in range(n_colors):
+        owner = np.full(n, -1, dtype=np.int64)
+        for c in np.flatnonzero(colors == color):
+            c = int(c)
+            seen = {c, *neighbors[c]}
+            for r in seen:
+                prev = int(owner[r])
+                if prev >= 0 and prev != c:
+                    raise ValueError(f"color {color} collides on residual {r}: cells {prev} and {c}")
+                owner[r] = c
 
 
 def _scale_t(
@@ -50,8 +78,9 @@ class DPDPModelContext:
         n = grid.n_cells
         nu = int(n_comp) + 1
         neighbors = [_neighbor_cells(grid, c) for c in range(n)]
-        colors = _cell_colors(grid)
-        n_colors = int(np.max(colors)) + 1
+        colors = cartesian_cell_colors(grid)
+        verify_coloring_no_row_collision(neighbors, colors)
+        n_colors = int(np.max(colors)) + 1 if n else 0
         color_cells = [np.flatnonzero(colors == color) for color in range(n_colors)]
         pattern = build_sparsity_pattern(n, nu, neighbors)
         ones = np.ones(n, dtype=float)

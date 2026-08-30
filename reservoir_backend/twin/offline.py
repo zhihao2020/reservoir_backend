@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
+from reservoir_backend.comp.dual_state import DualCompositionalState
 from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor, State
 from reservoir_backend.exceptions import TimeStepUnderflow
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -243,6 +244,14 @@ class DigitalTwin:
         self._lam_f = None
         self._lam_m = None
         self._last_dual_rock = None
+        self._ct_f = None
+        self._ct_m = None
+        self._v_mix_f = None
+        self._v_mix_m = None
+        self._sw_f = None
+        self._sg_f = None
+        self._sw_m = None
+        self._sg_m = None
 
     def uses_dpdp(self) -> bool:
         model = str(self.physics.model).lower()
@@ -356,7 +365,7 @@ class DigitalTwin:
         controls: list[ControlSeries] | None = None,
         t_end: float | None = None,
         report_times: NDArray[np.float64] | None = None,
-        state0: State | None = None,
+        state0: State | DualCompositionalState | None = None,
         dt_min: float | None = None,
         parameters: NDArray[np.float64] | None = None,
         dual_rock=None,
@@ -370,7 +379,11 @@ class DigitalTwin:
             report_times = self.experiment.all_times_s()
         floor = self.physics.dt_min if dt_min is None else float(dt_min)
         if self.uses_dpdp() and self.physics.fluid is not None:
-            from reservoir_backend.solver.fi_comp_dual import initialize_dual_state, simulate_dual_comp
+            from reservoir_backend.solver.fi_comp_dual import (
+                dual_from_visual_state,
+                initialize_dual_state,
+                simulate_dual_comp,
+            )
 
             if dual_rock is None:
                 if parameters is not None:
@@ -379,9 +392,18 @@ class DigitalTwin:
                     dual_rock = self.dual_rock_from_cf(float(np.mean(np.asarray(rock.permeability, dtype=float))))
                 else:
                     raise ValueError("DPDP simulate needs parameters, dual_rock, or rock")
-            dual0 = initialize_dual_state(self.grid, dual_rock, self.physics.fluid, float(self.physics.p_init))
-            if state0 is not None:
-                dual0.time_s = float(state0.time_s)
+            if isinstance(state0, DualCompositionalState):
+                dual0 = state0.copy()
+            elif state0 is not None:
+                dual0 = dual_from_visual_state(self.grid, dual_rock, self.physics.fluid, state0)
+                if (
+                    state0.moles_matrix is None
+                    and self._last_dual is not None
+                    and abs(float(self._last_dual.time_s) - float(state0.time_s)) < 1.0e-12
+                ):
+                    dual0 = self._last_dual.copy()
+            else:
+                dual0 = initialize_dual_state(self.grid, dual_rock, self.physics.fluid, float(self.physics.p_init))
             traj, dual = simulate_dual_comp(
                 self.grid,
                 dual_rock,
@@ -398,13 +420,21 @@ class DigitalTwin:
                 report_times=report_times,
                 context=self.dpdp_context(),
             )
-            from reservoir_backend.comp.properties import flash_state
+            from reservoir_backend.comp.properties import flash_compressibility, flash_state
 
             pf = flash_state(self.physics.fluid, dual.fracture.pressure, dual.fracture.moles)
             pm = flash_state(self.physics.fluid, dual.matrix.pressure, dual.matrix.moles)
             self._last_dual = dual
             self._lam_f = pf.lam_l + pf.lam_v + pf.lam_w
             self._lam_m = pm.lam_l + pm.lam_v + pm.lam_w
+            self._ct_f = flash_compressibility(self.physics.fluid, dual.fracture.pressure, dual.fracture.moles, pf)
+            self._ct_m = flash_compressibility(self.physics.fluid, dual.matrix.pressure, dual.matrix.moles, pm)
+            self._v_mix_f = pf.v_mix.copy()
+            self._v_mix_m = pm.v_mix.copy()
+            self._sw_f = pf.sw.copy()
+            self._sg_f = pf.sv.copy()
+            self._sw_m = pm.sw.copy()
+            self._sg_m = pm.sv.copy()
             self._last_dual_rock = dual_rock
             return traj
         if rock is None:

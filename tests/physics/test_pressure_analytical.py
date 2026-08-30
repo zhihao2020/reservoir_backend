@@ -20,19 +20,6 @@ def test_1d_dirichlet_linear_pressure() -> None:
         ports=[],
         controls=[],
         state0=state0,
-        t_end=0.0,
-        face_dirichlet={"left": p_l, "right": p_r},
-        single_phase=True,
-        report_times=None,
-    )
-    # t_end=0 still needs a solve — use a tiny step
-    traj = simulate(
-        grid,
-        rock,
-        CoreyTwoPhase(),
-        ports=[],
-        controls=[],
-        state0=state0,
         t_end=1.0,
         face_dirichlet={"left": p_l, "right": p_r},
         single_phase=True,

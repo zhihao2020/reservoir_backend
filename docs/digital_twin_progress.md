@@ -17,11 +17,17 @@
 - ES-MDA 默认不再 clip innovation；观测 QC 在 smoother 之前过滤
 - Parameter EnKF 拆成 forecast_parameters / analysis_parameters；`OnlineAssimilationWorkflow` + checkpoint/rollback
 - 外围 UDP JSON 协议与跨尺度 nRMSE；不进入 solver
+- DPDP restart 保存完整 DualCompositionalState（含 matrix moles）
+- 7-color Cartesian Jacobian + sparse-vs-brute FD 测试
+- Flash cache：全场残差复用两相 \(K\)；Jacobian FD 仍走 Wilson（否则 J 与 R 不一致）
+- frozen-λ 快环接入 ports/controls 与 linearized \(c_t\)；饱和度 held
+- Online slow loop：Parameter EnKF（上一 posterior ensemble），不再 `calibrate()`
+- ProcessPool initializer：worker 只传 \(\theta\)
 
 ## 未完成
 
 - 实验室 `apply` 默认仍是两区 log K + LM（计划允许）
-- 30³ 是 milestone（`scripts/dpdp_scale_bench.py --max-n 30`），默认 `pytest -m "not slow"` 不跑 ES-MDA/\(10^3\)
+- 30³ 是 milestone。已提交 `docs/bench/dpdp_scale.json`：4×3×2 / 5³ / 10³ 单步通过（7-color）。20³/30³ 未跑（10³ 单步约 12.6 min）
 
 ## 接口变化
 
@@ -41,4 +47,4 @@
 
 ## 下一阶段
 
-冻结 \(\lambda\) 快环求压（`solver/frozen_pressure.py`）。Flash 单相 bypass 仅全场残差启用。\(5^3/10^3\) 标 `slow`。
+\(20^3/30^3\) 单次 full DPDP forward（10³ 已约 12.6 min/step）。实验室 `apply` 仍是两区 log K + LM。

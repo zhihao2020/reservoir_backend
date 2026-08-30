@@ -211,12 +211,14 @@ class State:
     sg: NDArray[np.float64] | None = None
     rs: NDArray[np.float64] | None = None
     moles: NDArray[np.float64] | None = None
+    moles_matrix: NDArray[np.float64] | None = None
     time_s: float = 0.0
     pressure_matrix: NDArray[np.float64] | None = None
     sw_matrix: NDArray[np.float64] | None = None
     sg_matrix: NDArray[np.float64] | None = None
     phi_fracture: NDArray[np.float64] | None = None
     phi_matrix: NDArray[np.float64] | None = None
+    saturations_held: bool = False
 
     def so(self) -> NDArray[np.float64]:
         sg = self.sg if self.sg is not None else 0.0
@@ -229,12 +231,14 @@ class State:
             sg=None if self.sg is None else np.asarray(self.sg, dtype=float).copy(),
             rs=None if self.rs is None else np.asarray(self.rs, dtype=float).copy(),
             moles=None if self.moles is None else np.asarray(self.moles, dtype=float).copy(),
+            moles_matrix=None if self.moles_matrix is None else np.asarray(self.moles_matrix, dtype=float).copy(),
             time_s=float(self.time_s),
             pressure_matrix=None if self.pressure_matrix is None else np.asarray(self.pressure_matrix, dtype=float).copy(),
             sw_matrix=None if self.sw_matrix is None else np.asarray(self.sw_matrix, dtype=float).copy(),
             sg_matrix=None if self.sg_matrix is None else np.asarray(self.sg_matrix, dtype=float).copy(),
             phi_fracture=None if self.phi_fracture is None else np.asarray(self.phi_fracture, dtype=float).copy(),
             phi_matrix=None if self.phi_matrix is None else np.asarray(self.phi_matrix, dtype=float).copy(),
+            saturations_held=bool(self.saturations_held),
         )
 
 

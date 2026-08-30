@@ -34,3 +34,36 @@ def test_frozen_step_finite_on_two_cells() -> None:
     assert np.all(np.isfinite(pf2))
     assert np.all(np.isfinite(pm2))
     _ = pytest
+
+
+def test_frozen_bhp_well_raises_inlet_pressure() -> None:
+    from reservoir_backend.domain.types import ControlSeries
+    from reservoir_backend.ports.flow import FlowPort
+
+    grid = CartesianGrid.uniform((0.2, 0.1, 0.1), (0.1, 0.1, 0.1))
+    dual = DualRock.from_cf(2, k_matrix_m2=1.0e-15, phi_matrix=0.08, cf_m2=1.0e-12, phi_fracture=0.02)
+    ctx = DPDPModelContext.build(grid, n_comp=2)
+    tr = ComponentTransfer(shape_factor=40.0, k_matrix_m2=1.0e-15)
+    pf = np.array([1.15e7, 1.00e7])
+    pm = np.array([1.20e7, 1.18e7])
+    lam = np.array([1.0e-3, 1.0e-3])
+    ct = np.full(2, 2.0e-9)
+    port = FlowPort.at_point(grid, "INJ", "injector", "pressure", (0.05, 0.05, 0.05))
+    ctrl = ControlSeries("INJ", "pressure", np.array([0.0, 10.0]), np.array([1.50e7, 1.50e7]))
+    pf2, _pm2 = step_frozen_pressure(
+        grid,
+        ctx,
+        dual,
+        tr,
+        pf,
+        pm,
+        lam,
+        lam,
+        dt=1.0,
+        ct_fracture=ct,
+        ct_matrix=ct,
+        ports=[port],
+        controls=[ctrl],
+        t_eval=1.0,
+    )
+    assert float(pf2[0]) > float(pf[0])

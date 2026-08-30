@@ -71,10 +71,12 @@ def run_level(nxyz: tuple[int, int, int], dx: float, t_end: float) -> dict:
         "n_cells": grid.n_cells,
         "n_unknowns": ctx.pattern.n_u,
         "nnz": ctx.pattern.nnz,
+        "n_colors": int(np.max(ctx.colors)) + 1 if ctx.colors.size else 0,
         "wall_s": wall,
         "jac_s": float(meta.get("sum_jac_s", 0.0)),
         "solve_s": float(meta.get("sum_solve_s", 0.0)),
         "resid_s": float(meta.get("sum_resid_s", 0.0)),
+        "flash_s": float(meta.get("sum_flash_s", 0.0)),
         "n_accept": int(float(meta.get("n_accept", len(traj.reports)))),
         "n_reject": int(float(meta.get("n_reject", 0))),
         "newton_its": its,
@@ -112,7 +114,9 @@ def main() -> None:
     if args.json_out:
         from pathlib import Path
 
-        Path(args.json_out).write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        out = Path(args.json_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

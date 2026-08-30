@@ -67,10 +67,20 @@ def initialize_dual_state(
     )
 
 
-def dual_to_state(spec: CompSpec, dual: DualCompositionalState, dual_rock: DualRock | None = None) -> State:
+def dual_to_state(
+    spec: CompSpec,
+    dual: DualCompositionalState,
+    dual_rock: DualRock | None = None,
+    *,
+    props_f=None,
+    props_m=None,
+) -> State:
     """Keep both continua on State so H can select fracture / matrix / bulk."""
-    props_f = flash_state(spec, dual.fracture.pressure, dual.fracture.moles)
-    props_m = flash_state(spec, dual.matrix.pressure, dual.matrix.moles)
+    held = props_f is not None and props_m is not None
+    if props_f is None:
+        props_f = flash_state(spec, dual.fracture.pressure, dual.fracture.moles)
+    if props_m is None:
+        props_m = flash_state(spec, dual.matrix.pressure, dual.matrix.moles)
     phi_f = None if dual_rock is None else np.asarray(dual_rock.fracture.porosity, dtype=float)
     phi_m = None if dual_rock is None else np.asarray(dual_rock.matrix.porosity, dtype=float)
     return State(
@@ -78,13 +88,39 @@ def dual_to_state(spec: CompSpec, dual: DualCompositionalState, dual_rock: DualR
         sw=props_f.sw.copy(),
         sg=props_f.sv.copy(),
         moles=dual.fracture.moles.copy(),
+        moles_matrix=dual.matrix.moles.copy(),
         time_s=float(dual.time_s),
         pressure_matrix=dual.matrix.pressure.copy(),
         sw_matrix=props_m.sw.copy(),
         sg_matrix=props_m.sv.copy(),
         phi_fracture=None if phi_f is None else phi_f.copy(),
         phi_matrix=None if phi_m is None else phi_m.copy(),
+        saturations_held=bool(held),
     )
+
+
+def dual_from_visual_state(
+    grid: CartesianGrid,
+    dual_rock: DualRock,
+    spec: CompSpec,
+    state: State,
+) -> DualCompositionalState:
+    """Restore DualCompositionalState. Matrix moles are required for a lossless restart."""
+    if state.moles is not None and state.moles_matrix is not None:
+        pm = state.pressure_matrix if state.pressure_matrix is not None else state.pressure
+        return DualCompositionalState(
+            fracture=CompositionalContinuumState(np.asarray(state.pressure, dtype=float).copy(), np.asarray(state.moles, dtype=float).copy()),
+            matrix=CompositionalContinuumState(np.asarray(pm, dtype=float).copy(), np.asarray(state.moles_matrix, dtype=float).copy()),
+            time_s=float(state.time_s),
+        )
+    dual = initialize_dual_state(grid, dual_rock, spec, float(np.mean(state.pressure)))
+    dual.time_s = float(state.time_s)
+    dual.fracture.pressure = np.asarray(state.pressure, dtype=float).ravel().copy()
+    if state.moles is not None:
+        dual.fracture.moles = np.asarray(state.moles, dtype=float).copy()
+    if state.pressure_matrix is not None:
+        dual.matrix.pressure = np.asarray(state.pressure_matrix, dtype=float).ravel().copy()
+    return dual
 
 
 def _state_from_u(u: NDArray[np.float64], n_cells: int, nc: int, time_s: float) -> DualCompositionalState:
@@ -156,16 +192,17 @@ def _residual(
     reflash_f=None,
     reflash_m=None,
     need_bhp=False,
+    reflash_all=False,
 ):
     flash_s = 0.0
-    if props_f is None:
-        props_f = flash_state(spec, state.fracture.pressure, state.fracture.moles)
+    if props_f is None or reflash_all:
+        props_f = flash_state(spec, state.fracture.pressure, state.fracture.moles, out=props_f)
         flash_s += last_flash_seconds()
     elif reflash_f is not None:
         flash_state(spec, state.fracture.pressure, state.fracture.moles, cells=reflash_f, out=props_f)
         flash_s += last_flash_seconds()
-    if props_m is None:
-        props_m = flash_state(spec, state.matrix.pressure, state.matrix.moles)
+    if props_m is None or reflash_all:
+        props_m = flash_state(spec, state.matrix.pressure, state.matrix.moles, out=props_m)
         flash_s += last_flash_seconds()
     elif reflash_m is not None:
         flash_state(spec, state.matrix.pressure, state.matrix.moles, cells=reflash_m, out=props_m)
@@ -428,8 +465,7 @@ def simulate_dual_comp(
     if isinstance(state0, DualCompositionalState):
         dual = state0.copy()
     else:
-        dual = initialize_dual_state(grid, dual_rock, spec, float(np.mean(state0.pressure)))
-        dual.time_s = float(state0.time_s)
+        dual = dual_from_visual_state(grid, dual_rock, spec, state0)
     moles0 = dual.total_moles()
     injected = np.zeros(spec.nc)
     produced = np.zeros(spec.nc)

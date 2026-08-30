@@ -35,3 +35,61 @@ def test_slow_loop_skips_inside_interval() -> None:
 
     loops = TwinLoops(twin=_Twin(), slow_interval_s=30.0, last_slow_s=0.0)  # type: ignore[arg-type]
     assert loops.maybe_slow(10.0) is None
+
+
+def test_slow_loop_is_parameter_enkf_not_calibrate() -> None:
+    import inspect
+
+    src = inspect.getsource(TwinLoops.maybe_slow)
+    assert "calibrate(" not in src
+    assert "analysis_parameters" in src
+    assert "forecast_parameters" in src
+
+
+def test_fast_step_marks_saturations_held() -> None:
+    from reservoir_backend.comp.dual_state import CompositionalContinuumState, DualCompositionalState
+    from reservoir_backend.grid.cartesian import CartesianGrid
+    from reservoir_backend.physics.dual_rock import DualRock
+    from reservoir_backend.physics.transfer import ComponentTransfer
+    from reservoir_backend.solver.dpdp_context import DPDPModelContext
+    from reservoir_backend.twin.offline import PhysicsSpec
+
+    grid = CartesianGrid.uniform((0.1, 0.1, 0.1), 0.1)
+    rock = DualRock.from_cf(1, k_matrix_m2=1.0e-15, phi_matrix=0.08, cf_m2=1.0e-12, phi_fracture=0.02)
+    ctx = DPDPModelContext.build(grid, n_comp=2)
+    dual = DualCompositionalState(
+        fracture=CompositionalContinuumState(np.array([1.0e7]), np.ones((1, 2)) * 1.0e-4),
+        matrix=CompositionalContinuumState(np.array([1.2e7]), np.ones((1, 2)) * 4.0e-4),
+        time_s=0.0,
+    )
+
+    class _Twin:
+        grid = None
+        ports = []
+        _last_dual = dual
+        _last_dual_rock = rock
+        _lam_f = np.array([1.0e-3])
+        _lam_m = np.array([1.0e-3])
+        _ct_f = np.array([2.0e-9])
+        _ct_m = np.array([2.0e-9])
+        _v_mix_f = np.array([1.0e-4])
+        _v_mix_m = np.array([1.0e-4])
+        _sw_f = np.array([0.11])
+        _sg_f = np.array([0.22])
+        _sw_m = np.array([0.33])
+        _sg_m = np.array([0.05])
+        physics = PhysicsSpec()
+        experiment = type("E", (), {"controls": []})()
+
+        def dpdp_context(self):
+            return ctx
+
+        def transfer_operator(self):
+            return ComponentTransfer(shape_factor=40.0, k_matrix_m2=1.0e-15)
+
+    _Twin.grid = grid
+    loops = TwinLoops(twin=_Twin())  # type: ignore[arg-type]
+    st = loops.fast_step(1.0)
+    assert st.saturations_held is True
+    assert st.sw[0] == pytest.approx(0.11)
+    assert st.moles_matrix is not None
