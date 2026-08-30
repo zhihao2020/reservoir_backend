@@ -109,6 +109,34 @@ class DataVector:
     holdout: NDArray[np.bool_]
 
 
+def window_observations(
+    observations: list[ObservationSeries],
+    t_lo: float,
+    t_hi: float,
+) -> list[ObservationSeries]:
+    """Keep assimilating samples in ``(t_lo, t_hi]``. Does not reuse earlier times."""
+    lo = float(t_lo)
+    hi = float(t_hi)
+    out: list[ObservationSeries] = []
+    for obs in observations:
+        if obs.holdout:
+            continue
+        mask = (obs.times_s > lo + 1.0e-12) & (obs.times_s <= hi + 1.0e-12)
+        if not np.any(mask):
+            continue
+        out.append(
+            ObservationSeries(
+                sensor_name=obs.sensor_name,
+                kind=obs.kind,
+                times_s=obs.times_s[mask],
+                values=obs.values[mask],
+                sigma=obs.sigma[mask],
+                holdout=False,
+            )
+        )
+    return out
+
+
 def split_history_observations(
     observations: list[ObservationSeries],
     history_end_s: float | None,
@@ -395,13 +423,17 @@ class DigitalTwin:
             if isinstance(state0, DualCompositionalState):
                 dual0 = state0.copy()
             elif state0 is not None:
-                dual0 = dual_from_visual_state(self.grid, dual_rock, self.physics.fluid, state0)
-                if (
-                    state0.moles_matrix is None
-                    and self._last_dual is not None
-                    and abs(float(self._last_dual.time_s) - float(state0.time_s)) < 1.0e-12
-                ):
-                    dual0 = self._last_dual.copy()
+                has_moles = state0.moles is not None and state0.moles_matrix is not None
+                last = self._last_dual
+                if has_moles:
+                    dual0 = dual_from_visual_state(self.grid, dual_rock, self.physics.fluid, state0)
+                elif last is not None and abs(float(last.time_s) - float(state0.time_s)) < 1.0e-12:
+                    dual0 = last.copy()
+                elif float(state0.time_s) > 1.0e-15:
+                    raise ValueError("lossless DPDP restart requires moles_matrix at t>0")
+                else:
+                    dual0 = initialize_dual_state(self.grid, dual_rock, self.physics.fluid, float(self.physics.p_init))
+                    dual0.time_s = float(state0.time_s)
             else:
                 dual0 = initialize_dual_state(self.grid, dual_rock, self.physics.fluid, float(self.physics.p_init))
             traj, dual = simulate_dual_comp(

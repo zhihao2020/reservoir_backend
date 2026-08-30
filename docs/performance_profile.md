@@ -39,15 +39,16 @@ Step reports include `jac_s`, `solve_s`, `resid_s` (flash lives in residual/Jaco
 
 ## Measured split
 
-Step notes record `jac_s`, `solve_s`, `resid_s`, `flash_s`. Measured (`docs/bench/dpdp_scale.json`, one accepted step, 7 colours):
+Step notes record `jac_s`, `solve_s`, `resid_s`, `flash_main_s`, `flash_jacobian_s`.
+`flash_s` on the residual path is **not** total flash: Jacobian flash lives in `flash_jacobian_s` (and inside `jac_s`). Measured (`docs/bench/dpdp_scale.json`, one accepted step, 7 colours):
 
-| grid | wall_s | jac_s | flash_s | solve_s |
-|------|--------|-------|---------|---------|
-| 4×3×2 | 18 | 8.9 | 6.9 | 0.003 |
-| 5³ | 97 | 45 | 38 | 0.013 |
-| 10³ | 757 | 359 | 278 | 0.47 |
+| grid | wall_s | jac_s | flash_main / jac | solve_s |
+|------|--------|-------|------------------|---------|
+| 4×3×2 (block J) | 19 | 9.0 | 7.2 / 8.8 | 0.002 |
+| 5³ (block J) | 103 | 47 | 40 / 46 | 0.01 |
+| 10³ (coloring, not remeasured) | 757 | 359 | 278 | 0.47 |
 
-Flash + colored FD dominate; sparse solve is small. 20³/30³ stay on `scripts/dpdp_scale_bench.py`, not default pytest.
+Flash still dominates; sparse solve is small. 20³/30³ stay off until \(10^3\) one-step \(<60\,\mathrm{s}\).
 
 ES-MDA wall time ≈ \(N_a N_e\) × forward. Smoke is `3×1×1`, Ne=4, Na=1 (`tests/inverse/test_esmda_smoke.py`).
 

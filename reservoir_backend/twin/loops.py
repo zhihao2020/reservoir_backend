@@ -19,11 +19,14 @@ from reservoir_backend.inverse.parameter_enkf import analysis_parameters, foreca
 from reservoir_backend.physics.rock import LOGK_MAX, LOGK_MIN
 from reservoir_backend.solver.frozen_pressure import step_frozen_pressure
 from reservoir_backend.solver.impes import Trajectory
+from reservoir_backend.exceptions import AssimilationError
+from reservoir_backend.inverse.ensemble import replace_failed_members
+from reservoir_backend.observation.qc import ObservationStatus, classify_observations
 from reservoir_backend.twin.offline import (
     DigitalTwin,
     Posterior,
-    split_history_observations,
     stack_observations,
+    window_observations,
 )
 
 
@@ -40,6 +43,19 @@ class TwinLoops:
     notes: list[str] = field(default_factory=list)
     q_std: float = 0.02
     rng_seed: int | None = None
+
+    @classmethod
+    def from_posterior(cls, twin: DigitalTwin, posterior: Posterior, **kwargs) -> TwinLoops:
+        """Continue from an offline posterior ensemble. Does not resample the prior."""
+        if posterior.ensemble is None:
+            raise ValueError("posterior has no ensemble; run ES-MDA before the online loop")
+        loops = cls(twin, **kwargs)
+        loops.members = np.asarray(posterior.ensemble.theta_members, dtype=float).T
+        loops.last_theta = np.asarray(posterior.theta, dtype=float)
+        loops.last_traj = posterior.history
+        if posterior.history is not None and posterior.history.times_s.size:
+            loops.last_slow_s = float(posterior.history.times_s[-1])
+        return loops
 
     def fast_state(self, t: float) -> State:
         """State at time t from the last slow forward (nearest sample)."""
@@ -114,27 +130,40 @@ class TwinLoops:
             self.twin.experiment.observations = list(observations)
         from reservoir_backend.twin.history_match import _clip_members, _forward_ensemble
 
-        series, _hold = split_history_observations(self.twin.experiment.observations, self.twin.experiment.history_end_s)
+        series = window_observations(self.twin.experiment.observations, self.last_slow_s, t)
         if not series:
-            series = list(self.twin.experiment.observations)
-        if not series:
-            raise ValueError("no observations for the slow loop")
+            self.notes.append(f"slow skip, no new observations in ({self.last_slow_s},{t}]")
+            self.last_slow_s = t
+            return None
         d_obs = stack_observations(series)
         n_ens = int(self.twin.inverse.ensemble_size)
         n_theta = int(self.twin.parameterization.n_params)
         lo = float(getattr(self.twin.parameterization, "log_min", LOGK_MIN))
         hi = float(getattr(self.twin.parameterization, "log_max", LOGK_MAX))
+        pstd = getattr(self.twin.parameterization, "prior_std", self.twin.inverse.prior_std)
         seed = int(self.rng_seed if self.rng_seed is not None else self.twin.inverse.seed)
         rng = np.random.default_rng(seed + int(t))
         if self.members is None:
             pmean = getattr(self.twin.parameterization, "prior_mean", self.twin.inverse.prior_mean)
-            pstd = getattr(self.twin.parameterization, "prior_std", self.twin.inverse.prior_std)
             self.members = sample_log_prior(pmean, pstd, n_theta, n_ens, rng, log_min=lo, log_max=hi)
             self.members = _clip_members(self.twin, self.members)
         members = forecast_parameters(self.members, self.q_std, rng)
         members = _clip_members(self.twin, members)
-        predicted, _failed, n_fwd = _forward_ensemble(self.twin, members, series, t)
-        xa = analysis_parameters(members, predicted, d_obs.values, d_obs.sigma, rng)
+        predicted, failed, n_fwd = _forward_ensemble(self.twin, members, series, t)
+        failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(members.shape[1])])
+        if np.any(failed_mask):
+            members = replace_failed_members(members, failed_mask, rng, pstd)
+            members = _clip_members(self.twin, members)
+            predicted, failed, n_fwd2 = _forward_ensemble(self.twin, members, series, t)
+            n_fwd += n_fwd2
+            failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(members.shape[1])])
+            if np.any(failed_mask):
+                raise AssimilationError("online ensemble member still failed after replacement")
+        status = classify_observations(predicted, d_obs.values, d_obs.sigma)
+        active = status == ObservationStatus.ACTIVE.value
+        if not np.any(active):
+            raise AssimilationError("no ACTIVE observations after QC")
+        xa = analysis_parameters(members, predicted[active], d_obs.values[active], d_obs.sigma[active], rng)
         xa = _clip_members(self.twin, xa)
         self.members = xa
         theta_mean = np.mean(xa, axis=1)

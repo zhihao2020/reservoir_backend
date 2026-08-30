@@ -23,6 +23,9 @@
 - frozen-λ 快环接入 ports/controls 与 linearized \(c_t\)；饱和度 held
 - Online slow loop：Parameter EnKF（上一 posterior ensemble），不再 `calibrate()`
 - ProcessPool initializer：worker 只传 \(\theta\)
+- Online EnKF：增量窗 \((t_{k-1},t_k]\)、QC、failed-member 替换；`TwinLoops.from_posterior`
+- \(t>0\) 且缺 `moles_matrix` 时拒绝 lossless restart
+- Jacobian 分计 `flash_main_s` / `flash_jacobian_s`；Newton 主路径改为 local thermo + TPFA/transfer 块装配（`dpdp_blocks.py`）；井源仍局部 FD
 
 ## 未完成
 
@@ -47,4 +50,4 @@
 
 ## 下一阶段
 
-\(20^3/30^3\) 单次 full DPDP forward（10³ 已约 12.6 min/step）。实验室 `apply` 仍是两区 log K + LM。
+10³ one-step \(<60\,\mathrm{s}\) 未达则不上 \(20^3\)。Flash cache 跨 Newton 仍未开（与 Wilson 残差不一致）。实验室 `apply` 仍是两区 log K + LM。

@@ -59,3 +59,14 @@ def test_restart_from_dual_matches_restart_from_visual() -> None:
     assert a.matrix.moles == pytest.approx(b.matrix.moles, rel=1e-8, abs=1e-12)
     fresh = initialize_dual_state(grid, dual, spec, 1.20e7, p_matrix=1.25e7)
     assert np.max(np.abs(mid.matrix.moles - fresh.matrix.moles)) > 1.0e-12
+
+
+def test_restart_without_matrix_moles_is_rejected() -> None:
+    grid, spec, dual, transfer, state, ctx = _closed()
+    _, mid = simulate_dual_comp(
+        grid, dual, spec, transfer, [], [], state, t_end=2.0, dt_init=1.0, dt_max=2.0, max_steps=8, context=ctx
+    )
+    vis = dual_to_state(spec, mid, dual)
+    vis.moles_matrix = None
+    with pytest.raises(ValueError, match="moles_matrix"):
+        dual_from_visual_state(grid, dual, spec, vis)

@@ -22,6 +22,7 @@ from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.dual_rock import DualRock
 from reservoir_backend.physics.transfer import ComponentTransfer
 from reservoir_backend.ports.flow import FlowPort
+from reservoir_backend.solver.dpdp_blocks import assemble_block_jacobian
 from reservoir_backend.solver.dpdp_context import DPDPModelContext
 from reservoir_backend.solver.dpdp_jacobian import fill_column_slice, residual_scales
 from reservoir_backend.solver.fi import dt_from_newton_iters
@@ -45,6 +46,7 @@ class DualCompStepResult:
     solve_s: float = 0.0
     resid_s: float = 0.0
     flash_s: float = 0.0
+    flash_jac_s: float = 0.0
 
 
 def initialize_dual_state(
@@ -113,6 +115,8 @@ def dual_from_visual_state(
             matrix=CompositionalContinuumState(np.asarray(pm, dtype=float).copy(), np.asarray(state.moles_matrix, dtype=float).copy()),
             time_s=float(state.time_s),
         )
+    if float(state.time_s) > 1.0e-15:
+        raise ValueError("lossless DPDP restart requires moles_matrix at t>0")
     dual = initialize_dual_state(grid, dual_rock, spec, float(np.mean(state.pressure)))
     dual.time_s = float(state.time_s)
     dual.fracture.pressure = np.asarray(state.pressure, dtype=float).ravel().copy()
@@ -258,6 +262,7 @@ def _coloring_jacobian(
     eps_n = 1.0e-8 * max(n_scale, 1.0)
     eps_p = 1.0e-8 * max(p_scale, 1.0e5)
     nf0, pf0, nm0, pm0 = unpack_dual(u, n_cells, nc)
+    t_flash = 0.0
     for cells in ctx.color_cells:
         if cells.size == 0:
             continue
@@ -285,7 +290,7 @@ def _coloring_jacobian(
                     matrix=CompositionalContinuumState(pm, nm),
                     time_s=t1,
                 )
-                r2, _, _, _, _, _, _, _ = _residual(
+                r2, _, _, _, _, _, _, fls = _residual(
                     grid,
                     dual_rock,
                     spec,
@@ -304,10 +309,11 @@ def _coloring_jacobian(
                     reflash_m=reflash_m,
                     need_bhp=False,
                 )
+                t_flash += float(fls)
                 dres = (r2 - res0) / eps
                 for c in cells:
                     fill_column_slice(pattern, data, offset + int(c) * nu + slot, dres)
-    return pattern.to_csr(data)
+    return pattern.to_csr(data), t_flash
 
 
 def _residual_stats(res: NDArray[np.float64], n_cells: int, nc: int, scale: NDArray[np.float64]) -> tuple[float, float, float]:
@@ -316,6 +322,76 @@ def _residual_stats(res: NDArray[np.float64], n_cells: int, nc: int, scale: NDAr
     vol = float(np.max(np.abs(block[:, :, nc])))
     nrm = float(np.max(np.abs(res * scale)))
     return mass, vol, nrm
+
+
+def _well_source_fd(
+    grid,
+    dual_rock,
+    spec,
+    state,
+    dt,
+    ports,
+    cmap,
+    t1,
+    props_f,
+    props_m,
+    n_scale,
+    p_scale,
+):
+    from scipy import sparse
+
+    n_cells = grid.n_cells
+    nc = spec.nc
+    nu = nc + 1
+    n_u = 2 * n_cells * nu
+    eps_n = 1.0e-8 * max(float(n_scale), 1.0)
+    eps_p = 1.0e-8 * max(float(p_scale), 1.0e5)
+    qf0, qm0, _, _ = _wells(grid, dual_rock, spec, state, ports, cmap, t1, props_f, props_m, need_bhp=False)
+    cells = {int(c) for port in ports for c in port.cell_ids}
+    rows: list[int] = []
+    cols: list[int] = []
+    data: list[float] = []
+    nf = state.fracture.moles
+    pf = state.fracture.pressure
+    nm = state.matrix.moles
+    pm = state.matrix.pressure
+    for c in cells:
+        for cont in (0, 1):
+            for slot in range(nu):
+                n_f, p_f, n_m, p_m = nf.copy(), pf.copy(), nm.copy(), pm.copy()
+                eps = eps_n if slot < nc else eps_p
+                if cont == 0:
+                    if slot < nc:
+                        n_f[c, slot] = n_f[c, slot] + eps
+                    else:
+                        p_f[c] = p_f[c] + eps
+                else:
+                    if slot < nc:
+                        n_m[c, slot] = n_m[c, slot] + eps
+                    else:
+                        p_m[c] = p_m[c] + eps
+                trial = DualCompositionalState(
+                    fracture=CompositionalContinuumState(p_f, n_f),
+                    matrix=CompositionalContinuumState(p_m, n_m),
+                    time_s=state.time_s,
+                )
+                pf_p, pm_p = props_f.copy(), props_m.copy()
+                if cont == 0:
+                    flash_state(spec, p_f, n_f, cells=np.array([c]), out=pf_p)
+                else:
+                    flash_state(spec, p_m, n_m, cells=np.array([c]), out=pm_p)
+                qf, qm, _, _ = _wells(grid, dual_rock, spec, trial, ports, cmap, t1, pf_p, pm_p, need_bhp=False)
+                col = cont * n_cells * nu + c * nu + slot
+                for cont_r, block in ((0, (qf - qf0) / eps), (1, (qm - qm0) / eps)):
+                    hit = np.argwhere(np.abs(block) > 1.0e-18)
+                    for cc, i in hit:
+                        val = -float(dt) * float(block[int(cc), int(i)])
+                        rows.append(cont_r * n_cells * nu + int(cc) * nu + int(i))
+                        cols.append(col)
+                        data.append(val)
+    if not data:
+        return sparse.csc_matrix((n_u, n_u))
+    return sparse.csc_matrix((data, (rows, cols)), shape=(n_u, n_u))
 
 
 def solve_dual_comp_step(
@@ -354,11 +430,14 @@ def solve_dual_comp_step(
     t_solve = 0.0
     t_res = 0.0
     t_flash = 0.0
+    t_flash_jac = 0.0
     n_scale = max(float(np.mean(np.sum(state.fracture.moles, axis=1))), 1.0e-6)
     p_scale = max(float(np.mean(np.abs(state.fracture.pressure))), 1.0e5)
     pv = np.asarray(dual_rock.fracture.porosity, dtype=float).ravel() * grid.cell_volumes()
     pv_scale = max(float(np.mean(pv)), 1.0e-12)
     row_s = residual_scales(n_cells, nc, n_scale, pv_scale)
+    props_f = None
+    props_m = None
 
     for it in range(int(max_newton)):
         trial = _state_from_u(u, n_cells, nc, t1)
@@ -386,27 +465,17 @@ def solve_dual_comp_step(
                 solve_s=t_solve,
                 resid_s=t_res,
                 flash_s=t_flash,
+                flash_jac_s=t_flash_jac,
             )
         t_j0 = time.perf_counter()
-        jac = _coloring_jacobian(
-            ctx,
-            spec,
-            dual_rock,
-            old,
-            dt,
-            transfer,
-            t_f,
-            t_m,
-            ports,
-            cmap,
-            t1,
-            u,
-            res,
-            props_f,
-            props_m,
-            n_scale,
-            p_scale,
+        jac, fls_j = assemble_block_jacobian(
+            grid, spec, dual_rock, trial, dt, transfer, t_f, t_m, props_f, props_m, n_scale, p_scale
         )
+        t_flash_jac += float(fls_j)
+        if ports:
+            jac = jac + _well_source_fd(
+                grid, dual_rock, spec, trial, dt, ports, cmap, t1, props_f, props_m, n_scale, p_scale
+            )
         t_jac += time.perf_counter() - t_j0
         jac_s = jac.tocsr().multiply(row_s[:, None]).tocsc()
         t_s0 = time.perf_counter()
@@ -493,6 +562,7 @@ def simulate_dual_comp(
     sum_solve = 0.0
     sum_res = 0.0
     sum_flash = 0.0
+    sum_flash_jac = 0.0
 
     while t < t_end - 1.0e-15:
         if n_acc >= int(max_steps):
@@ -527,6 +597,7 @@ def simulate_dual_comp(
         sum_solve += float(nxt.solve_s)
         sum_res += float(nxt.resid_s)
         sum_flash += float(nxt.flash_s)
+        sum_flash_jac += float(nxt.flash_jac_s)
         reports.append(
             StepReport(
                 time_s=t,
@@ -543,6 +614,8 @@ def simulate_dual_comp(
                     f"solve_s={nxt.solve_s:.4f}",
                     f"resid_s={nxt.resid_s:.4f}",
                     f"flash_s={nxt.flash_s:.4f}",
+                    f"flash_main_s={nxt.flash_s:.4f}",
+                    f"flash_jacobian_s={nxt.flash_jac_s:.4f}",
                     f"n_reject={n_reject}",
                 ],
                 newton_its=nxt.newton_iters,
@@ -583,6 +656,8 @@ def simulate_dual_comp(
                 f"sum_solve_s={sum_solve:.4f}",
                 f"sum_resid_s={sum_res:.4f}",
                 f"sum_flash_s={sum_flash:.4f}",
+                f"sum_flash_main_s={sum_flash:.4f}",
+                f"sum_flash_jacobian_s={sum_flash_jac:.4f}",
                 f"n_accept={n_acc}",
                 f"n_reject={n_reject}",
             ]

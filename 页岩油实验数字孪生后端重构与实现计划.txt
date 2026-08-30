@@ -1,0 +1,833 @@
+我重新按最新 `main` 做了一遍代码级检查。最新提交是 **`94d34d5`：`DPDP restart, 7-color Jacobian, and EnKF slow loop`**。这次修改质量比上一轮高，之前指出的多个 correctness 问题确实被修掉了。
+
+先给结论：
+
+> **现在 V1 架构已经基本站住了，最大的风险已经从“物理/流程有没有写对”转成了“full compositional DPDP 根本算不快”。**
+>
+> 我现在不建议按仓库文档写的下一步直接去跑 20³/30³。10³ 的实测已经足够说明：**继续放大网格只是在验证它会很慢，应该先换 Jacobian/Flash 的计算策略。**
+
+## 当前明显已经修好的部分
+
+**DPDP restart 现在基本修对了。** `State` 增加了 `moles_matrix`，`simulate()` 也已经允许直接接受 `DualCompositionalState`；完整 restart 会恢复：
+
+$$
+p_f,\ n_f,\ p_m,\ n_m
+$$
+
+而不是以前只继承 `time_s`。对应测试还做了 `DualCompositionalState → State → DualCompositionalState` roundtrip，以及两种 restart 后续算结果的比较。
+
+**27-color 改成 7-color 也是实质性的改进。** 当前 Cartesian coloring：
+
+$$
+c(i,j,k)=(i+2j+3k)\bmod7
+$$
+
+并不是只换了个公式，而是加了 `verify_coloring_no_row_collision()`；更重要的是，新增了 sparse colored Jacobian 和逐列 brute-force FD Jacobian 的数值等价测试：
+
+$$
+\frac{\|J_{color}-J_{brute}\|}
+{\|J_{brute}\|}
+<10^{-4}
+$$
+
+这个测试非常有价值。
+
+对于二组分体系，现在一次 Newton Jacobian 从原来的大约
+
+$$
+27\times2\times3=162
+$$
+
+组 coloring residual，降到了：
+
+$$
+7\times2\times3=42
+$$
+
+组。
+
+**fast loop 也已经不再是假快环。** 现在它接收：
+
+* live `ports`
+* live `controls`
+* frozen \(\lambda\)
+* 从 full compositional model 计算的 \(c_t\)
+* \(v_{mix}\)
+
+而不是以前那个写死 `_C_PA=1e-9` 的 pressure relaxation。压力井控制已有测试证明会影响入口压力。
+
+并且 fast loop 现在不会为了输出 `State` 又重新全场 flash；饱和度直接拿最近一次 full model 的值，并明确标：
+
+```text
+saturations_held = True
+```
+
+这符合我们之前讲的“高频压力预测 + 低频完整组分更新”。
+
+**online slow loop 也终于从 ES-MDA 改成 Parameter EnKF 了。** 当前源码已经没有每 30 秒重新调用 `calibrate()`，而是：
+
+$$
+m^{a}_{k}
+\rightarrow
+m^{f}_{k+1}
+\rightarrow
+F(m^{f}_{k+1})
+\rightarrow
+H
+\rightarrow
+\text{EnKF analysis}
+$$
+
+而且 `members` 会保存到下一周期。
+
+**ProcessPool 也修成了 initializer 模式。** worker 启动时只加载一次 twin/context，单个 realization job 只传：
+
+```python
+(index, theta)
+```
+
+而不是以前每个 member 都 pickle 整个 `DigitalTwin`。
+
+这些都是对的。
+
+---
+
+# 但现在出现了一个非常明确的性能结论
+
+仓库终于提交了真实 benchmark，这是这次最有价值的数据。
+
+当前结果：
+
+| Grid  | Cells | Unknowns |      Wall |  Jacobian | Sparse solve |
+| ----- | ----: | -------: | --------: | --------: | -----------: |
+| 4×3×2 |    24 |      144 |    18.3 s |     8.9 s |      0.003 s |
+| 5³    |   125 |      750 |    97.2 s |    44.5 s |      0.013 s |
+| 10³   |  1000 |     6000 | **757 s** | **359 s** |   **0.47 s** |
+
+而且三个 case 都满足很好的总组分守恒，10³ 的 relative mass error 约 \(2.1\times10^{-14}\)。
+
+这个数据已经把问题说死了：
+
+$$
+\boxed{\text{linear solver 完全不是当前瓶颈}}
+$$
+
+10³ 一个 step：
+
+$$
+T_{solve}=0.47s
+$$
+
+只占总时间：
+
+$$
+\ll1\%
+$$
+
+所以现在继续投入 CPR、AMG、GPU linear solver，收益会非常小。
+
+真正的问题是：
+
+$$
+\boxed{\text{Jacobian construction + thermodynamic flash}}
+$$
+
+---
+
+# 因此我不建议现在跑 20³ / 30³
+
+从 125 cells：
+
+$$
+97s
+$$
+
+到 1000 cells：
+
+$$
+757s
+$$
+
+8 倍 cell 数，时间大约也是 7.8 倍，已经接近线性。
+
+如果这种趋势延续，1000 → 27000 cells 是 27 倍。
+
+粗略意味着 30³：
+
+$$
+757\times27
+\approx2.0\times10^4s
+$$
+
+即大约：
+
+$$
+\boxed{5\sim6\text{ 小时/一个 accepted step}}
+$$
+
+这只是外推，不是实测，但已经足够说明问题。
+
+而你的真实实验显然不可能只需要一个时间步。
+
+更不用说：
+
+$$
+N_e=32,\quad N_a=4
+$$
+
+的 ES-MDA：
+
+$$
+128
+$$
+
+个 forward。
+
+所以仓库当前文档写的：
+
+> 下一阶段 20³/30³ single full DPDP forward
+
+我建议**暂停**。
+
+现在去跑 30³，不会告诉我们新的工程信息，只会占机器很久。
+
+---
+
+# 当前真正需要改的是 Jacobian 方法
+
+这是现在整个项目最重要的技术决策。
+
+目前虽然已经是 sparse Jacobian，但数值导数仍然是 colored finite difference。
+
+代码仍然是：
+
+```text
+for color in 7 colors:
+    for fracture/matrix:
+        for each primary variable:
+            perturb
+            residual()
+            flash perturbed cells
+```
+
+所以：
+
+> **矩阵是 sparse 了，但生成这个 sparse matrix 的方法仍然很贵。**
+
+这正是为什么 sparse solve 只有 0.47 秒，而 Jacobian 要 359 秒。
+
+下一阶段应该开始从：
+
+$$
+\boxed{\text{global colored FD}}
+$$
+
+迁移到：
+
+$$
+\boxed{\text{local derivative / AD / analytic block assembly}}
+$$
+
+这也正是成熟油藏模拟器采用 AD/局部 block Jacobian 的根本原因。
+
+---
+
+# 我建议不要一步写全解析 Jacobian
+
+最合适的中间路线是：
+
+## 第一步：把 thermodynamic derivatives 从全 residual FD 中拆出来
+
+对于每个 cell，需要的其实主要是：
+
+$$
+\frac{\partial \rho}{\partial p},
+\quad
+\frac{\partial \rho}{\partial n_i},
+\quad
+\frac{\partial S_\alpha}{\partial p},
+\quad
+\frac{\partial S_\alpha}{\partial n_i},
+$$
+
+$$
+\frac{\partial \lambda_\alpha}{\partial p},
+\quad
+\frac{\partial \lambda_\alpha}{\partial n_i},
+$$
+
+等等。
+
+这些都是**local cell derivatives**。
+
+先做：
+
+```text
+CellThermoJacobian
+```
+
+每个 cell 自己求一个小：
+
+$$
+(N_c+1)\times(...)
+$$
+
+Jacobian。
+
+可以先继续有限差分，甚至每个 cell 独立算。
+
+但是不要为了一个 cell 的物性导数重新执行：
+
+$$
+\text{整个 6000-equation residual}
+$$
+
+---
+
+# 第二步：解析装配 TPFA block
+
+空间 flux：
+
+$$
+F_{ij,\alpha}
+=
+T_{ij}
+\lambda_{\alpha,up}
+(p_i-p_j)
+$$
+
+它的 topology 和导数结构其实非常简单。
+
+所以：
+
+```text
+Accumulation block
+Flux block
+Transfer block
+Well block
+```
+
+分别装：
+
+$$
+J_{cc}
+$$
+
+和：
+
+$$
+J_{c,c_{neighbor}}
+$$
+
+即可。
+
+最终得到：
+
+$$
+J=
+\sum
+J_{acc}
++
+J_{flux}
++
+J_{mf}
++
+J_{well}
+$$
+
+这样一次 Newton 不再需要 42 次 global residual。
+
+---
+
+# 第三步再考虑 AD
+
+你本地 `references/MRST...` 对这里特别值得继续参考。
+
+MRST 的核心优势不只是“方程写得完整”，而是：
+
+> equation object + AD 自动形成局部稀疏 Jacobian。
+
+你的 Python 不一定要复制 MRST AD 框架，但应该学这个计算模型。
+
+可以考虑：
+
+```text
+当前阶段：
+small local FD derivative + explicit sparse assembly
+
+以后：
+local forward-mode AD
+```
+
+而不是立刻搞一个通用大型自动微分框架。
+
+---
+
+# Flash 目前仍然没有真正解决
+
+当前已经保存：
+
+```text
+k_flash
+p_flash
+z_flash
+```
+
+这是正确方向。
+
+但是现在源码明确规定：
+
+```python
+jac_fd = cells is not None
+```
+
+然后 Jacobian FD：
+
+```text
+不用 cached K
+重新 Wilson
+```
+
+因为代码作者担心：
+
+> reuse K 会导致 J 与 R 不一致。
+
+这个理由在 correctness 上是保守的，但代价很大。
+
+而更关键的是，我检查 `solve_dual_comp_step()` 后发现：
+
+**cache 仍然没有真正跨 Newton iteration 持久化。**
+
+每个 Newton 开头仍然：
+
+```python
+_residual(... props_f=None, props_m=None)
+```
+
+因此重新创建 `PhaseProps`。
+
+也就是说：
+
+```text
+Newton 1 flash cache
+    ×
+Newton 2 没继承
+
+Newton 2 flash cache
+    ×
+Newton 3 没继承
+```
+
+所以代码文档里的：
+
+> Flash cache
+
+目前只能算：
+
+$$
+\boxed{\text{partial cache}}
+$$
+
+不是成熟模拟器里的 flash-state reuse。
+
+---
+
+# 下一步应该让 cache 生命周期覆盖整个 timestep
+
+应该变成：
+
+```text
+begin timestep
+
+props_f_cache
+props_m_cache
+
+Newton #1
+   ↓ 更新 cache
+
+Newton #2
+   ↓ reuse previous K / phase status
+
+Newton #3
+   ↓ reuse
+
+accepted
+
+cache → next timestep initial guess
+```
+
+甚至可以再往后：
+
+$$
+t_n
+\rightarrow
+t_{n+1}
+$$
+
+继续复用 phase state/K value。
+
+现在你每次 Newton 都重新热启动，浪费很大。
+
+---
+
+# 现在 Online EnKF 还有一个比较严重的问题
+
+虽然算法已经改成 Parameter EnKF，但是**观测窗口还不对**。
+
+`TwinLoops.maybe_slow()` 当前：
+
+```python
+series, _hold = split_history_observations(
+    observations,
+    history_end_s
+)
+```
+
+而 `split_history_observations()` 的行为只是：
+
+$$
+t\le history\_end
+$$
+
+并不会过滤：
+
+$$
+t_{last\ assimilation}<t\le t_{current}
+$$
+
+因此，如果 `observations` 是累计数据：
+
+```text
+0–30 s
+0–60 s
+0–90 s
+```
+
+那么在线循环可能变成：
+
+```text
+30 s 同化 0–30
+60 s 再同化 0–60
+90 s 再同化 0–90
+```
+
+这意味着旧数据会被**重复同化**。
+
+对于 EnKF，这会人为过度收缩 posterior covariance。
+
+正确应该是：
+
+```text
+AssimilationWindow:
+    start = last_slow_s
+    end   = current_t
+```
+
+默认：
+
+$$
+t\in(t_{k-1},t_k]
+$$
+
+或者明确设计 fixed-lag overlapping window。
+
+但重叠窗口必须处理 observation reuse，不能无意重复计算 likelihood。
+
+这是当前 online 部分我认为最应该马上修的 correctness 问题。
+
+---
+
+# Online slow loop 还漏了 QC / failed-member 处理
+
+offline `HistoryMatchWorkflow` 已经比较完善：
+
+* `_forward_ensemble`
+* failed member detection
+* replacement
+* QC
+* active observations
+
+但是 `TwinLoops.maybe_slow()` 目前：
+
+```python
+predicted, _failed, n_fwd = _forward_ensemble(...)
+xa = analysis_parameters(...)
+```
+
+直接把：
+
+```text
+_failed
+```
+
+丢掉了。
+
+也没有调用：
+
+```text
+classify_observations()
+```
+
+而 `analysis_parameters()` 本身只不过调用：
+
+```python
+esmda_update(... alpha=1)
+```
+
+没有 NaN/failed-member protection。
+
+所以如果在线一个 member forward failure：
+
+$$
+y_j=NaN
+$$
+
+slow EnKF 很可能整个 ensemble 被污染。
+
+这一条也应当立刻修。
+
+---
+
+# Offline posterior → online ensemble 的衔接也还不完整
+
+`TwinLoops.members` 如果已经有值，后面确实会连续使用。
+
+这部分是对的。
+
+但是如果：
+
+```text
+先 offline ES-MDA
+↓
+得到 PosteriorEnsemble
+↓
+启动 online
+```
+
+`TwinLoops` 本身没有自动：
+
+```python
+members = posterior.ensemble.theta_members.T
+```
+
+如果调用方忘记赋值，它还是会重新：
+
+```python
+sample_log_prior(...)
+```
+
+最好增加：
+
+```python
+TwinLoops.from_posterior(twin, posterior)
+```
+
+或者：
+
+```python
+initialize(posterior)
+```
+
+明确禁止已有 posterior 时重新抽 prior。
+
+---
+
+# Fast loop 还有两个可以接受但必须标明的近似
+
+现在 \(c_t\) 已不再写死，而是：
+
+$$
+c_t
+=
+-\frac{1}{v}
+\frac{\partial v}{\partial p}
+$$
+
+通过一次额外 flash 数值计算。
+
+这是进步。
+
+不过当前计算主要基于 hydrocarbon `v_mix`，对：
+
+* immiscible water；
+* rock compressibility；
+* multiphase total accumulation；
+
+还不算完整 total compressibility。
+
+所以现在这个 fast loop 更准确的名字是：
+
+> **linearized frozen-property pressure predictor**
+
+不要把它叫成严格等价的 DPDP pressure equation。
+
+对于 1 s 显示层足够，但要建立误差闸门：
+
+$$
+\frac{\|p_{fast}-p_{full}\|}
+{\|p_{full}\|}
+<\epsilon
+$$
+
+例如每次 slow full solve 后做 retrospective comparison。
+
+如果 fast/full 差异变大，就缩短：
+
+$$
+slow\_interval
+$$
+
+---
+
+# benchmark 的计时指标还有一个小问题
+
+现在记录：
+
+```text
+jac_s
+solve_s
+resid_s
+flash_s
+```
+
+但 `flash_s` **不是全局总 Flash 时间**。
+
+Jacobian 内部 `_residual()` 返回的 `flash_s` 并没有累加回 `solve_dual_comp_step.t_flash`；Jacobian 内的 flash 时间实际上包含在：
+
+$$
+jac_s
+$$
+
+里面。
+
+所以当前表格不能理解成：
+
+$$
+359+159+278+0.47
+$$
+
+是互不重叠的成本。
+
+其中有重叠/遗漏。
+
+下一版 profiler 最好拆成：
+
+```text
+flash_main_s
+flash_jacobian_s
+residual_nonflash_s
+jacobian_assembly_s
+linear_solve_s
+report_flash_s
+```
+
+这样才能决定下一刀砍哪里。
+
+---
+
+# ProcessPool 修改是对的，但还可以再进一步
+
+现在：
+
+```python
+ProcessPoolExecutor(
+    initializer=_init_worker,
+    initargs=(twin, series, t_end)
+)
+```
+
+每个 job 只传：
+
+$$
+\theta_j
+$$
+
+这一点已经修对。
+
+不过每次 `_forward_ensemble()` 都会重新创建一个新的 ProcessPool。
+
+ES-MDA：
+
+$$
+N_a=4
+$$
+
+就会重复启动四次 worker pool，再加 posterior forward。
+
+以后可以把 pool 生命周期提高到整个：
+
+```text
+HistoryMatchWorkflow.run()
+```
+
+不过相对于当前 12.6 min/step 的 simulator 时间，这个优化暂时不是 P0。
+
+---
+
+# 当前完成度我会重新调整成
+
+| 模块                              |         当前评价 |
+| ------------------------------- | -----------: |
+| DPDP 物理结构                       |   **88–90%** |
+| DPDP conservation/correctness   |      **85%** |
+| Sparse Jacobian topology        |      **90%** |
+| Newton/linear solver            |   **75–80%** |
+| Thermodynamic Flash correctness |      **75%** |
+| Thermodynamic Flash performance |   **30–35%** |
+| Full DPDP scalability           |      **45%** |
+| Scalar \(C_f\) offline ES-MDA   |   **80–85%** |
+| ensemble orchestration          |   **65–70%** |
+| fast online pressure loop       |      **65%** |
+| online parameter assimilation   |   **50–55%** |
+| UDP/product integration         |    **30%左右** |
+| 整个 V1 numerical core            | **约 75–80%** |
+
+但这个百分比必须正确理解：
+
+> **核心设计已经接近完成，计算性能远未完成。**
+
+---
+
+# 我建议下一轮不要再继续堆外围功能
+
+优先级应该改成：
+
+**P0 correctness：**
+
+1. Online observation 改成 incremental assimilation window；
+2. Online EnKF 加 QC + failed member replacement；
+3. 增加 `TwinLoops.from_posterior()`；
+4. DPDP restart 如果 `time>0` 但缺 `moles_matrix`，默认直接拒绝 lossless restart，而不是偷偷重新初始化 matrix composition。
+
+**P0 performance：**
+5. Flash cache 跨 Newton/timestep 持久化；
+6. 单独统计 Jacobian 中的 flash cost；
+7. 开始实现 **local thermo derivatives + sparse block Jacobian assembly**。
+
+**P1 validation：**
+8. fast frozen-\(\lambda\) vs full DPDP 做 1 s / 5 s / 30 s error benchmark；
+9. pressure well + rate well + split continuum 都做 fast/full comparison；
+10. 只有当 10³ 一个 step 从现在的 **757 s** 降到至少几十秒级，再去跑 20³。
+
+我甚至会把一个新的性能 Gate 写得非常明确：
+
+$$
+\boxed{
+10^3\text{ one-step DPDP}
+<60\text{ s}
+}
+$$
+
+先争取达到这个数量级。
+
+因为当前：
+
+$$
+757\text{ s}
+$$
+
+直接上 30³ 没有工程价值。
+
+**所以这次更新整体是成功的：之前的架构/正确性问题修掉了大半。现在不要再围着 sparse solver 优化，因为 benchmark 已经证明 linear solve 几乎免费；下一阶段真正该攻的是“Flash + FD Jacobian”这两个核心热点。**
+
+另外，最新 `94d34d5` 仍然没有 GitHub commit status/CI check，因此我能确认代码、测试和提交的 benchmark 文件存在，但仍不能替你断言“最新完整默认 pytest 在干净环境里全部通过”。

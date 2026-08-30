@@ -77,6 +77,8 @@ def run_level(nxyz: tuple[int, int, int], dx: float, t_end: float) -> dict:
         "solve_s": float(meta.get("sum_solve_s", 0.0)),
         "resid_s": float(meta.get("sum_resid_s", 0.0)),
         "flash_s": float(meta.get("sum_flash_s", 0.0)),
+        "flash_main_s": float(meta.get("sum_flash_main_s", meta.get("sum_flash_s", 0.0))),
+        "flash_jacobian_s": float(meta.get("sum_flash_jacobian_s", 0.0)),
         "n_accept": int(float(meta.get("n_accept", len(traj.reports)))),
         "n_reject": int(float(meta.get("n_reject", 0))),
         "newton_its": its,

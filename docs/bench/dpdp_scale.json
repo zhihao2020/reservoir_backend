@@ -5,17 +5,20 @@
     "n_unknowns": 144,
     "nnz": 2520,
     "n_colors": 7,
-    "wall_s": 18.32468499999959,
-    "jac_s": 8.9089,
-    "solve_s": 0.0029,
-    "resid_s": 3.8917,
-    "flash_s": 6.9031,
+    "wall_s": 18.6305554999999,
+    "jac_s": 8.981,
+    "solve_s": 0.0021,
+    "resid_s": 4.0432,
+    "flash_s": 7.1773,
+    "flash_main_s": 7.1773,
+    "flash_jacobian_s": 8.8481,
     "n_accept": 1,
     "n_reject": 0,
     "newton_its": [3],
-    "peak_mib": 0.2745189666748047,
-    "mass_rel": 2.3542627861181626e-16,
-    "ok": true
+    "peak_mib": 0.3732481002807617,
+    "mass_rel": 1.1771313930590813e-16,
+    "ok": true,
+    "jacobian": "block"
   },
   {
     "grid": [5, 5, 5],
@@ -23,17 +26,20 @@
     "n_unknowns": 750,
     "nnz": 15300,
     "n_colors": 7,
-    "wall_s": 97.19209620000038,
-    "jac_s": 44.5121,
-    "solve_s": 0.0131,
-    "resid_s": 22.5492,
-    "flash_s": 37.9132,
+    "wall_s": 103.05763759999536,
+    "jac_s": 47.336,
+    "solve_s": 0.01,
+    "resid_s": 23.5017,
+    "flash_s": 40.4716,
+    "flash_main_s": 40.4716,
+    "flash_jacobian_s": 46.4037,
     "n_accept": 1,
     "n_reject": 0,
     "newton_its": [3],
-    "peak_mib": 1.1950187683105469,
-    "mass_rel": 4.237673015012685e-15,
-    "ok": true
+    "peak_mib": 2.416545867919922,
+    "mass_rel": 2.4719759254240663e-15,
+    "ok": true,
+    "jacobian": "block"
   },
   {
     "grid": [10, 10, 10],
@@ -51,6 +57,8 @@
     "newton_its": [3],
     "peak_mib": 9.902521133422852,
     "mass_rel": 2.1188365075063735e-14,
-    "ok": true
+    "ok": true,
+    "jacobian": "coloring",
+    "note": "not remeasured after block J; 5^3 wall is unchanged so 10^3 stays ~12 min, above the 60 s gate"
   }
 ]

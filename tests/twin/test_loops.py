@@ -37,6 +37,60 @@ def test_slow_loop_skips_inside_interval() -> None:
     assert loops.maybe_slow(10.0) is None
 
 
+def test_incremental_window_excludes_past_times() -> None:
+    from reservoir_backend.domain.types import ObservationSeries
+    from reservoir_backend.twin.offline import window_observations
+
+    obs = ObservationSeries(
+        "P1",
+        "pressure",
+        np.array([10.0, 30.0, 60.0, 90.0]),
+        np.array([1.0, 2.0, 3.0, 4.0]),
+        np.full(4, 0.1),
+        False,
+    )
+    w = window_observations([obs], 30.0, 60.0)
+    assert len(w) == 1
+    assert w[0].times_s == pytest.approx(np.array([60.0]))
+    assert window_observations([obs], 90.0, 120.0) == []
+
+
+def test_from_posterior_does_not_resample_prior() -> None:
+    from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble
+    from reservoir_backend.twin.offline import Posterior
+
+    members = np.array([[1.0, 2.0, 3.0, 4.0]])
+    ens = PosteriorEnsemble(
+        theta_members=members.T,
+        k_members=np.ones((4, 1)),
+        k_mean=np.ones(1),
+        k_std=np.ones(1),
+        theta_mean=np.array([2.5]),
+        theta_std=np.array([1.0]),
+    )
+    post = Posterior(
+        theta=np.array([2.5]),
+        k=np.ones(1),
+        theta_std=np.array([1.0]),
+        assimilate_rmse=0.0,
+        holdout_rmse=0.0,
+        forecast_rmse=None,
+        identifiability=np.array([1.0]),
+        history=Trajectory(times_s=np.array([0.0, 30.0]), states=[], reports=[], port_rates=[]),
+        notes=[],
+        ensemble=ens,
+    )
+
+    class _Twin:
+        pass
+
+    loops = TwinLoops.from_posterior(_Twin(), post, slow_interval_s=30.0)  # type: ignore[arg-type]
+    assert loops.members is not None
+    assert loops.members.shape == (1, 4)
+    assert loops.last_slow_s == pytest.approx(30.0)
+    assert loops.members[0, 0] == pytest.approx(1.0)
+
+
 def test_slow_loop_is_parameter_enkf_not_calibrate() -> None:
     import inspect
 
@@ -44,6 +98,9 @@ def test_slow_loop_is_parameter_enkf_not_calibrate() -> None:
     assert "calibrate(" not in src
     assert "analysis_parameters" in src
     assert "forecast_parameters" in src
+    assert "window_observations" in src
+    assert "classify_observations" in src
+    assert "replace_failed_members" in src
 
 
 def test_fast_step_marks_saturations_held() -> None:
