@@ -1,7 +1,4 @@
-"""Concept-lab sensors (xlsx coords) and waterflood similarity keys.
-
-Does not run a full invert. Does not import references/.
-"""
+"""Concept-lab sensors (xlsx coords). Does not run a full invert."""
 
 from __future__ import annotations
 
@@ -9,7 +6,6 @@ import csv
 from pathlib import Path
 
 from reservoir_backend.io.case import load_case
-from reservoir_backend.twin.similarity import REQUIRED_KEYS, attach_displacement, waterflood_groups
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -69,61 +65,3 @@ def test_concept_sensors_load_count_and_xyz() -> None:
     assert roles["INJ"] == ("injector", "rate")
     assert roles["PROD"] == ("producer", "pressure")
 
-
-def test_similarity_report_required_keys() -> None:
-    twin = load_case(CASE)
-    rep = waterflood_groups(twin)
-    for key in REQUIRED_KEYS:
-        assert key in rep
-    geo = rep["geometric"]
-    assert all(abs(a - 0.3) < 1.0e-12 for a in geo["size_m"])
-    assert geo["well_spacing_m"] is not None
-    assert abs(float(geo["well_spacing_m"]) - 0.29) < 0.02
-    assert geo["well_radius_m"] is None
-    assert geo["size_ratio_lab_over_field"] is None
-    assert geo["well_spacing_ratio_lab_over_field"] is None
-    assert geo["well_radius_ratio_lab_over_field"] is None
-    assert geo["field_ratios"] == "unknown"
-
-    assert abs(float(rep["reservoir"]["phi"]) - 0.20) < 1.0e-12
-    assert rep["reservoir"]["k_m2"] > 0.0
-    assert abs(float(rep["fluid"]["mu_o_over_mu_w"]) - 5.0) < 1.0e-12
-    assert abs(float(rep["fluid"]["rho_o_over_rho_w"]) - 0.8) < 1.0e-12
-    assert abs(float(rep["saturation"]["swc"]) - 0.20) < 1.0e-12
-    assert abs(float(rep["saturation"]["sor"]) - 0.20) < 1.0e-12
-    assert abs(float(rep["saturation"]["movable"]) - 0.60) < 1.0e-12
-    assert rep["dynamic"]["capillary_model"] == "brooks_corey"
-    assert rep["dynamic"]["pc_entry_pa"] is not None
-    assert rep["dynamic"]["capillary_over_viscous"] is not None
-    assert rep["dynamic"]["gravity_on"] is False
-    assert rep["dynamic"]["gravity_over_viscous"] is None
-    assert abs(float(rep["dynamic"]["compressibility_ct_1_pa"])) < 1.0e-30
-    assert rep["displacement"]["comparison"] == "F(m_post) vs F(m_true)"
-    assert rep["displacement"]["not"] == "CMG"
-    assert rep["displacement"]["sw_field_nrmse"] is None
-    assert "field_geometric_ratios" in rep["skipped"]
-    assert "thermal" in rep["skipped"]
-    assert "polymer" in rep["skipped"]
-    assert "shale" in rep["skipped"]
-    assert "gravity_over_viscous" in rep["skipped"]
-
-
-def test_displacement_nrmse_filled_without_invert() -> None:
-    import numpy as np
-
-    twin = load_case(CASE)
-    n = twin.grid.n_cells
-    sw_t = np.full(n, 0.25)
-    sw_p = np.full(n, 0.25)
-    p_t = np.full(n, 1.0e5)
-    p_p = np.full(n, 1.0e5)
-    filled = attach_displacement(
-        waterflood_groups(twin),
-        sw_post=sw_p,
-        sw_true=sw_t,
-        p_post=p_p,
-        p_true=p_t,
-    )
-    assert filled["displacement"]["sw_field_nrmse"] == 0.0
-    assert filled["displacement"]["p_field_nrmse"] == 0.0
-    assert filled["displacement"]["not"] == "CMG"

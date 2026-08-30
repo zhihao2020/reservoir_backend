@@ -1,21 +1,21 @@
-from reservoir_backend.inverse.frac import FractureStripParameterization, decode_frac_theta
+from reservoir_backend.inverse.esmda import esmda_update, inflation_schedule
+from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
 from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble, sample_posterior_ensemble
 from reservoir_backend.inverse.lm import LMResult, identifiability, prior_theta, run_lm
 from reservoir_backend.inverse.parameterization import (
-    CoarseFieldParameterization,
     ContrastParameterization,
     RegionParameterization,
 )
 
 __all__ = [
-    "CoarseFieldParameterization",
     "ContrastParameterization",
-    "FractureStripParameterization",
     "LMResult",
+    "LogConductivityParameterization",
     "PosteriorEnsemble",
     "RegionParameterization",
-    "decode_frac_theta",
+    "esmda_update",
     "identifiability",
+    "inflation_schedule",
     "prior_theta",
     "run_lm",
     "sample_posterior_ensemble",

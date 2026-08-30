@@ -9,15 +9,9 @@ from numpy.typing import NDArray
 
 from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor, column_sensors
 from reservoir_backend.grid.cartesian import CartesianGrid
-from reservoir_backend.inverse.frac import (
-    FractureStripParameterization,
-    MD_TO_M2,
-    WellTrack,
-    paint_fracture_strips,
-)
+from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
 from reservoir_backend.inverse.parameterization import ContrastParameterization, RegionParameterization
-from reservoir_backend.physics.pvt import PSI, BlackOilPVT
-from reservoir_backend.physics.relperm import TableThreePhase, TableTwoPhase
+from reservoir_backend.physics.conductivity import FractureConductivityModel
 from reservoir_backend.physics.rock import Rock, log_permeability
 from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec, stack_observations
@@ -524,31 +518,23 @@ def evaluate_forecast(case: SyntheticCase, posterior) -> dict[str, float]:
     }
 
 
-def make_shale_depletion(
+def make_scalar_cf_twin(
     *,
-    n: tuple[int, int, int] = (12, 10, 5),
-    size_m: tuple[float, float, float] = (600.0, 500.0, 80.0),
-    n_frac: int = 4,
-    x_f_m: float = 60.0,
-    n_perf: int = 6,
-    phi: float = 0.08,
-    t_end: float = 120.0 * 86400.0,
+    n: tuple[int, int, int] = (5, 4, 2),
+    size_m: tuple[float, float, float] = (0.20, 0.16, 0.08),
+    k_matrix: float = 1.0e-14,
+    cf_true: float = 5.0e-13,
+    phi: float = 0.20,
+    q_inj: float = 1.5e-7,
+    p_prod: float = 1.0e5,
+    t_end: float = 80.0,
     n_times: int = 4,
-    noise_bhp: float = 5.0e4,
-    seed: int = 7,
-    max_iter: int = 10,
-    holdout_ports: tuple[str, ...] | None = None,
-    history_frac: float = 0.85,
-    fully_implicit: bool = False,
-    free_geometry: bool = False,
-    min_bhp_Pa: float | None = 1500.0 * PSI,
+    noise_p: float = 0.0,
+    seed: int = 3,
+    ensemble_size: int = 8,
+    assimilation_steps: int = 4,
 ) -> SyntheticCase:
-    """Small shale depletion twin: rate-controlled HW, BHP-only observations.
-
-    Default: sequential black-oil + 4-D θ (geometry frozen). FIM and free
-    ``n_frac``/phase are optional for expert / CMG-alignment runs.
-    If ``holdout_ports`` is None, the last completion is held out.
-    """
+    """Synthetic truth for V1 scalar C_f. Observations are H(F(C_f^true))."""
     nx, ny, nz = n
     grid = CartesianGrid(
         nx=nx,
@@ -558,123 +544,75 @@ def make_shale_depletion(
         dy=np.full(ny, size_m[1] / ny),
         dz=np.full(nz, size_m[2] / nz),
     )
-    j_well = ny // 2
-    k_well = nz // 2
-    i0 = max(1, nx // 8)
-    i1 = nx - 1 - i0
-    well = WellTrack(name="HW1", j=j_well, k=k_well, i0=i0, i1=i1)
-    k_m = 0.001 * MD_TO_M2
-    k_f = 8000.0 * MD_TO_M2
-    k_srv = 0.4 * MD_TO_M2
-    theta_true_full = np.array(
-        [np.log(k_m), np.log(k_f), np.log(k_srv), np.log(x_f_m), float(n_frac), 0.0],
-        dtype=float,
-    )
-    theta_true = theta_true_full if free_geometry else theta_true_full[:4].copy()
-    prior_bias = (
-        np.array([0.35, -0.25, 0.30, -0.18, 0.75, 0.10])
-        if free_geometry
-        else np.array([0.35, -0.25, 0.30, -0.18])
-    )
-    prior_std = (
-        np.array([0.8, 0.6, 0.8, 0.40, 0.75, 0.15])
-        if free_geometry
-        else np.array([0.8, 0.6, 0.8, 0.40])
-    )
-    param = FractureStripParameterization(
-        grid,
-        (well,),
+    y = grid.cell_centers()[:, 1]
+    y0 = size_m[1] * 0.50
+    half = size_m[1] * 0.18
+    mask = np.abs(y - y0) <= half
+    if not np.any(mask):
+        mask[:] = True
+    cond = FractureConductivityModel(n_cells=grid.n_cells, fracture_mask=mask, k_matrix_m2=float(k_matrix))
+    theta_true = np.log(np.array([float(cf_true)], dtype=float))
+    param = LogConductivityParameterization(
+        n_zones=1,
         phi=phi,
-        prior_mean=theta_true + prior_bias,
-        prior_std=prior_std,
-        frac_aperture_m=float(grid.dx[0]),
-        free_geometry=bool(free_geometry),
-        fixed_n_frac=float(n_frac),
-        fixed_phase=0.0,
+        conductivity=cond,
+        prior_mean=float(theta_true[0] + 1.2),
+        prior_std=0.75,
     )
-    k_true, frac_mask, _ = paint_fracture_strips(
+    k_true = param.expand(theta_true)
+    inj = FlowPort.column(grid, "INJ", "injector", "rate", float(grid.dx[0] * 0.5), y0, sw_inj=0.85)
+    prod = FlowPort.column(
         grid,
-        (well,),
-        log_k_m=float(theta_true_full[0]),
-        log_k_f=float(theta_true_full[1]),
-        log_k_srv=float(theta_true_full[2]),
-        x_f_m=float(x_f_m),
-        n_frac=int(n_frac),
-        frac_phase=0.0,
+        "PROD",
+        "producer",
+        "pressure",
+        size_m[0] - float(grid.dx[-1] * 0.5),
+        y0,
     )
-
-    step = max(1, (i1 - i0 + 1) // max(int(n_perf), 1))
-    centers = grid.cell_centers()
-    ports: list[FlowPort] = []
-    sensors: list[Sensor] = []
-    for i in range(i0, i1 + 1, step):
-        cell = int(grid.index(i, j_well, k_well))
-        name = f"HW1_{i + 1:02d}"
-        ports.append(
-            FlowPort(
-                name=name,
-                role="producer",
-                control="rate",
-                cell_ids=np.array([cell], dtype=np.int64),
-                use_productivity=True,
-                rw_m=0.25 * 0.3048,
-                geofac=0.34,
-                axis="j",
-                min_bhp_Pa=None if min_bhp_Pa is None else float(min_bhp_Pa),
-            )
-        )
-        x, y, z = centers[cell]
-        sensors.append(
-            Sensor(
-                name=name,
-                kind="pressure",
-                x=float(x),
-                y=float(y),
-                z=float(z),
-                sigma=noise_bhp,
-            )
-        )
-    if holdout_ports is None:
-        holdout_ports = (ports[-1].name,) if ports else ()
-    holdout_set = set(holdout_ports)
-
     times = np.linspace(0.0, float(t_end), int(n_times) + 1)[1:]
-    stb_to_m3 = 0.158987294928
-    q_each = -800.0 * stb_to_m3 / 86400.0 / max(len(ports), 1)
     controls = [
-        ControlSeries(p.name, "rate", times, np.full(times.size, q_each)) for p in ports
+        ControlSeries("INJ", "rate", times, np.full(times.size, q_inj)),
+        ControlSeries("INJ", "composition", times, np.full(times.size, 0.85)),
+        ControlSeries("PROD", "pressure", times, np.full(times.size, p_prod)),
     ]
-    p_init = 3000.0 * PSI
-    physics = PhysicsSpec(
-        relperm=TableTwoPhase.cmg_seawater(),
-        three_phase=TableThreePhase.cmg_seawater(),
-        pvt=BlackOilPVT.cmg_seawater(p_init=p_init),
-        sw_init=0.20,
-        p_init=p_init,
-        dt_init=86400.0,
-        dt_min=3600.0,
-        dt_max=30.0 * 86400.0,
-        fully_implicit=bool(fully_implicit),
-        kz_over_kx=0.1,
-    )
+    zmid = size_m[2] * 0.50
+    sensors = [
+        Sensor("P_in", "pressure", size_m[0] * 0.30, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e3)),
+        Sensor("P_mid", "pressure", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e3)),
+        Sensor("P_out", "pressure", size_m[0] * 0.70, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e3)),
+        Sensor("S_mid", "saturation", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=0.04),
+    ]
     experiment = Experiment(
         size_m=size_m,
         sensors=sensors,
         controls=controls,
         observations=[],
-        history_end_s=float(t_end) * float(history_frac),
+        history_end_s=float(t_end),
+    )
+    physics = PhysicsSpec(
+        sw_init=0.20,
+        p_init=p_prod + 5.0e4,
+        dt_init=2.0,
+        dt_min=1.0e-6,
+        dt_max=10.0,
+        max_cfl=0.40,
+        max_ds=0.12,
+        implicit_transport=True,
+        fully_implicit=False,
     )
     twin = DigitalTwin(
         grid,
         experiment,
-        ports,
+        [inj, prod],
         physics,
         param,
         inverse=InverseSpec(
-            prior_mean=param.prior_mean,
-            prior_std=param.prior_std,
-            max_iter=int(max_iter),
-            fd_rel=0.05,
+            prior_mean=float(param.prior_mean),
+            prior_std=float(param.prior_std),
+            algorithm="esmda",
+            ensemble_size=int(ensemble_size),
+            assimilation_steps=int(assimilation_steps),
+            seed=int(seed),
         ),
     )
     truth_rock = Rock(k_true, np.full(grid.n_cells, phi))
@@ -685,9 +623,12 @@ def make_shale_depletion(
         vals = []
         for t in times:
             st = traj.state_at(t)
-            vals.append(twin.operator.sample(sensor, st))
+            rates, bhp = traj.rates_and_bhp_at(t)
+            vals.append(twin.operator.sample(sensor, st, port_rates=rates, port_bhp=bhp))
         vals_a = np.asarray(vals, dtype=float)
-        noise = rng.normal(0.0, sensor.sigma, size=vals_a.size)
+        noise = 0.0 if float(noise_p) <= 0.0 else rng.normal(0.0, sensor.sigma, size=vals_a.size)
+        if sensor.kind != "pressure":
+            noise = 0.0 if float(noise_p) <= 0.0 else rng.normal(0.0, sensor.sigma, size=vals_a.size)
         observations.append(
             ObservationSeries(
                 sensor_name=sensor.name,
@@ -695,15 +636,9 @@ def make_shale_depletion(
                 times_s=times,
                 values=vals_a + noise,
                 sigma=np.full(times.size, sensor.sigma),
-                holdout=sensor.name in holdout_set,
+                holdout=sensor.name == "P_out",
             )
         )
     experiment.observations = observations
-    return SyntheticCase(
-        grid=grid,
-        twin=twin,
-        k_true=k_true,
-        theta_true=theta_true,
-        p_true_end=traj.states[-1].pressure.copy(),
-    )
+    return SyntheticCase(grid=grid, twin=twin, k_true=k_true, theta_true=theta_true)
 

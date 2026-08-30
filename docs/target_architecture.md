@@ -1,7 +1,7 @@
 # 目标架构
 
 日期：2026-08-15  
-对应：`docs/check.txt`、`docs/audit_2026.md`  
+对应：`docs/check.txt`、`docs/digital_twin_repository_audit.md`  
 原则：简单、显式、可测、物理正确。不为旧 API / 旧测试加 shim。仓库目录按角色分层（`examples/` 算例、`validation/` 离线尺子、`reservoir_backend/` 产品包）；搬家不改正演公式。
 
 ---
@@ -142,7 +142,7 @@ P0 只实现 Cartesian。接口先留齐，避免全库写死 `field[k,j,i]`：
 | 名字 | P0 |
 |------|-----|
 | Simulation grid | 30 × 30 × 30，dx = 10 mm |
-| Parameter grid | 默认 2-region log K；CoarseField 可选，不是默认 |
+| Parameter grid | 过渡：2-region log K；V1 目标为标量 \(C_f\)。无 coarse-field / 逐格 K |
 | Observation geometry | 探头 6 mm；H 在插值场上做球平均。坐标不必落在节点上 |
 
 ### 4.3 physics（P0 = Model A + Model B）
@@ -187,18 +187,18 @@ P0 只做低维 θ 上的 Levenberg–Marquardt：
 
 ```text
 Parameterization
-    RegionParameterization      默认 2-region log K；`--auto` 可试 1/2/3 层
-    ContrastParameterization    已知高渗体；符号不反演
-    CoarseFieldParameterization 可选，不是产品默认
+    RegionParameterization / ContrastParameterization   实验室过渡路径（2-region log K）
+    LogConductivityParameterization                     V1：m = log C_f（标量）
 
 Assimilator
-    LM                          白化 misfit + Tikhonov；FD Jacobian
-    post_ensemble (optional)    Ne=8 高斯采样 around \(\hat\theta\)；输出 \(\sigma_K\) 摘要，**不是** ES-MDA
+    LM                          过渡：白化 misfit + Tikhonov；FD Jacobian
+    ES-MDA                      V1 目标（接口未接到 invert CLI）
+    post_ensemble (optional)    Ne=8 高斯采样 around \(\hat\theta\)
 ```
 
-与 `docs/check.txt` §28 的偏离：不恢复 ES-MDA；ensemble 仅用于 LM 后验不确定性摘要。见 `docs/check83_acceptance.md`。
+V1 只反演等效裂缝导流能力 \(C_f\)，不反演 \(k_m\)、缝长、SRV。实验室 `apply` 在 ES-MDA 落地前仍可用两区 log K。
 
-默认**禁止**每 cell 独立反演 27k 个 K。全网格 log k 若保留，只能作为专家开关，并强制 localization + 明确欠定警告。
+默认**禁止**每 cell 独立反演 27k 个 K。coarse-field 已删除。
 
 ### 4.7 twin
 
@@ -271,10 +271,6 @@ for n in timesteps:                          # 自适应 Δt
 
 跨模拟器 / 真实生产的通过标准是观测、hold-out、预报变好。后验 \(K\) 是「我们的 \(F\) 下能解释数据的等效渗透率」，不是 CMG 格子 \(K\)。
 
-### 6.2 `--auto` 搜构造
-
-没有 `region_map` 时，`--auto` 在均匀 / 2 区 / 3 层 / contrast 上各跑一次 LM，hold-out 选赢家。禁止搜格子 \(K\)。
-
 ---
 
 ## 7. Online twin 流程（P2，现在只定边界）
@@ -334,8 +330,6 @@ reservoir forecast case.yaml
 reservoir synthetic bench.yaml
 ```
 
-`invert --auto` 只搜构造。
-
 ---
 
 ## 9. 验证门槛（重构时同步建立）
@@ -371,7 +365,7 @@ reservoir synthetic bench.yaml
 7. **产品 invert**：用 G(m)+H，去掉指示混合、舌头、0.7/0.3。
 8. **Synthetic truth**：观测必须来自 \(H(F(m_{true}))\)。
 9. **Hold-out + forecast** 测试与 example。
-10. **目录**：`pipeline` / Archie 已删；算例在 `examples/`，离线尺子在 `validation/{black_oil,shale_oil,jiyang}`，包根散文件收进 `twin/` / `synthetic`（已完成）。
+10. **目录**：`pipeline` / Archie / 济阳矿场 / IMEX 页岩 suite / 黑油 CMG 尺子已删。算例在 `examples/{lab,two_layer,channel,compositional}`。
 
 ---
 

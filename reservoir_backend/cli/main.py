@@ -10,6 +10,8 @@ import numpy as np
 
 from reservoir_backend.cli.reporting import emit_invert_artifacts
 from reservoir_backend.io.case import load_case
+from reservoir_backend.physics.rock import Rock
+from reservoir_backend.twin.offline import mass_report
 from reservoir_backend.twin.run_report import build_forecast_report, write_run_report
 from reservoir_backend.synthetic import evaluate_synthetic, make_two_layer_waterflood
 
@@ -91,7 +93,6 @@ def cmd_invert(
     output: Path | None,
     *,
     time_limit: float | None = None,
-    auto: bool = False,
     self_check: bool = False,
     write_field: bool = False,
 ) -> int:
@@ -103,19 +104,14 @@ def cmd_invert(
         from reservoir_backend.twin.apply import attach_two_layer_demo
 
         k_true = attach_two_layer_demo(twin)
-    if auto:
-        post = twin.calibrate_auto(time_limit_s=time_limit, search_structure=True)
-    else:
-        post = twin.calibrate(time_limit_s=time_limit)
+    post = twin.calibrate(time_limit_s=time_limit)
     t_rec = float(post.history.times_s[-1])
     fields = twin.reconstruct(post, t_rec)
-    extra = {}
-    from reservoir_backend.twin.similarity import attach_displacement, waterflood_groups
-
-    extra["similarity"] = waterflood_groups(twin, k=post.k)
+    extra: dict = {}
     if self_check:
         if k_true is None:
             raise SystemExit("--self-check requires a case with no observations")
+        from reservoir_backend.twin.apply import field_nrmse
         from reservoir_backend.twin.offline import predict_from_trajectory, stack_observations
 
         series = twin.experiment.observations
@@ -129,20 +125,13 @@ def cmd_invert(
         post_hist = twin.simulate(twin.rock_from_theta(post.theta), t_end=t_end, report_times=times)
         d_true = predict_from_trajectory(twin.operator, twin.experiment, true_hist, series)
         d_post = predict_from_trajectory(twin.operator, twin.experiment, post_hist, series)
-        extra["similarity"] = attach_displacement(
-            extra["similarity"],
-            sw_post=post_hist.states[-1].sw,
-            sw_true=true_hist.states[-1].sw,
-            p_post=post_hist.states[-1].pressure,
-            p_true=true_hist.states[-1].pressure,
-        )
         extra["self_check"] = {
             "forward_match_nrmse": float(np.sqrt(np.mean(((d_post - d_true) / stacked.sigma) ** 2))),
             "posterior_logk_rmse": float(np.sqrt(np.mean((np.log(post.k) - np.log(k_true)) ** 2))),
             "k_vs_expand_max": float(np.max(np.abs(post.k - twin.parameterization.expand(post.theta)))),
-            "sw_field_nrmse": extra["similarity"]["displacement"]["sw_field_nrmse"],
-            "p_field_nrmse": extra["similarity"]["displacement"]["p_field_nrmse"],
-            "comparison": "F(m_post) vs F(m_true) plus waterflood similarity; not CMG",
+            "sw_field_nrmse": field_nrmse(post_hist.states[-1].sw, true_hist.states[-1].sw),
+            "p_field_nrmse": field_nrmse(post_hist.states[-1].pressure, true_hist.states[-1].pressure),
+            "comparison": "F(m_post) vs F(m_true); not CMG",
         }
     if write_field:
         from reservoir_backend.twin.field import pressure_field
@@ -217,7 +206,7 @@ def cmd_forecast(case: Path, output: Path | None) -> int:
     return 0
 
 
-def cmd_apply(case: Path, output: Path | None, *, demo: bool = False, auto: bool = False) -> int:
+def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
     """Lab invert you can actually run. Not a CMG field matcher."""
     import yaml
 
@@ -238,10 +227,7 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False, auto: bool
             )
         k_true = attach_two_layer_demo(twin, holdout=hold)
         write_observation_csv(output / "observations.csv", twin)
-    if auto:
-        post = twin.calibrate_auto(search_structure=True)
-    else:
-        post = twin.calibrate()
+    post = twin.calibrate()
     t_rec = float(post.history.times_s[-1])
     fields = twin.reconstruct(post, t_rec)
     forecast = twin.forecast(post)
@@ -256,21 +242,21 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False, auto: bool
     extra = {
         "use": "lab 300 mm invert — posterior K and F(m_post) fields, not CMG cell maps",
         "demo": bool(demo and k_true is not None),
-        "structure_board": getattr(twin, "last_structure_board", []),
+        "n_theta": int(twin.parameterization.n_params),
+        "parameterization": type(twin.parameterization).__name__,
+        "probe_diameter_m": [float(s.probe_diameter_m) for s in twin.experiment.sensors],
+        "forecast_rmse": None if post.forecast_rmse is None else float(post.forecast_rmse),
+        "holdout_rmse": float(post.holdout_rmse),
         "figures": [str(p) for p in plots],
     }
-    from reservoir_backend.twin.similarity import waterflood_groups
-
-    extra["similarity"] = waterflood_groups(twin, k=post.k)
     if k_true is not None:
         extra["acceptance"] = accept_demo(twin, post, k_true)
-        acc = extra["acceptance"]
-        sim = acc.get("similarity")
-        if isinstance(sim, dict):
-            extra["similarity"] = sim
     emit_invert_artifacts(
         twin, post, output, case_path=case, extra=extra, fields=fields
     )
+    invert_json = output / "invert.json"
+    if invert_json.is_file():
+        (output / "apply.json").write_text(invert_json.read_text(encoding="utf-8"), encoding="utf-8")
     if k_true is not None and not bool(extra.get("acceptance", {}).get("pass", True)):
         return 1
     return 0
@@ -301,8 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     inv_p = sub.add_parser("invert")
     inv_p.add_argument("case", type=Path)
     inv_p.add_argument("--output", type=Path, default=None)
-    inv_p.add_argument("--time-limit", type=float, default=None, help="seconds; stops LM / structure search")
-    inv_p.add_argument("--auto", action="store_true", help="search 1/2/3-layer structure, pick by hold-out")
+    inv_p.add_argument("--time-limit", type=float, default=None, help="seconds; stops LM / ES-MDA")
     inv_p.add_argument("--self-check", action="store_true", help="with no observations, generate a two-layer demo and verify inversion")
     inv_p.add_argument(
         "--write-field",
@@ -320,7 +305,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("case", type=Path)
     ap.add_argument("--output", type=Path, default=None)
     ap.add_argument("--demo", action="store_true", help="if no observations, generate lab-consistent two-layer data")
-    ap.add_argument("--auto", action="store_true", help="search 1/2/3-layer structure, pick by hold-out")
     p = sub.add_parser("synthetic")
     p.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
@@ -333,7 +317,6 @@ def main(argv: list[str] | None = None) -> int:
             args.case,
             args.output,
             time_limit=args.time_limit,
-            auto=args.auto,
             self_check=args.self_check,
             write_field=args.write_field,
         )
@@ -349,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "forecast":
         return cmd_forecast(args.case, args.output)
     if args.cmd == "apply":
-        return cmd_apply(args.case, args.output, demo=args.demo, auto=args.auto)
+        return cmd_apply(args.case, args.output, demo=args.demo)
     if args.cmd == "synthetic":
         return cmd_synthetic(args.output)
     return 2

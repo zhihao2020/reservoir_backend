@@ -28,7 +28,7 @@ def test_observations_come_from_compositional_forward() -> None:
 
 def test_lm_recovers_layer_permeability_compositional() -> None:
     from reservoir_backend.physics.rock import Rock
-    from reservoir_backend.twin.similarity import field_nrmse
+    from reservoir_backend.twin.apply import field_nrmse
 
     case = make_two_layer_compositional(
         n=(4, 3, 1),

@@ -8,7 +8,7 @@
 Experiment YAML → invert (LM) → post_ensemble (Ne=8, optional) → forecast → run_report + check83
 ```
 
-正演始终是产品求解器 \(F\)；CMG/IMEX 仅 offline 尺子（`validation/`），runtime 不 import `references/**`。
+正演始终是产品求解器 \(F\)。V1 尺子是自洽 synthetic truth，不对照 CMG/IMEX。runtime 不 import `references/**`。
 
 ## 十二问映射
 
@@ -37,8 +37,8 @@ Experiment YAML → invert (LM) → post_ensemble (Ne=8, optional) → forecast 
 
 | check.txt | 本产品 | 理由 |
 |-----------|--------|------|
-| ES-MDA ensemble | LM + 可选 **Ne=8 后验局部 ensemble** | 低维 θ（2–6 维）；LM 足够；小 ensemble 仅用于 \( \sigma_K \) 摘要 |
-| 全序贯 DA | `assimilate()` stub（1–2 步 LM） | MVP；不宣称 full sequential EnKF/ES-MDA |
+| ES-MDA ensemble | 过渡仍是 LM + 可选 **Ne=8 后验局部 ensemble**；V1 目标为 Scalar \(C_f\) + ES-MDA | 实验室路径尚未切换 |
+| 全序贯 DA | `assimilate()` stub（1–2 步 LM） | 在线 Parameter EnKF 尚未接入 CLI |
 
 ## 验收命令
 

@@ -97,6 +97,18 @@ SW_FIELD_NRMSE_MAX = 0.50
 P_FIELD_NRMSE_MAX = 0.25
 
 
+def field_nrmse(pred, truth) -> float:
+    """nRMSE of pred vs truth, scaled by RMS(truth)."""
+    a = np.asarray(pred, dtype=float).ravel()
+    b = np.asarray(truth, dtype=float).ravel()
+    if a.size != b.size:
+        raise ValueError(f"field size {a.size} != {b.size}")
+    denom = float(np.sqrt(np.mean(b * b)))
+    if denom <= 0.0:
+        denom = 1.0
+    return float(np.sqrt(np.mean((a - b) ** 2)) / denom)
+
+
 def demo_field_gate(sw_field_nrmse: float, p_field_nrmse: float) -> bool:
     """Product pass: displacement field nRMSE only. Contrast / logK / CMG are not required."""
     sw = float(sw_field_nrmse)
@@ -110,9 +122,10 @@ def demo_field_gate(sw_field_nrmse: float, p_field_nrmse: float) -> bool:
 
 
 def accept_demo(twin: DigitalTwin, posterior, k_true: NDArray[np.float64]) -> dict:
-    """P0 gate: waterflood similarity + F(m_post) vs F(m_true) Sw/p field nRMSE.
+    """Gate: F(m_post) vs F(m_true) Sw/p field nRMSE.
 
     Contrast / logK / hold-out stay in the report as extras. They are not the pass check.
+    Scale-up similarity is not part of inversion.
     """
     from reservoir_backend.twin.offline import predict_from_trajectory, stack_observations
 
@@ -135,18 +148,12 @@ def accept_demo(twin: DigitalTwin, posterior, k_true: NDArray[np.float64]) -> di
     d_true = predict_from_trajectory(twin.operator, twin.experiment, true_hist, assim)
     d_post = predict_from_trajectory(twin.operator, twin.experiment, post_hist, assim)
     forward_match = float(np.sqrt(np.mean(((d_post - d_true) / stacked.sigma) ** 2)))
-    from reservoir_backend.twin.similarity import report_from_trajectories
-
-    sim = report_from_trajectories(twin, post_hist, true_hist, k=k_post)
-    sw_field = float(sim["displacement"]["sw_field_nrmse"])
-    p_field = float(sim["displacement"]["p_field_nrmse"])
+    sw_field = field_nrmse(post_hist.states[-1].sw, true_hist.states[-1].sw)
+    p_field = field_nrmse(post_hist.states[-1].pressure, true_hist.states[-1].pressure)
     sg_post = getattr(post_hist.states[-1], "sg", None)
     sg_true = getattr(true_hist.states[-1], "sg", None)
     if sg_post is not None and sg_true is not None:
-        from reservoir_backend.twin.similarity import field_nrmse
-
         sg_field = field_nrmse(sg_post, sg_true)
-        sim.setdefault("displacement", {})["sg_field_nrmse"] = sg_field
     else:
         sg_field = float("nan")
 
@@ -173,12 +180,11 @@ def accept_demo(twin: DigitalTwin, posterior, k_true: NDArray[np.float64]) -> di
         "k_vs_expand_max": expand_err,
         "holdout_nrmse": hold,
         "forecast_nrmse": forecast,
-        "comparison": "F(m_post) vs F(m_true) plus waterflood similarity; not CMG",
+        "comparison": "F(m_post) vs F(m_true); not CMG",
         "gate": (
             f"sw_field_nrmse < {SW_FIELD_NRMSE_MAX} and p_field_nrmse < {P_FIELD_NRMSE_MAX} "
             "(F(m_post) vs F(m_true); comparison-not-CMG)"
         ),
-        "similarity": sim,
     }
 
 

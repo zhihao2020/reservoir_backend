@@ -1,4 +1,0 @@
-# Offline IMEX-exported well-history series go here later.
-# PLACEHOLDER row is not truth — replace before scoring; holdout=1.
-time_s,well,kind,value,sigma,holdout
-0,INJ,q_inj,0.0,1.0e-8,1

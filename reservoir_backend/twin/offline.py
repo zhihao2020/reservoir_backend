@@ -12,8 +12,8 @@ from reservoir_backend.exceptions import TimeStepUnderflow
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.inverse.lm import identifiability, run_lm
 from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble, sample_posterior_ensemble
+from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
 from reservoir_backend.inverse.parameterization import (
-    CoarseFieldParameterization,
     ContrastParameterization,
     RegionParameterization,
 )
@@ -28,18 +28,21 @@ from reservoir_backend.solver.impes import Trajectory, simulate, water_mass
 
 @dataclass
 class InverseSpec:
-    """Levenberg–Marquardt on low-dimensional θ. Not a search over cell K."""
+    """Low-dimensional inversion. Default LM; V1 Cf path is ES-MDA."""
 
     prior_mean: float | NDArray[np.float64] = float(np.log(1.0e-12))
     prior_std: float | NDArray[np.float64] = 0.8
     max_iter: int = 8
     fd_rel: float = 0.05
     time_limit_s: float | None = None
-    search_structure: bool | None = None
-    structure_candidates: list[str] | None = None
     post_ensemble_enabled: bool = False
     post_ensemble_ne: int = 8
     post_ensemble_seed: int = 0
+    algorithm: str = "lm"
+    ensemble_size: int = 16
+    assimilation_steps: int = 4
+    seed: int = 0
+    alpha: NDArray[np.float64] | list[float] | None = None
 
 
 @dataclass
@@ -98,6 +101,32 @@ class DataVector:
     names: list[str]
     kinds: list[str]
     holdout: NDArray[np.bool_]
+
+
+def split_history_observations(
+    observations: list[ObservationSeries],
+    history_end_s: float | None,
+) -> tuple[list[ObservationSeries], list[ObservationSeries]]:
+    """Trim to the history window and split assimilating vs hold-out series."""
+    assim: list[ObservationSeries] = []
+    hold: list[ObservationSeries] = []
+    for obs in observations:
+        times = obs.times_s
+        mask = np.ones(times.size, dtype=bool)
+        if history_end_s is not None:
+            mask = times <= float(history_end_s) + 1.0e-12
+        if not np.any(mask):
+            continue
+        trimmed = ObservationSeries(
+            sensor_name=obs.sensor_name,
+            kind=obs.kind,
+            times_s=times[mask],
+            values=obs.values[mask],
+            sigma=obs.sigma[mask],
+            holdout=obs.holdout,
+        )
+        (hold if obs.holdout else assim).append(trimmed)
+    return assim, hold
 
 
 def stack_observations(series: list[ObservationSeries]) -> DataVector:
@@ -190,15 +219,13 @@ class DigitalTwin:
     experiment: Experiment
     ports: list[FlowPort]
     physics: PhysicsSpec
-    parameterization: RegionParameterization | ContrastParameterization | CoarseFieldParameterization
+    parameterization: RegionParameterization | ContrastParameterization | LogConductivityParameterization
     face_dirichlet: dict[str, float] | None = None
     face_mult_x: NDArray[np.float64] | None = None
     face_mult_y: NDArray[np.float64] | None = None
     face_mult_z: NDArray[np.float64] | None = None
     kz_ratio: NDArray[np.float64] | None = None
     inverse: InverseSpec = field(default_factory=InverseSpec)
-    last_leaderboard: list[dict] = field(default_factory=list)
-    last_structure_board: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         kinds: dict[str, set[str]] = {}
@@ -430,29 +457,9 @@ class DigitalTwin:
         time_limit_s: float | None = None,
         fd_rel: float | None = None,
     ) -> Posterior:
-        """Fit θ to history observations with Levenberg–Marquardt."""
+        """Fit θ to history observations with LM or ES-MDA."""
         history_end = self.experiment.history_end_s
-        assim = []
-        hold = []
-        for obs in self.experiment.observations:
-            times = obs.times_s
-            mask = np.ones(times.size, dtype=bool)
-            if history_end is not None:
-                mask = times <= float(history_end) + 1.0e-12
-            if not np.any(mask):
-                continue
-            trimmed = ObservationSeries(
-                sensor_name=obs.sensor_name,
-                kind=obs.kind,
-                times_s=times[mask],
-                values=obs.values[mask],
-                sigma=obs.sigma[mask],
-                holdout=obs.holdout,
-            )
-            if obs.holdout:
-                hold.append(trimmed)
-            else:
-                assim.append(trimmed)
+        assim, hold = split_history_observations(self.experiment.observations, history_end)
         if not assim:
             raise ValueError("no assimilating observations in the history window")
         d_obs = stack_observations(assim)
@@ -471,6 +478,22 @@ class DigitalTwin:
         niter = int(self.inverse.max_iter if max_iter is None else max_iter)
         fd = float(self.inverse.fd_rel if fd_rel is None else fd_rel)
         budget = time_limit_s if time_limit_s is not None else self.inverse.time_limit_s
+
+        algo = str(self.inverse.algorithm).strip().lower()
+        if algo in {"esmda", "es-mda", "es_mda"}:
+            from reservoir_backend.twin.history_match import HistoryMatchWorkflow
+
+            return HistoryMatchWorkflow().run(
+                self,
+                observations=self.experiment.observations,
+                parameter_prior=(pmean, pstd),
+                config={
+                    "ensemble_size": self.inverse.ensemble_size,
+                    "assimilation_steps": self.inverse.assimilation_steps,
+                    "seed": self.inverse.seed,
+                    "alpha": self.inverse.alpha,
+                },
+            )
 
         def fwd(theta: NDArray[np.float64]) -> NDArray[np.float64]:
             return self._forward_vector(theta, assim, t_end=t_hist)
@@ -561,28 +584,6 @@ class DigitalTwin:
             max_iter=int(max_iter),
             time_limit_s=time_limit_s,
         )
-
-    def calibrate_auto(
-        self,
-        *,
-        time_limit_s: float | None = None,
-        search_structure: bool | None = None,
-    ) -> Posterior:
-        """Try structure hypotheses; pick on hold-out. One LM per candidate."""
-        budget = time_limit_s if time_limit_s is not None else self.inverse.time_limit_s
-        from reservoir_backend.inverse.structure import run_structure_search, should_search_structure
-
-        do_struct = should_search_structure(
-            has_region_map=False,
-            search_structure=self.inverse.search_structure if search_structure is None else search_structure,
-            candidates=self.inverse.structure_candidates,
-        )
-        if do_struct:
-            best, rows = run_structure_search(self, time_limit_s=budget)
-            self.last_structure_board = rows
-            self.last_leaderboard = rows
-            return best
-        return self.calibrate(time_limit_s=budget)
 
     def forecast(
         self,

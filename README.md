@@ -1,12 +1,12 @@
 # Reservoir Backend
 
-300 mm 立方试块的**实验室多相渗流数字孪生反演后端**。
+300 mm 立方试块的**页岩油实验数字孪生反演后端**。
 
 ```text
-探头 CSV → 控制 u(t) → 先验 m → 正演 F → 观测算子 H → LM(θ) → \(\hat K\) → F(\(\hat m\))
+探头 CSV → 控制 u(t) → 先验 m → 正演 F → 观测算子 H → 更新 log C_f（过渡：两区 log K + LM） → F(m_post)
 ```
 
-饱和度是动态状态，不是物性场。反演默认 2-region log K，不是逐格 \(K\)。一次实验只交一份后验场，不要和 CMG 全场逐格去对。
+饱和度是动态状态，不是物性场。V1 反演目标是裂缝等效导流能力 \(C_f\)，不是逐格 \(K\)。压力场、饱和度场由守恒方程重新计算。一次实验只交一份后验，不要和 CMG 全场逐格去对。
 
 设计：[docs/target_architecture.md](docs/target_architecture.md)。假设：[docs/model_assumptions.md](docs/model_assumptions.md)。验收：[docs/cnpc_acceptance.md](docs/cnpc_acceptance.md)。
 
@@ -35,7 +35,7 @@ reservoir apply examples/two_layer/case_from_csv.yaml --output results/examples/
 
 仓库里的 `observations.csv` 是自洽正演造的示例读数，用来先跑通。换岩样后用自己的表覆盖；`sigma` 用该探头重复性，不要照抄 2 kPa / 0.04。
 
-层数不确定、又没有通道图时加 `--auto`：在均匀 / 2 层 / 3 层里按 hold-out 选构造，不搜格子 \(K\)。给了 `region_map` 就用图，不要猜。
+给了 `region_map` 就用图。层状用 `region_axis: z`。标量 \(C_f\) 用 `examples/lab/lab_cf.yaml`。
 
 ### 没有测点：`--demo` 是自检，不是正式用法
 
@@ -91,7 +91,7 @@ time_s,sensor,kind,value,sigma,holdout
 reservoir validate examples/lab/lab_30cm.yaml
 reservoir simulate examples/lab/lab_30cm.yaml --output results/sim
 reservoir invert   examples/lab/lab_30cm.yaml --self-check --output results/inv
-reservoir invert   examples/lab/lab_30cm.yaml --auto --time-limit 120
+reservoir invert   examples/lab/lab_cf.yaml --self-check --output results/cf
 reservoir forecast examples/lab/lab_30cm.yaml --output results/fc
 reservoir synthetic --output results/syn
 ```
@@ -105,15 +105,14 @@ reservoir synthetic --output results/syn
 - Model C：三相 IMPES（`*SWT`+`*SLT` + Stone II；活油 \(G^s=\varphi(b_g S_g+R_s b_o S_o)\)）
 - 毛管：Brooks–Corey / van Genuchten / none，由 case 显式选择（实验室默认 Brooks–Corey）
 - 端口：定流量（地面）或定压，不是默认 Peaceman 油藏井
-- 反演：默认 2-region log K 或已知图的 contrast，LM 拟合井史。PVT 不进 \(\theta\)
-- 后验：\(K\) 均值/标准差，以及 \(F(m_{\mathrm{post}})\) 的 \(p,S_w,S_o\)
+- 反演（过渡）：2-region log K 或已知图的 contrast，LM 拟合井史。PVT / \(k_m\) 不进 \(\theta\)
+- V1 \(C_f\)：YAML `parameterization: log_conductivity` 走 ES-MDA（log 空间，对角 R，失败 member 替换）。例：`examples/lab/lab_cf.yaml`
+- 后验：参数均值/标准差，以及 \(F(m_{\mathrm{post}})\) 的 \(p,S_w,S_o\)
 - 时间：内部一律秒
 
 ## 明确未做
 
-济阳 GEM 组分牌、水相组分、热、EnKF、MPFA、动态 AMR、神经网络代替正演。等温 EXAMPLE 组分（C1–nC10）是可选 \(F\)：`physics.model: compositional`，`examples/compositional/comp_example.yaml`。实验室三相仍可用独立 Corey。
-
-`validation/` 下的离线 CMG/GEM 尺子不再接入本内核。
+济阳矿场吞吐、缝长/SRV/\(k_m\) 反演、逐格 K、coarse-field（已删除）。热、MPFA、动态 AMR、神经网络代替正演。ES-MDA 与在线 Parameter EnKF 尚未接到 invert CLI。等温 EXAMPLE 组分（C1–nC10）是可选 \(F\)：`physics.model: compositional`，`examples/compositional/comp_example.yaml`。
 
 ## 测试
 

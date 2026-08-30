@@ -35,7 +35,7 @@ DOC_GLOBS = (
 SKIP_PARTS = {"archive"}
 
 # Historical audit snapshots; path drift is expected.
-SKIP_DOCS = {"docs/audit_2026.md"}
+SKIP_DOCS = {"docs/digital_twin_repository_audit.md"}
 
 # Backtick paths that look like repo-relative file/dir references.
 PATH_RE = re.compile(

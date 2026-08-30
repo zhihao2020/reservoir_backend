@@ -1,1 +1,0 @@
-"""Jiyang-pattern offline rulers."""

@@ -5,7 +5,6 @@ import pytest
 
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.inverse.parameterization import (
-    CoarseFieldParameterization,
     ContrastParameterization,
     RegionParameterization,
 )
@@ -32,12 +31,11 @@ def test_contrast_is_selectable(tmp_path: Path) -> None:
     assert param.n_params == 2
 
 
-def test_coarse_field_is_explicit(tmp_path: Path) -> None:
-    param = parameterization_from_cfg(
-        _grid(), {"inverse": {"parameterization": "coarse_field", "coarse_n": [2, 1, 3]}}, tmp_path
-    )
-    assert isinstance(param, CoarseFieldParameterization)
-    assert param.n_params == 6
+def test_coarse_field_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unknown inverse.parameterization"):
+        parameterization_from_cfg(
+            _grid(), {"inverse": {"parameterization": "coarse_field", "coarse_n": [2, 1, 3]}}, tmp_path
+        )
 
 
 def test_region_axis_x_differs_from_z(tmp_path: Path) -> None:
@@ -96,9 +94,21 @@ def test_lab_channel_uses_contrast_map() -> None:
     assert all(abs(s.probe_diameter_m - 0.006) < 1e-12 for s in twin.experiment.sensors)
 
 
-def test_forbidden_ensemble_keys_error() -> None:
+def test_forbidden_inverse_keys_error() -> None:
     from reservoir_backend.io.case import inverse_spec_from_cfg
 
     with pytest.raises(ValueError, match="inverse keys not accepted"):
-        inverse_spec_from_cfg({"ensemble_size": 8, "parameterization": "region"})
+        inverse_spec_from_cfg({"n_workers": 8, "parameterization": "region"})
+
+
+def test_ensemble_keys_are_accepted() -> None:
+    from reservoir_backend.io.case import inverse_spec_from_cfg
+
+    spec = inverse_spec_from_cfg(
+        {"parameterization": "region", "algorithm": "esmda", "ensemble_size": 10, "assimilation_steps": 3, "seed": 2}
+    )
+    assert spec.algorithm == "esmda"
+    assert spec.ensemble_size == 10
+    assert spec.assimilation_steps == 3
+    assert spec.seed == 2
 

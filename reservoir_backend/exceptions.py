@@ -39,3 +39,15 @@ class GridError(ReservoirError, ValueError):
 
 class UnitConversionError(ReservoirError, ValueError):
     """Unsupported unit conversion."""
+
+
+class PhysicsConvergenceError(ReservoirError, RuntimeError):
+    """Forward solve failed to converge, produced NaN, or underflowed dt."""
+
+
+class FlashCalculationError(ReservoirError, RuntimeError):
+    """EOS / flash evaluation failed."""
+
+
+class AssimilationError(ReservoirError, RuntimeError):
+    """Ensemble or parameter update failed."""

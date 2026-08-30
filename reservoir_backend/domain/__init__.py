@@ -1,3 +1,4 @@
+from reservoir_backend.domain.state import ContinuumState, DualContinuumState
 from reservoir_backend.domain.types import (
     ControlSeries,
     Experiment,
@@ -8,7 +9,9 @@ from reservoir_backend.domain.types import (
 )
 
 __all__ = [
+    "ContinuumState",
     "ControlSeries",
+    "DualContinuumState",
     "Experiment",
     "ObservationSeries",
     "Sensor",

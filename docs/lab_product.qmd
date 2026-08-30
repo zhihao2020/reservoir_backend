@@ -36,12 +36,11 @@ PetroChina **30 cm** 立方。左面定流量注入，右面定 BHP，其余面�
 1. 压力测点 xyz：**等用户给坐标**再接，不编造。声波 / 电磁同理。
 2. `lab_concept invert --self-check`：fim-dt 跑 ne=2 two-layer demo（无观测时是 attach_two_layer_demo，不是 91 测点）。跑完报场 nRMSE / underflow。91 测点要有合成观测再另跑。
 
-`accept_demo` 闸门已对齐（2026-08-21）：pass = `sw_field_nrmse < 0.50` 且 `p_field_nrmse < 0.25`（对 $F(m_{\mathrm{true}})$）；similarity 在报告里。contrast / logK / hold-out 不是门。
+`accept_demo` 闸门：pass = `sw_field_nrmse < 0.50` 且 `p_field_nrmse < 0.25`（对 $F(m_{\mathrm{true}})$）。contrast / logK / hold-out / 相似准则不是门。
 
-## 方向（2026-08-21）
+## 方向
 
-用户说背景是**胜利济阳页岩油**。矿场不是 30 cm 水驱：水平井 + 体积压裂 + 弹性衰竭 + 焖井渗吸（储–缝–压；杨勇等，中国石油勘探 2024）。CO2 已大规模用在前置/超临界混压；单井吞吐是补能试验（李阳等，石油勘探与开发 2024, 51(4):855-864），不是示范区基础方式。
-用户已切到济阳：**一注四采水平井，CO2 吞吐，正演 30 年、月步**。混相 CO2 / GEM 现核没有；先黑油气吞吐骨架（`examples/jiyang/jiyang_hnp.yaml`，21×21×5）。核 / 残差不动。30 cm 水驱 ne=2 停。
+V1 主线是 30 cm 实验数字孪生：组分双重介质正演 + 标量 $C_f$ 反演。济阳矿场井网已移出产品。实验室 `apply --demo` 在 ES-MDA 落地前仍走两区 log $K$。
 
 ## 不做
 

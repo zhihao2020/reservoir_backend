@@ -1,0 +1,67 @@
+# V1 scalar C_f: ES-MDA on log effective fracture conductivity.
+# Matrix k is fixed. Observations from a CSV, or invert --self-check.
+# Coarse mesh so ensemble forwards finish quickly.
+geometry:
+  size_m: [0.3, 0.3, 0.3]
+
+grid:
+  type: cartesian
+  spacing_m: 0.05
+
+physics:
+  model: two_phase_immiscible
+  capillary: brooks_corey
+  gravity: false
+  pvt: incompressible
+  sw_init: 0.20
+  p_init: 1.5e5
+  dt_init: 2.0
+  dt_max: 20.0
+  transport: implicit
+  fully_implicit: false
+
+rock:
+  porosity: 0.20
+  k_matrix_m2: 1.0e-14
+
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    perforation: column
+    x: 0.025
+    y: 0.15
+    sw_inj: 0.85
+  - name: PROD
+    role: producer
+    control: pressure
+    perforation: column
+    x: 0.275
+    y: 0.15
+
+sensors_defaults:
+  probe_diameter_m: 0.006
+
+sensors:
+  - {name: P_in, kind: pressure, x: 0.08, y: 0.15, z: 0.15, sigma: 2.0e3}
+  - {name: P_mid, kind: pressure, x: 0.15, y: 0.15, z: 0.15, sigma: 2.0e3}
+  - {name: P_out, kind: pressure, x: 0.22, y: 0.15, z: 0.15, sigma: 2.0e3}
+  - {name: S_mid, kind: saturation, x: 0.15, y: 0.15, z: 0.15, sigma: 0.04}
+
+inverse:
+  parameterization: log_conductivity
+  algorithm: esmda
+  ensemble_size: 8
+  assimilation_steps: 4
+  seed: 3
+  prior_mean: -29.0
+  prior_std: 0.8
+  k_matrix_m2: 1.0e-14
+
+experiment:
+  history_end_s: 400
+  holdout_sensors: [P_out]
+  controls:
+    - {port: INJ, kind: rate, times: [0, 400, 500], values: [2.0e-6, 2.0e-6, 2.0e-6]}
+    - {port: INJ, kind: composition, times: [0, 500], values: [0.85, 0.85]}
+    - {port: PROD, kind: pressure, times: [0, 500], values: [1.0e5, 1.0e5]}

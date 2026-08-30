@@ -65,20 +65,18 @@
 ## 反演假设
 
 - 控制量与观测分离：一口端口同一时刻不能既定流量又定压并两边都当数据
-- 默认参数化是 2-region log K，不是粗网格 6³ / 逐格 K
-- 层数不必写死为 2。`--auto` 在离散目录（均匀 / 2 层 / 3 层 / 顶高或底高 contrast）上按 hold-out 选。给了 `region_map` 就用图，不猜
+- 实验室过渡路径：2-region log K，不是粗网格 / 逐格 K。V1 目标是标量 \(C_f\)（`LogConductivityParameterization`）
+- 层状用 `region_axis: z` 和 `n_regions`。给了 `region_map` 就用图。标量 \(C_f\) 用 `parameterization: log_conductivity`
 - 已知高渗体（层、通道）用对比度 \(\theta=(\log k_{\mathrm{lo}},\log(k_{\mathrm{hi}}/k_{\mathrm{lo}}))\)，\(k_{\mathrm{hi}}\ge k_{\mathrm{lo}}\)。符号是构造，数值才反演
 - 正演默认隐式输运（两相和三相）。YAML `physics.transport: explicit` 可关。不是为了把场贴成 IMEX
 - LM 在 θ 空间更新，输出点估计 \(\hat\theta\) 和 Hessian 对角 \(\sigma_\theta\)。不是逐格真值图
 - 产品 invert 支持 hold-out 测点与 history/forecast 时间切开
 - 测点是任意 \((x,y,z)\)。同一柱面上不同深度用 `column_sensors`。种类/深度越多，层状 K 越好认；单平面几个压力点不够
 - 井指数和相对渗透率差不要靠拧 K 去吸收（那是调参）。跨模拟器时流量观测要谨慎，优先用内部 \(p,S_w\)
-- `--auto` 只搜构造（均匀 / 2 区 / 3 层），每个候选一次 LM，hold-out 选。给了 `region_map` 就用图
-
 参考实现只放在 `references/methods/`（Equinor IES、pyesmda、dass、Emerick 2013），产品代码不 import。
 
 ```text
-reservoir invert examples/lab/lab_30cm.yaml --auto --time-limit 120
+reservoir invert examples/lab/lab_cf.yaml --self-check --output results/cf
 ```
 
 ## 井 / 端口
@@ -94,19 +92,11 @@ reservoir invert examples/lab/lab_30cm.yaml --auto --time-limit 120
 
 ## 概念实验室 30 cm 水驱：反演对比
 
-产品 invert 对比是 **水驱相似准则**（几何 / 油藏 k,φ / 流体黏度密度比 / 动力学毛管与压缩 / 饱和度 Swc,Sor,可动 / 驱替特征）加上 \(F(m_{\mathrm{post}})\) 对 \(F(m_{\mathrm{true}})\) 的饱和度场与压力场 nRMSE（及场图）。**不是** CMG 格子场，也不用 CMG 当尺子。
-
-实验室一侧的无量纲组合由 `reservoir_backend.twin.similarity.waterflood_groups` 从 PhysicsSpec / PVT / grid 算出，写在 invert `--self-check` 与 apply 报告的 `similarity` 键旁。`references/concecpt` 只给出 30 cm 立方岩样，没有矿场原型厚度、井距或井径，因此 **不编造** 矿场比例，只报实验室组合并标明 field ratios unknown。热采 / 聚合物 / 页岩水驱相似准则不报。
-
-## 页岩油衰竭类比（IMEX 尺子）
-
-- **参数**：默认 4 维 frac θ（基质/缝/SRV \(K\)、半长 \(x_f\)）；缝面个数与相位按完井固定。`free_geometry=true` 才放 6 维。
-- **正演**：默认顺序两相；可选 FIM（`fully_implicit=true`）。定产井带 **MIN BHP=1500 psi**（IMEX `*MIN *BHP`）。
-- **控制 / 观测**：定产 rate 进 \(F\)（触底改定压）；完井 cell 压力进 misfit。产率对齐 `scale_min≥0.5`。**Sw 信号 ~0.002，不进 misfit**。
-- **反演**：Levenberg–Marquardt on θ（`inverse.lm`），不是 ES-MDA。合成尺子 assimilate nRMSE ~2–2.7（`shale_frac/validation_report.json`）；跨 IMEX S1 ~7.4 / `dp_ratio≈0.26`。
-- **证据**：`tests/inverse/test_frac_parameterization.py`、`tests/cases/test_shale_synthetic.py`、`tests/solver/test_well_index.py::test_rate_producer_min_bhp_floor`；有 IMEX `.out` 时 `tests/cases/test_shale_cmg_suite.py`。
+产品 invert 对比是 \(F(m_{\mathrm{post}})\) 对 \(F(m_{\mathrm{true}})\) 的饱和度场与压力场 nRMSE。**不是** CMG 格子场。尺度放大不进 inversion core。
 
 测点坐标来自 `examples/lab/concept_probes.csv`（从 `测点.xlsx` 抄入 SI 米）：电阻率 75（底面/界面/顶面）+ 新增 7.5 cm 共 16。声波 12 / 电磁 8 在 `测点位置.pptx` 只有个数与 75 mm 间距，没有 xyz 表，不编造。
+
+页岩 IMEX 缝长/SRV/\(k_m\) 反演与济阳矿场吞吐已移出产品。
 
 ## 和开源仿真 / CMG / 生产的关系
 

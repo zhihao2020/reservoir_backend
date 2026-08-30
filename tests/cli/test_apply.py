@@ -91,10 +91,8 @@ def _stub_obs_and_forwards(twin, monkeypatch, *, sw_post, sw_true, p_post, p_tru
     )
 
 
-def test_accept_demo_reports_similarity_field_nrmse(tmp_path: Path, monkeypatch) -> None:
+def test_accept_demo_reports_field_nrmse(tmp_path: Path, monkeypatch) -> None:
     import numpy as np
-
-    from reservoir_backend.twin.similarity import REQUIRED_KEYS
 
     yml = _small_lab_yaml(tmp_path)
     twin = load_case(yml)
@@ -110,11 +108,7 @@ def test_accept_demo_reports_similarity_field_nrmse(tmp_path: Path, monkeypatch)
     assert acc["pass"] is True
     assert acc["sw_field_nrmse"] < 1.0e-12
     assert acc["p_field_nrmse"] < 1.0e-12
-    assert acc["similarity"]["displacement"]["sw_field_nrmse"] == acc["sw_field_nrmse"]
-    assert acc["similarity"]["displacement"]["p_field_nrmse"] == acc["p_field_nrmse"]
-    assert acc["similarity"]["displacement"]["not"] == "CMG"
-    for key in REQUIRED_KEYS:
-        assert key in acc["similarity"]
+    assert "similarity" not in acc
     assert "contrast_post" in acc
     assert "posterior_logk_rmse" in acc
     assert "comparison-not-CMG" in acc["gate"]
@@ -164,7 +158,7 @@ def test_apply_demo_writes_fields(tmp_path: Path) -> None:
     assert acc["k_vs_expand_max"] < 1.0e-12
     assert acc["sw_field_nrmse"] < SW_FIELD_NRMSE_MAX
     assert acc["p_field_nrmse"] < P_FIELD_NRMSE_MAX
-    assert acc["similarity"]["displacement"]["not"] == "CMG"
+    assert "similarity" not in acc
     header = (out / "observations.csv").read_text(encoding="utf-8").splitlines()[0]
     assert header == "time_s,sensor,kind,value,sigma,holdout"
 

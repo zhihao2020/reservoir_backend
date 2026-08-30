@@ -385,18 +385,13 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
 
 _FORBIDDEN_INVERSE = frozenset(
     {
-        "ensemble_size",
-        "algorithm",
-        "assimilation_steps",
         "n_workers",
         "preset",
         "reconstruct_members",
-        "inflation",
-        "n_ensemble",
-        "n_assimilations",
-        "seed",
     }
 )
+
+_CF_KINDS = frozenset({"log_conductivity", "cf", "scalar_cf", "fracture_conductivity"})
 
 
 def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
@@ -410,46 +405,30 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
         pm = np.asarray(pm, dtype=float)
     if isinstance(ps, list):
         ps = np.asarray(ps, dtype=float)
+    kind = str(inv.get("parameterization", "region")).lower()
+    algo_raw = inv.get("algorithm")
+    if algo_raw is None:
+        algorithm = "esmda" if kind in _CF_KINDS else "lm"
+    else:
+        algorithm = str(algo_raw).strip().lower()
+    n_ens = inv.get("ensemble_size", inv.get("n_ensemble", 16))
+    n_a = inv.get("assimilation_steps", inv.get("n_assimilations", 4))
+    alpha = inv.get("alpha", inv.get("inflation"))
     return InverseSpec(
         prior_mean=pm,
         prior_std=ps,
         max_iter=int(inv.get("max_iter", 8)),
         fd_rel=float(inv.get("fd_rel", 0.05)),
         time_limit_s=None if inv.get("time_limit_s") is None else float(inv["time_limit_s"]),
-        search_structure=(
-            False
-            if inv.get("region_map") and inv.get("search_structure") is None
-            else None if inv.get("search_structure") is None else bool(inv["search_structure"])
-        ),
-        structure_candidates=None if not inv.get("structure_candidates") else [str(x) for x in inv["structure_candidates"]],
         post_ensemble_enabled=bool(pe.get("enabled", False)),
         post_ensemble_ne=int(pe.get("ne", 8)),
-        post_ensemble_seed=int(pe.get("seed", 0)),
+        post_ensemble_seed=int(pe.get("seed", inv.get("seed", 0))),
+        algorithm=algorithm,
+        ensemble_size=int(n_ens),
+        assimilation_steps=int(n_a),
+        seed=int(inv.get("seed", 0)),
+        alpha=None if alpha is None else list(alpha),
     )
-
-
-def _resolve_path(cfg_dir: Path, raw: str | Path) -> Path:
-    p = Path(raw)
-    if p.is_file():
-        return p
-    alt = cfg_dir / p
-    if alt.is_file():
-        return alt
-    return alt
-
-
-def _load_shale_case(cfg: dict[str, Any], cfg_dir: Path) -> DigitalTwin:
-    from reservoir_backend.io.shale_case import twin_from_shale_truth
-
-    inv = cfg.get("inverse") or {}
-    truth = _resolve_path(cfg_dir, str(inv["truth_json"]))
-    out_raw = inv.get("imex_out")
-    out_path = None if out_raw is None else _resolve_path(cfg_dir, str(out_raw))
-    n_times = int(inv.get("n_times", 5))
-    max_iter = int(inv.get("max_iter", 12))
-    twin = twin_from_shale_truth(truth, out_path=out_path, n_times=n_times, max_iter=max_iter)
-    twin.inverse = inverse_spec_from_cfg(inv)
-    return twin
 
 
 def load_case(path: str | Path) -> DigitalTwin:
@@ -457,5 +436,7 @@ def load_case(path: str | Path) -> DigitalTwin:
     cfg = _load_yaml(path)
     inv = cfg.get("inverse") or {}
     if inv.get("truth_json"):
-        return _load_shale_case(cfg, path.parent)
+        raise ValueError(
+            "inverse.truth_json is not accepted; the shale IMEX loader was removed"
+        )
     return build_twin(cfg, cfg_dir=path.parent)
