@@ -89,15 +89,17 @@ def parameterization_from_cfg(grid: CartesianGrid, cfg: dict[str, Any], cfg_dir:
             mask = np.asarray(rid, dtype=np.int64).ravel() == high
         km = float(inv.get("k_matrix_m2", (cfg.get("rock") or {}).get("k_matrix_m2", 1.0e-15)))
         cond = FractureConductivityModel(n_cells=grid.n_cells, fracture_mask=mask, k_matrix_m2=km)
-        pm = inv.get("prior_mean", np.log(1.0e-13))
+        pm = inv.get("prior_mean", 0.0)
         ps = inv.get("prior_std", 1.0)
         if isinstance(pm, list):
             pm = float(np.asarray(pm, dtype=float).ravel()[0])
         if isinstance(ps, list):
             ps = float(np.asarray(ps, dtype=float).ravel()[0])
+        phi_f = float(inv.get("phi_fracture", (cfg.get("physics") or {}).get("phi_fracture", 0.02)))
         return LogConductivityParameterization(
             n_zones=1,
             phi=phi,
+            phi_fracture=phi_f,
             conductivity=cond,
             prior_mean=float(pm),
             prior_std=float(ps),

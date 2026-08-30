@@ -520,21 +520,24 @@ def evaluate_forecast(case: SyntheticCase, posterior) -> dict[str, float]:
 
 def make_scalar_cf_twin(
     *,
-    n: tuple[int, int, int] = (5, 4, 2),
-    size_m: tuple[float, float, float] = (0.20, 0.16, 0.08),
-    k_matrix: float = 1.0e-14,
+    n: tuple[int, int, int] = (3, 1, 1),
+    size_m: tuple[float, float, float] = (0.30, 0.10, 0.10),
+    k_matrix: float = 1.0e-15,
     cf_true: float = 5.0e-13,
-    phi: float = 0.20,
-    q_inj: float = 1.5e-7,
-    p_prod: float = 1.0e5,
-    t_end: float = 80.0,
-    n_times: int = 4,
+    phi: float = 0.08,
+    phi_fracture: float = 0.02,
+    q_inj: float = 2.0e-4,
+    p_prod: float = 1.18e7,
+    t_end: float = 6.0,
+    n_times: int = 2,
     noise_p: float = 0.0,
     seed: int = 3,
     ensemble_size: int = 8,
-    assimilation_steps: int = 4,
+    assimilation_steps: int = 2,
 ) -> SyntheticCase:
-    """Synthetic truth for V1 scalar C_f. Observations are H(F(C_f^true))."""
+    """Synthetic truth for V1 scalar C_f on compositional DPDP. Observations are H(F(C_f^true))."""
+    from reservoir_backend.comp.fluid import fluid_from_name
+
     nx, ny, nz = n
     grid = CartesianGrid(
         nx=nx,
@@ -544,23 +547,21 @@ def make_scalar_cf_twin(
         dy=np.full(ny, size_m[1] / ny),
         dz=np.full(nz, size_m[2] / nz),
     )
-    y = grid.cell_centers()[:, 1]
     y0 = size_m[1] * 0.50
-    half = size_m[1] * 0.18
-    mask = np.abs(y - y0) <= half
-    if not np.any(mask):
-        mask[:] = True
+    mask = np.ones(grid.n_cells, dtype=bool)
     cond = FractureConductivityModel(n_cells=grid.n_cells, fracture_mask=mask, k_matrix_m2=float(k_matrix))
-    theta_true = np.log(np.array([float(cf_true)], dtype=float))
     param = LogConductivityParameterization(
         n_zones=1,
         phi=phi,
+        phi_fracture=phi_fracture,
         conductivity=cond,
-        prior_mean=float(theta_true[0] + 1.2),
+        prior_mean=0.0,
         prior_std=0.75,
     )
+    theta_true = param.encode(np.array([float(cf_true)], dtype=float))
+    param.prior_mean = float(theta_true[0] + 1.2)
     k_true = param.expand(theta_true)
-    inj = FlowPort.column(grid, "INJ", "injector", "rate", float(grid.dx[0] * 0.5), y0, sw_inj=0.85)
+    inj = FlowPort.column(grid, "INJ", "injector", "rate", float(grid.dx[0] * 0.5), y0)
     prod = FlowPort.column(
         grid,
         "PROD",
@@ -572,15 +573,14 @@ def make_scalar_cf_twin(
     times = np.linspace(0.0, float(t_end), int(n_times) + 1)[1:]
     controls = [
         ControlSeries("INJ", "rate", times, np.full(times.size, q_inj)),
-        ControlSeries("INJ", "composition", times, np.full(times.size, 0.85)),
+        ControlSeries("INJ", "composition", times, np.full(times.size, 0.95)),
         ControlSeries("PROD", "pressure", times, np.full(times.size, p_prod)),
     ]
     zmid = size_m[2] * 0.50
     sensors = [
-        Sensor("P_in", "pressure", size_m[0] * 0.30, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e3)),
-        Sensor("P_mid", "pressure", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e3)),
-        Sensor("P_out", "pressure", size_m[0] * 0.70, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e3)),
-        Sensor("S_mid", "saturation", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=0.04),
+        Sensor("P_in", "pressure", size_m[0] * 0.30, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e4)),
+        Sensor("P_mid", "pressure", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e4)),
+        Sensor("P_out", "pressure", size_m[0] * 0.70, y0, zmid, probe_diameter_m=0.006, sigma=max(noise_p, 2.0e4)),
     ]
     experiment = Experiment(
         size_m=size_m,
@@ -589,16 +589,21 @@ def make_scalar_cf_twin(
         observations=[],
         history_end_s=float(t_end),
     )
+    fluid = fluid_from_name("example", temperature_k=350.0)
     physics = PhysicsSpec(
-        sw_init=0.20,
-        p_init=p_prod + 5.0e4,
-        dt_init=2.0,
+        sw_init=0.0,
+        p_init=1.20e7,
+        dt_init=0.5,
         dt_min=1.0e-6,
-        dt_max=10.0,
-        max_cfl=0.40,
-        max_ds=0.12,
+        dt_max=2.0,
+        max_steps=40,
         implicit_transport=True,
         fully_implicit=False,
+        model="compositional_dpdp",
+        fluid=fluid,
+        shape_factor=40.0,
+        phi_fracture=float(phi_fracture),
+        k_matrix_m2=float(k_matrix),
     )
     twin = DigitalTwin(
         grid,
@@ -615,8 +620,7 @@ def make_scalar_cf_twin(
             seed=int(seed),
         ),
     )
-    truth_rock = Rock(k_true, np.full(grid.n_cells, phi))
-    traj = twin.simulate(truth_rock, t_end=t_end, report_times=times)
+    traj = twin.simulate(parameters=theta_true, t_end=t_end, report_times=times)
     rng = np.random.default_rng(seed)
     observations: list[ObservationSeries] = []
     for sensor in sensors:

@@ -10,12 +10,18 @@
 - `HistoryMatchWorkflow`；YAML `parameterization: log_conductivity` 默认 `algorithm: esmda`
 - 在线 Parameter EnKF 一步（α=1 + 小 random walk），不覆盖压力/饱和度场
 - Synthetic Case A：无噪声 \(H(F(C_f^{\mathrm{true}}))\) 收回标量 \(C_f\)
+- Gate 1：`DualRock`、`DualCompositionalState`（主变量 moles+pressure）
+- Gate 2：组分 transfer（matrix→fracture > 0，上游 λ，反对称）
+- Gate 3–4：D0–D4（单格、两格三种通量、\(\sigma=0\)、\(k_m^{\mathrm{intercell}}\to 0\)、\(4\times3\times2\) 井控质量守恒）
+- Gate 5：\(m=\log(C_f/C_{\mathrm{ref}})\)；\(C_f\) 只改 DualRock 裂缝连续体；ES-MDA 走 `fi_comp_dual`
+- ES-MDA 默认不再 clip innovation；观测 QC 在 smoother 之前过滤
+- Parameter EnKF 拆成 forecast_parameters / analysis_parameters；`OnlineAssimilationWorkflow` + checkpoint/rollback
+- 外围 UDP JSON 协议与跨尺度 nRMSE；不进入 solver
 
 ## 未完成
 
-- 完整基质–裂缝耦合时间步（当前用 `FractureConductivityModel` 把 \(C_f\) 映射到裂缝格子 \(k_f^{\mathrm{eff}}\)，基质 \(k_m\) 固定）
-- 在线 checkpoint / rollback / UDP
-- 实验室 `apply` 默认仍是两区 log K + LM（YAML `log_conductivity` 才走 ES-MDA）
+- 实验室 `apply` 默认仍是两区 log K + LM（计划允许）
+- 电阻率 / EM / 声波独立反演仍是 `H` 的饱和度别名，不是单独物理模块
 
 ## 接口变化
 
@@ -36,4 +42,4 @@
 
 ## 下一阶段
 
-双重介质耦合时间步（Phase 2）。在线 checkpoint / UDP。
+V1 Gate 0–5 已落地。实验室 `apply` 默认路径仍是两区 log K + LM。

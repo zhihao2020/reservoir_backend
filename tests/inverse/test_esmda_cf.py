@@ -6,12 +6,12 @@ from reservoir_backend.synthetic import make_scalar_cf_twin
 def test_esmda_scalar_cf_moves_toward_truth() -> None:
     """Plan Case A: noiseless H(F(C_f^true)); posterior C_f closer than the prior."""
     case = make_scalar_cf_twin(
-        n=(5, 4, 2),
-        t_end=60.0,
-        n_times=3,
+        n=(3, 1, 1),
+        t_end=6.0,
+        n_times=2,
         noise_p=0.0,
-        ensemble_size=8,
-        assimilation_steps=4,
+        ensemble_size=6,
+        assimilation_steps=2,
         seed=5,
     )
     prior_m = float(np.asarray(case.twin.parameterization.prior_mean).ravel()[0])
@@ -20,13 +20,22 @@ def test_esmda_scalar_cf_moves_toward_truth() -> None:
     post_m = float(post.theta[0])
     assert abs(post_m - true_m) < abs(prior_m - true_m)
     assert post.ensemble is not None
-    assert post.ensemble.theta_members.shape[0] == 8
+    assert post.ensemble.theta_members.shape[0] == 6
     q05, q50, q95 = np.quantile(post.ensemble.theta_members[:, 0], [0.05, 0.50, 0.95])
     assert q05 <= q50 <= q95
     assert post.misfit[-1] <= post.misfit[0] * 1.05
     assert post.history.reports[-1].mass.relative_balance_error < 0.08
     cf_post = float(case.twin.parameterization.decode(post.theta)[0])
     assert cf_post > 0.0
+
+
+def test_lab_cf_yaml_is_dpdp() -> None:
+    from reservoir_backend.io.case import load_case
+
+    twin = load_case("examples/lab/lab_cf.yaml")
+    assert twin.uses_dpdp()
+    assert twin.inverse.algorithm == "esmda"
+    assert twin.parameterization.n_params == 1
 
 
 def test_yaml_log_conductivity_selects_esmda(tmp_path) -> None:

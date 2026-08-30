@@ -35,8 +35,22 @@ class TwinForwardAdapter:
         else:
             self._rock = self.twin.rock_from_theta(theta0)
 
+    def dual_rock_from_parameters(self, parameters: NDArray[np.float64]):
+        """Gate 5: C_f updates DualRock.fracture only."""
+        th = np.asarray(parameters, dtype=float).ravel()
+        if self.log_cf is None:
+            raise ValueError("log_cf parameterization is required for DualRock")
+        if self.conductivity is not None:
+            phi_m = float(getattr(self.log_cf, "phi", 0.08))
+            phi_f = float(getattr(self.log_cf, "phi_fracture", 0.02))
+            return self.conductivity.dual_rock(self.log_cf.decode(th), phi_matrix=phi_m, phi_fracture=phi_f)
+        return self.twin.dual_rock_from_theta(th)
+
     def _rock_from_parameters(self, parameters: NDArray[np.float64]) -> Rock:
         th = np.asarray(parameters, dtype=float).ravel()
+        if self.twin.uses_dpdp():
+            dual = self.dual_rock_from_parameters(th)
+            return dual.fracture
         if self.conductivity is not None and self.log_cf is not None:
             cf = self.log_cf.decode(th)
             return self.twin.rock_from_k(self.conductivity.permeability(cf))
@@ -69,6 +83,11 @@ class TwinForwardAdapter:
         twin = self.twin if case is None else case
         if case is not None:
             self.twin = case
+        if twin.uses_dpdp():
+            try:
+                return twin.simulate(parameters=parameters, report_times=observation_times)
+            except TimeStepUnderflow as exc:
+                raise PhysicsConvergenceError(str(exc)) from exc
         rock = self._rock_from_parameters(parameters)
         self._rock = rock
         try:

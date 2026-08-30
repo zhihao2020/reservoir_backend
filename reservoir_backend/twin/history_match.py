@@ -15,6 +15,7 @@ from reservoir_backend.domain.types import ObservationSeries
 from reservoir_backend.exceptions import AssimilationError, PhysicsConvergenceError, TimeStepUnderflow
 from reservoir_backend.inverse.ensemble import replace_failed_members, sample_log_prior
 from reservoir_backend.inverse.esmda import esmda_update, inflation_schedule
+from reservoir_backend.observation.qc import ObservationStatus, classify_observations
 from reservoir_backend.inverse.lm import identifiability
 from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble
 from reservoir_backend.physics.rock import LOGK_MAX, LOGK_MIN
@@ -133,7 +134,19 @@ class HistoryMatchWorkflow:
                         + ", ".join(r["reason"] for r in failed2)
                     )
             misfit.append(_whitened_misfit(predicted, d_obs.values, d_obs.sigma))
-            members = esmda_update(members, predicted, d_obs.values, d_obs.sigma, float(alpha), rng)
+            status = classify_observations(predicted, d_obs.values, d_obs.sigma)
+            active = status == ObservationStatus.ACTIVE.value
+            if not np.any(active):
+                raise AssimilationError("no ACTIVE observations after QC")
+            members = esmda_update(
+                members,
+                predicted[active],
+                d_obs.values[active],
+                d_obs.sigma[active],
+                float(alpha),
+                rng,
+                clip_innovation=bool(cfg.get("clip_innovation", twin.inverse.clip_innovation)),
+            )
             members = _clip_members(twin, members)
 
         predicted, failed, n_fwd = _forward_ensemble(twin, members, assim, t_hist)
@@ -148,8 +161,11 @@ class HistoryMatchWorkflow:
         k_members = np.stack(k_list, axis=0)
         k_mean = np.mean(k_members, axis=0)
         k_std = np.std(k_members, axis=0, ddof=1)
-        rock = twin.rock_from_k(k_mean)
-        hist = twin.simulate(rock, t_end=t_hist, report_times=d_obs.times)
+        if twin.uses_dpdp():
+            hist = twin.simulate(parameters=theta_mean, t_end=t_hist, report_times=d_obs.times)
+        else:
+            rock = twin.rock_from_k(k_mean)
+            hist = twin.simulate(rock, t_end=t_hist, report_times=d_obs.times)
         n_forward += 1
         d_post = predict_from_trajectory(twin.operator, twin.experiment, hist, assim)
         assim_rmse = float(np.sqrt(np.mean(((d_post - d_obs.values) / d_obs.sigma) ** 2)))

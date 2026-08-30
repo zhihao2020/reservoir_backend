@@ -28,16 +28,15 @@ def test_adapter_step_advances_time() -> None:
     assert np.all(np.isfinite(s1.pressure))
 
 
-def test_adapter_cf_path_keeps_matrix_k() -> None:
+def test_adapter_cf_path_updates_fracture_dual_rock() -> None:
     case = make_two_layer_waterflood(n=(4, 3, 2), n_times=2, t_end=20.0)
-    mask = np.zeros(case.grid.n_cells, dtype=bool)
-    mask[::2] = True
+    mask = np.ones(case.grid.n_cells, dtype=bool)
     km = 1.0e-15
     cond = FractureConductivityModel(n_cells=case.grid.n_cells, fracture_mask=mask, k_matrix_m2=km)
-    log_cf = LogConductivityParameterization()
+    log_cf = LogConductivityParameterization(phi=0.08, phi_fracture=0.02, conductivity=cond)
     adapter = TwinForwardAdapter(case.twin, conductivity=cond, log_cf=log_cf)
     cf = np.array([5.0e-13])
-    rock = adapter._rock_from_parameters(log_cf.encode(cf))
-    k = np.asarray(rock.permeability, dtype=float).ravel()
-    assert k[~mask] == pytest.approx(km)
-    assert k[mask] == pytest.approx(5.0e-13)
+    dual = adapter.dual_rock_from_parameters(log_cf.encode(cf))
+    assert dual.matrix.permeability == pytest.approx(km)
+    assert dual.fracture.permeability == pytest.approx(5.0e-13)
+    assert dual.matrix.porosity[0] == pytest.approx(0.08)

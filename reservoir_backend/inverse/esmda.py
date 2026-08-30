@@ -61,6 +61,8 @@ def esmda_update(
     sigma: NDArray[np.float64],
     alpha: float,
     rng: np.random.Generator,
+    *,
+    clip_innovation: bool = False,
 ) -> NDArray[np.float64]:
     """One MDA step: ``m^a = m^f + C_my (C_yy + α R)^{-1} (d_j - y_j)``.
 
@@ -98,8 +100,9 @@ def esmda_update(
     c_scaled = scale * (ys @ ys.T) + np.eye(n_obs)
     pert = rng.standard_normal((n_obs, n_ens)) * (np.sqrt(a) * sig)[:, None]
     innov = d[:, None] + pert - y
-    cap = 5.0 * np.sqrt(a) * sig
-    innov = np.clip(innov, -cap[:, None], cap[:, None])
+    if clip_innovation:
+        cap = 5.0 * np.sqrt(a) * sig
+        innov = np.clip(innov, -cap[:, None], cap[:, None])
     rhs = s[:, None] * innov
     w = _spd_solve(c_scaled, rhs)
     w = s[:, None] * w

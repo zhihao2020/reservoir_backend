@@ -10,6 +10,7 @@ def test_scalar_cf_roundtrip() -> None:
     cf = np.array([2.5e-13])
     m = p.encode(cf)
     assert m.size == 1
+    assert m[0] == pytest.approx(np.log(2.5e-13 / p.c_ref_m2))
     out = p.decode(m)
     assert out == pytest.approx(cf)
 

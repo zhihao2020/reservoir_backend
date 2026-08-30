@@ -7,6 +7,7 @@ from reservoir_backend.physics.capillary import (
 )
 from reservoir_backend.physics.pvt import BlackOilPVT
 from reservoir_backend.physics.relperm import CoreyThreePhase, CoreyTwoPhase, TableTwoPhase
+from reservoir_backend.physics.dual_rock import DualRock
 from reservoir_backend.physics.rock import Rock, exp_permeability, log_permeability
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "NoCapillary",
     "TableCapillary",
     "TableTwoPhase",
+    "DualRock",
     "Rock",
     "VanGenuchten",
     "capillary_from_name",

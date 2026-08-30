@@ -162,7 +162,8 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
     grid = grid_from_cfg(cfg, cfg_dir=cfg_dir)
     phys_cfg = cfg.get("physics") or {}
     model = str(phys_cfg.get("model", "two_phase_immiscible")).lower()
-    compositional = model in {"compositional", "comp", "eos"}
+    dpdp = model in {"dpdp", "compositional_dpdp", "dual", "dual_compositional"}
+    compositional = model in {"compositional", "comp", "eos"} or dpdp
     cap_name = phys_cfg.get("capillary", "brooks_corey")
     if cap_name is True:
         cap_name = "brooks_corey"
@@ -266,10 +267,17 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
         max_steps=int(phys_cfg.get("max_steps", 12000)),
         implicit_transport=bool(implicit),
         fully_implicit=bool(fully_implicit),
-        model="compositional" if compositional else model,
+        model="compositional_dpdp" if dpdp else ("compositional" if compositional else model),
         fluid=fluid,
         temperature_k=float(phys_cfg.get("temperature_k", 350.0)),
         z_init=None if phys_cfg.get("z_init") is None else np.asarray(phys_cfg.get("z_init"), dtype=float),
+        shape_factor=float(phys_cfg.get("shape_factor", 40.0)),
+        phi_fracture=float(phys_cfg.get("phi_fracture", 0.02)),
+        k_matrix_m2=(
+            None
+            if (phys_cfg.get("k_matrix_m2") is None and (cfg.get("rock") or {}).get("k_matrix_m2") is None)
+            else float(phys_cfg.get("k_matrix_m2", (cfg.get("rock") or {}).get("k_matrix_m2")))
+        ),
     )
     if not compositional:
         assert abs(float(physics.relperm.mu_o) - float(pvt.mu_o)) < 1.0e-15
@@ -428,6 +436,7 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
         assimilation_steps=int(n_a),
         seed=int(inv.get("seed", 0)),
         alpha=None if alpha is None else list(alpha),
+        clip_innovation=bool(inv.get("clip_innovation", False) or inv.get("robust_observations", False)),
     )
 
 

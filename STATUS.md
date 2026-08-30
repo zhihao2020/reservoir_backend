@@ -59,13 +59,18 @@
 | ES-MDA（log \(C_f\)） | 已验证 | `inverse.esmda`、`twin.history_match` | `tests/inverse/test_esmda.py`、`test_esmda_cf.py`。线性高斯收回；合成无噪声 \(C_f\) 向真值靠近；后验 P05/P50/P95 |
 | Parameter EnKF（在线一步） | MVP | `inverse.parameter_enkf` | `tests/inverse/test_parameter_enkf.py`。α=1，不改状态场 |
 | DualContinuumState / transfer / ForwardModel adapter | MVP | `domain.state`、`physics.transfer`、`solver.forward_adapter` | `tests/domain/test_dual_state.py`、`tests/solver/test_forward_adapter.py` |
+| DPDP DualRock + 组分 transfer | 已验证 | `physics.dual_rock`、`physics.transfer.ComponentTransfer` | `tests/physics/test_dual_rock.py`、`test_component_transfer.py` |
+| DPDP compositional FIM D0–D4 | 已验证 | `comp.dual_residual`、`solver.fi_comp_dual` | `tests/comp/test_dual_d0.py`、`test_dual_d1234.py`：守恒相对误差 < 1e-4 |
+| Scalar \(C_f\) ES-MDA on DPDP | 已验证 | `LogConductivityParameterization`、`HistoryMatchWorkflow` | `tests/inverse/test_esmda_cf.py`；`m=\log(C_f/C_{\mathrm{ref}})` |
+| Observation QC | 已验证 | `observation.qc` | `tests/observation/test_qc.py` |
+| Online checkpoint / UDP | MVP | `twin.online`、`io.udp_api` | `tests/twin/test_online_checkpoint.py` |
 
 ## 排除
 
 - 四场插值「反演」（已删除）
 - 每 cell 独立反演 27k 个 K（非默认）
 - Archie / EM / acoustic 通用反演（已删除）
-- 逐格 \(K\)、coarse-field、缝长/SRV/基质渗透率反演、济阳矿场吞吐、IMEX 页岩 suite、黑油 CMG 尺子（已删除）。完整双重介质耦合时间步、在线 checkpoint/UDP、PINN、MPFA、动态 AMR、热尚未做。活油黑油仍是 \(R_s\) 表闪蒸。实验室 `apply` 默认两区 log K + LM；`log_conductivity` 走 ES-MDA
+- 逐格 \(K\)、coarse-field、缝长/SRV/基质渗透率反演、济阳矿场吞吐、IMEX 页岩 suite、黑油 CMG 尺子（已删除）。PINN、MPFA、动态 AMR、热尚未做。活油黑油仍是 \(R_s\) 表闪蒸。实验室 `apply` 默认两区 log K + LM；`log_conductivity` 走组分 DPDP + ES-MDA
 - 旧 `pipeline/` 产品路径（已删除）
 
 ## 实验室默认（2026-08 重构）

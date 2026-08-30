@@ -43,9 +43,9 @@ Prior Parameters m_prior
     |
 ParameterMapper                  固定维数的 θ → 计算网格上的 K,φ
     |
-Forward Simulator F              黑油 IMPES：表面体积 + 压力 / 饱和度
+Forward Simulator F              V1 Cf 路径：组分 DPDP（两套 TPFA + transfer）
     |
-State Field x(t)                 p, Sw, So=1-Sw
+State Field x(t)                 观测面看裂缝连续体 p_f, S；主变量是 (n_f, p_f, n_m, p_m)
     |
 ObservationOperator H            点 / 体积 / 端口
     |
@@ -276,13 +276,15 @@ for n in timesteps:                          # 自适应 Δt
 ## 7. Online twin 流程（P2，现在只定边界）
 
 ```text
-calibrate → m_post
+calibrate → log C_f posterior
 实验继续 → 新 d_{t+1}
-EnKF 更新状态 x（必要时慢变量）
-StateProjection: S∈[0,1], ΣS=1, K>0
+forecast parameters (random walk)
+y = H(F(m))
+parameter EnKF on log C_f only
+physical rerun of F
 ```
 
-P0 不实现 EnKF。P0 的 API 把 `calibrate` 和 `forecast` 分开，避免再出现一个模糊的 `inverse()`。
+禁止把压力/饱和度写进 EnKF 状态向量。P0 的 API 把 `calibrate` 和 `forecast` 分开。
 
 ---
 

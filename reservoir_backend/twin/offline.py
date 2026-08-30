@@ -43,6 +43,7 @@ class InverseSpec:
     assimilation_steps: int = 4
     seed: int = 0
     alpha: NDArray[np.float64] | list[float] | None = None
+    clip_innovation: bool = False
 
 
 @dataclass
@@ -75,6 +76,9 @@ class PhysicsSpec:
     fluid: object | None = None
     temperature_k: float = 350.0
     z_init: NDArray[np.float64] | None = None
+    shape_factor: float = 40.0
+    phi_fracture: float = 0.02
+    k_matrix_m2: float | None = None
 
 
 def three_phase_for_fim(relperm, existing=None):
@@ -234,8 +238,52 @@ class DigitalTwin:
         validate_port_controls(self.ports, kinds)
         self.operator = ObservationOperator(self.grid, self.experiment.sensors, self.ports)
 
+    def uses_dpdp(self) -> bool:
+        model = str(self.physics.model).lower()
+        return model in {"dpdp", "compositional_dpdp", "dual", "dual_compositional"}
+
+    def dual_rock_from_theta(self, theta: NDArray[np.float64]):
+        if isinstance(self.parameterization, LogConductivityParameterization):
+            return self.parameterization.dual_rock(theta)
+        cf = float(np.asarray(self.parameterization.decode(theta), dtype=float).ravel()[0])
+        return self.dual_rock_from_cf(cf)
+
+    def dual_rock_from_cf(self, cf_m2: float):
+        from reservoir_backend.physics.dual_rock import DualRock
+
+        km = float(
+            getattr(getattr(self.parameterization, "conductivity", None), "k_matrix_m2", None)
+            or self.physics.k_matrix_m2
+            or 1.0e-15
+        )
+        phi_m = float(getattr(self.parameterization, "phi", 0.08))
+        phi_f = float(getattr(self.parameterization, "phi_fracture", self.physics.phi_fracture))
+        return DualRock.from_cf(
+            self.grid.n_cells,
+            k_matrix_m2=km,
+            phi_matrix=phi_m,
+            cf_m2=float(cf_m2),
+            phi_fracture=phi_f,
+        )
+
+    def transfer_operator(self):
+        from reservoir_backend.physics.transfer import ComponentTransfer
+
+        km = float(
+            getattr(getattr(self.parameterization, "conductivity", None), "k_matrix_m2", None)
+            or self.physics.k_matrix_m2
+            or 1.0e-15
+        )
+        return ComponentTransfer(shape_factor=float(self.physics.shape_factor), k_matrix_m2=km)
+
     def initial_state(self) -> State:
         n = self.grid.n_cells
+        if self.uses_dpdp() and self.physics.fluid is not None:
+            from reservoir_backend.solver.fi_comp_dual import dual_to_state, initialize_dual_state
+
+            dual = self.dual_rock_from_cf(float(self.physics.k_matrix_m2 or 1.0e-12))
+            st = initialize_dual_state(self.grid, dual, self.physics.fluid, float(self.physics.p_init))
+            return dual_to_state(self.physics.fluid, st)
         if str(self.physics.model).lower() in {"compositional", "comp", "eos"} and self.physics.fluid is not None:
             from reservoir_backend.solver.fi_comp import initialize_state
 
@@ -286,13 +334,15 @@ class DigitalTwin:
 
     def simulate(
         self,
-        rock: Rock,
+        rock: Rock | None = None,
         *,
         controls: list[ControlSeries] | None = None,
         t_end: float | None = None,
         report_times: NDArray[np.float64] | None = None,
         state0: State | None = None,
         dt_min: float | None = None,
+        parameters: NDArray[np.float64] | None = None,
+        dual_rock=None,
     ) -> Trajectory:
         controls = list(self.experiment.controls if controls is None else controls)
         if t_end is None:
@@ -302,6 +352,37 @@ class DigitalTwin:
         if report_times is None:
             report_times = self.experiment.all_times_s()
         floor = self.physics.dt_min if dt_min is None else float(dt_min)
+        if self.uses_dpdp() and self.physics.fluid is not None:
+            from reservoir_backend.solver.fi_comp_dual import initialize_dual_state, simulate_dual_comp
+
+            if dual_rock is None:
+                if parameters is not None:
+                    dual_rock = self.dual_rock_from_theta(parameters)
+                elif rock is not None:
+                    dual_rock = self.dual_rock_from_cf(float(np.mean(np.asarray(rock.permeability, dtype=float))))
+                else:
+                    raise ValueError("DPDP simulate needs parameters, dual_rock, or rock")
+            dual0 = initialize_dual_state(self.grid, dual_rock, self.physics.fluid, float(self.physics.p_init))
+            if state0 is not None:
+                dual0.time_s = float(state0.time_s)
+            traj, _ = simulate_dual_comp(
+                self.grid,
+                dual_rock,
+                self.physics.fluid,
+                self.transfer_operator(),
+                self.ports,
+                controls,
+                dual0,
+                float(t_end),
+                dt_init=self.physics.dt_init,
+                dt_min=floor,
+                dt_max=self.physics.dt_max,
+                max_steps=int(self.physics.max_steps),
+                report_times=report_times,
+            )
+            return traj
+        if rock is None:
+            raise ValueError("simulate requires a Rock for single-continuum models")
         if str(self.physics.model).lower() in {"compositional", "comp", "eos"} and self.physics.fluid is not None:
             from reservoir_backend.solver.fi_comp import simulate_comp
 
@@ -443,9 +524,12 @@ class DigitalTwin:
         t_end: float | None = None,
         controls: list[ControlSeries] | None = None,
     ) -> NDArray[np.float64]:
-        rock = self.rock_from_theta(theta)
         times = np.unique(np.concatenate([s.times_s for s in series])) if series else None
-        traj = self.simulate(rock, controls=controls, t_end=t_end, report_times=times)
+        if self.uses_dpdp():
+            traj = self.simulate(parameters=theta, controls=controls, t_end=t_end, report_times=times)
+        else:
+            rock = self.rock_from_theta(theta)
+            traj = self.simulate(rock, controls=controls, t_end=t_end, report_times=times)
         return predict_from_trajectory(self.operator, self.experiment, traj, series)
 
     def calibrate(
@@ -492,6 +576,7 @@ class DigitalTwin:
                     "assimilation_steps": self.inverse.assimilation_steps,
                     "seed": self.inverse.seed,
                     "alpha": self.inverse.alpha,
+                    "clip_innovation": self.inverse.clip_innovation,
                 },
             )
 
