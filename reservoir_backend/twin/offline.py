@@ -44,6 +44,7 @@ class InverseSpec:
     seed: int = 0
     alpha: NDArray[np.float64] | list[float] | None = None
     clip_innovation: bool = False
+    n_workers: int | None = None
 
 
 @dataclass
@@ -230,6 +231,7 @@ class DigitalTwin:
     face_mult_z: NDArray[np.float64] | None = None
     kz_ratio: NDArray[np.float64] | None = None
     inverse: InverseSpec = field(default_factory=InverseSpec)
+    _dpdp_ctx: object | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         kinds: dict[str, set[str]] = {}
@@ -265,6 +267,17 @@ class DigitalTwin:
             cf_m2=float(cf_m2),
             phi_fracture=phi_f,
         )
+
+    def dpdp_context(self):
+        from reservoir_backend.solver.dpdp_context import DPDPModelContext
+
+        if self._dpdp_ctx is None and self.physics.fluid is not None:
+            self._dpdp_ctx = DPDPModelContext.build(
+                self.grid,
+                int(self.physics.fluid.nc),
+                sensors=list(self.experiment.sensors),
+            )
+        return self._dpdp_ctx
 
     def transfer_operator(self):
         from reservoir_backend.physics.transfer import ComponentTransfer
@@ -379,6 +392,7 @@ class DigitalTwin:
                 dt_max=self.physics.dt_max,
                 max_steps=int(self.physics.max_steps),
                 report_times=report_times,
+                context=self.dpdp_context(),
             )
             return traj
         if rock is None:
@@ -577,6 +591,7 @@ class DigitalTwin:
                     "seed": self.inverse.seed,
                     "alpha": self.inverse.alpha,
                     "clip_innovation": self.inverse.clip_innovation,
+                    "n_workers": self.inverse.n_workers,
                 },
             )
 

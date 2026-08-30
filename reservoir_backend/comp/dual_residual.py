@@ -100,6 +100,7 @@ def dual_residual(
         grid.cell_volumes(),
         props_m,
         props_f,
+        k_matrix=dual_rock.matrix.permeability,
     )
     rf = res_f.reshape(n_cells, nc + 1)
     rm = res_m.reshape(n_cells, nc + 1)

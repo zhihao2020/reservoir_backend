@@ -1,19 +1,17 @@
 """Fully implicit compositional DPDP Newton. Does not edit ``fi_comp.py``.
 
 Unknowns: fracture (n_f[0:Nc], p_f) then matrix (n_m[0:Nc], p_m) per cell.
-Coloring Jacobian includes same-cell transfer coupling. Dense FD is used
-when the unknown count is small.
+Colored FD Jacobian is stored as CSR; linear solve is sparse.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy import linalg
-
-from reservoir_backend.comp.dual_residual import dual_residual, pack_dual, transmissibilities, unpack_dual
+from reservoir_backend.comp.dual_residual import dual_residual, pack_dual, unpack_dual
 from reservoir_backend.comp.dual_state import CompositionalContinuumState, DualCompositionalState
 from reservoir_backend.comp.fluid import CompSpec
 from reservoir_backend.comp.properties import flash_state, moles_from_z
@@ -24,9 +22,12 @@ from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.dual_rock import DualRock
 from reservoir_backend.physics.transfer import ComponentTransfer
 from reservoir_backend.ports.flow import FlowPort
+from reservoir_backend.solver.dpdp_context import DPDPModelContext
+from reservoir_backend.solver.dpdp_jacobian import fill_column_slice, residual_scales
 from reservoir_backend.solver.fi import dt_from_newton_iters
-from reservoir_backend.solver.fi_comp import _cell_colors, _control_map, _mass_pack, _neighbor_cells
+from reservoir_backend.solver.fi_comp import _control_map, _mass_pack
 from reservoir_backend.solver.impes import StepReport, Trajectory
+from reservoir_backend.solver.linear import solve_newton_system
 
 
 @dataclass
@@ -36,6 +37,13 @@ class DualCompStepResult:
     port_rates: dict[str, float]
     port_bhp: dict[str, float]
     q_src_fracture: NDArray[np.float64]
+    q_src_matrix: NDArray[np.float64]
+    max_mass_residual: float = 0.0
+    max_volume_residual: float = 0.0
+    newton_norm: float = 0.0
+    jac_s: float = 0.0
+    solve_s: float = 0.0
+    resid_s: float = 0.0
 
 
 def initialize_dual_state(
@@ -58,15 +66,23 @@ def initialize_dual_state(
     )
 
 
-def dual_to_state(spec: CompSpec, dual: DualCompositionalState) -> State:
-    """Observation-facing state is the fracture continuum."""
-    props = flash_state(spec, dual.fracture.pressure, dual.fracture.moles)
+def dual_to_state(spec: CompSpec, dual: DualCompositionalState, dual_rock: DualRock | None = None) -> State:
+    """Keep both continua on State so H can select fracture / matrix / bulk."""
+    props_f = flash_state(spec, dual.fracture.pressure, dual.fracture.moles)
+    props_m = flash_state(spec, dual.matrix.pressure, dual.matrix.moles)
+    phi_f = None if dual_rock is None else np.asarray(dual_rock.fracture.porosity, dtype=float)
+    phi_m = None if dual_rock is None else np.asarray(dual_rock.matrix.porosity, dtype=float)
     return State(
         pressure=dual.fracture.pressure.copy(),
-        sw=props.sw.copy(),
-        sg=props.sv.copy(),
+        sw=props_f.sw.copy(),
+        sg=props_f.sv.copy(),
         moles=dual.fracture.moles.copy(),
         time_s=float(dual.time_s),
+        pressure_matrix=dual.matrix.pressure.copy(),
+        sw_matrix=props_m.sw.copy(),
+        sg_matrix=props_m.sv.copy(),
+        phi_fracture=None if phi_f is None else phi_f.copy(),
+        phi_matrix=None if phi_m is None else phi_m.copy(),
     )
 
 
@@ -88,23 +104,36 @@ def _wells(
     cmap: dict[tuple[str, str], ControlSeries],
     t_eval: float,
     props_f,
+    props_m,
     *,
     need_bhp: bool,
 ):
+    q_f = np.zeros((grid.n_cells, spec.nc))
+    q_m = np.zeros((grid.n_cells, spec.nc))
+    rates: dict[str, float] = {}
+    bhp: dict[str, float] = {}
     if not ports:
-        return np.zeros((grid.n_cells, spec.nc)), {}, {}
-    q_f, rates, bhp = well_molar_sources(
-        grid,
-        dual_rock.fracture,
-        ports,
-        cmap,
-        state.fracture.pressure,
-        props_f,
-        spec,
-        t_eval,
-        need_bhp=need_bhp,
-    )
-    return q_f, rates, bhp
+        return q_f, q_m, rates, bhp
+    for port in ports:
+        coupling = str(getattr(port, "continuum_coupling", "fracture"))
+        frac = float(getattr(port, "fracture_fraction", 1.0))
+        if coupling == "matrix":
+            rock, p, props, dest_f = dual_rock.matrix, state.matrix.pressure, props_m, 0.0
+        else:
+            rock, p, props, dest_f = dual_rock.fracture, state.fracture.pressure, props_f, 1.0 if coupling == "fracture" else frac
+        q, r, b = well_molar_sources(
+            grid, rock, [port], cmap, p, props, spec, t_eval, need_bhp=need_bhp
+        )
+        if coupling == "matrix":
+            q_m = q_m + q
+        elif coupling == "split":
+            q_f = q_f + dest_f * q
+            q_m = q_m + (1.0 - dest_f) * q
+        else:
+            q_f = q_f + q
+        rates.update(r)
+        bhp.update(b)
+    return q_f, q_m, rates, bhp
 
 
 def _residual(
@@ -135,8 +164,9 @@ def _residual(
         props_m = flash_state(spec, state.matrix.pressure, state.matrix.moles)
     elif reflash_m is not None:
         flash_state(spec, state.matrix.pressure, state.matrix.moles, cells=reflash_m, out=props_m)
-    q_f, rates, bhp = _wells(grid, dual_rock, spec, state, ports, cmap, t_eval, props_f, need_bhp=need_bhp)
-    q_m = np.zeros_like(q_f)
+    q_f, q_m, rates, bhp = _wells(
+        grid, dual_rock, spec, state, ports, cmap, t_eval, props_f, props_m, need_bhp=need_bhp
+    )
     res, props_f, props_m, _tr = dual_residual(
         grid,
         dual_rock,
@@ -152,11 +182,11 @@ def _residual(
         props_fracture=props_f,
         props_matrix=props_m,
     )
-    return res, props_f, props_m, rates, bhp, q_f
+    return res, props_f, props_m, rates, bhp, q_f, q_m
 
 
 def _coloring_jacobian(
-    grid: CartesianGrid,
+    ctx: DPDPModelContext,
     spec: CompSpec,
     dual_rock: DualRock,
     old: DualCompositionalState,
@@ -173,27 +203,23 @@ def _coloring_jacobian(
     props_m0,
     n_scale: float,
     p_scale: float,
-) -> NDArray[np.float64]:
-    """FD Jacobian. Transfer couples the two continua in the same cell."""
+):
+    """Colored FD into the cached CSR pattern."""
+    grid = ctx.grid
     n_cells = grid.n_cells
     nc = spec.nc
     nu = nc + 1
     half = n_cells * nu
-    n_u = 2 * half
-    colors = _cell_colors(grid)
-    n_colors = int(np.max(colors)) + 1
-    color_cells = [np.flatnonzero(colors == color) for color in range(n_colors)]
-    neighbors = [_neighbor_cells(grid, c) for c in range(n_cells)]
-    jac = np.zeros((n_u, n_u))
+    pattern = ctx.pattern
+    data = pattern.empty_data()
     eps_n = 1.0e-8 * max(n_scale, 1.0)
     eps_p = 1.0e-8 * max(p_scale, 1.0e5)
     nf0, pf0, nm0, pm0 = unpack_dual(u, n_cells, nc)
-    for cells in color_cells:
+    for cells in ctx.color_cells:
         if cells.size == 0:
             continue
         for cont in (0, 1):
             offset = cont * half
-            other = (1 - cont) * half
             for slot in range(nu):
                 nf, pf, nm, pm = nf0.copy(), pf0.copy(), nm0.copy(), pm0.copy()
                 pf_props = props_f0.copy()
@@ -216,7 +242,7 @@ def _coloring_jacobian(
                     matrix=CompositionalContinuumState(pm, nm),
                     time_s=t1,
                 )
-                r2, _, _, _, _, _ = _residual(
+                r2, _, _, _, _, _, _ = _residual(
                     grid,
                     dual_rock,
                     spec,
@@ -237,13 +263,16 @@ def _coloring_jacobian(
                 )
                 dres = (r2 - res0) / eps
                 for c in cells:
-                    col = offset + int(c) * nu + slot
-                    for cc in neighbors[int(c)]:
-                        for blk in range(nu):
-                            jac[offset + int(cc) * nu + blk, col] = dres[offset + int(cc) * nu + blk]
-                    for blk in range(nu):
-                        jac[other + int(c) * nu + blk, col] = dres[other + int(c) * nu + blk]
-    return jac
+                    fill_column_slice(pattern, data, offset + int(c) * nu + slot, dres)
+    return pattern.to_csr(data)
+
+
+def _residual_stats(res: NDArray[np.float64], n_cells: int, nc: int, scale: NDArray[np.float64]) -> tuple[float, float, float]:
+    block = np.asarray(res, dtype=float).reshape(2, n_cells, nc + 1)
+    mass = float(np.max(np.abs(block[:, :, :nc])))
+    vol = float(np.max(np.abs(block[:, :, nc])))
+    nrm = float(np.max(np.abs(res * scale)))
+    return mass, vol, nrm
 
 
 def solve_dual_comp_step(
@@ -258,12 +287,14 @@ def solve_dual_comp_step(
     controls: list[ControlSeries] | dict[tuple[str, str], ControlSeries] | None = None,
     max_newton: int = 20,
     tol: float = 1.0e-8,
+    context: DPDPModelContext | None = None,
 ) -> DualCompStepResult:
-    """One fully implicit DPDP step. Raises on Newton failure."""
+    """One fully implicit DPDP step. Raises on Newton failure (caller chops Δt)."""
+    ctx = context if context is not None else DPDPModelContext.build(grid, spec.nc)
     old = state.copy()
     n_cells = grid.n_cells
     nc = spec.nc
-    t_f, t_m = transmissibilities(grid, dual_rock)
+    t_f, t_m = ctx.transmissibilities(dual_rock)
     u = pack_dual(state)
     t1 = float(state.time_s) + float(dt)
     ports = list(ports or [])
@@ -274,27 +305,45 @@ def solve_dual_comp_step(
     last_res = None
     last_rates: dict[str, float] = {}
     last_bhp: dict[str, float] = {}
-    last_q = np.zeros((n_cells, nc))
+    last_qf = np.zeros((n_cells, nc))
+    last_qm = np.zeros((n_cells, nc))
+    t_jac = 0.0
+    t_solve = 0.0
+    t_res = 0.0
     n_scale = max(float(np.mean(np.sum(state.fracture.moles, axis=1))), 1.0e-6)
     p_scale = max(float(np.mean(np.abs(state.fracture.pressure))), 1.0e5)
+    pv = np.asarray(dual_rock.fracture.porosity, dtype=float).ravel() * grid.cell_volumes()
+    pv_scale = max(float(np.mean(pv)), 1.0e-12)
+    row_s = residual_scales(n_cells, nc, n_scale, pv_scale)
 
     for it in range(int(max_newton)):
         trial = _state_from_u(u, n_cells, nc, t1)
-        res, props_f, props_m, last_rates, last_bhp, last_q = _residual(
+        t_r0 = time.perf_counter()
+        res, props_f, props_m, last_rates, last_bhp, last_qf, last_qm = _residual(
             grid, dual_rock, spec, trial, old, dt, transfer, t_f, t_m, ports, cmap, t1, need_bhp=True
         )
+        t_res += time.perf_counter() - t_r0
         last_res = res
-        if float(np.max(np.abs(res))) < float(tol):
+        mass_r, vol_r, nrm = _residual_stats(res, n_cells, nc, row_s)
+        if nrm < float(tol):
             trial.time_s = t1
             return DualCompStepResult(
                 state=trial,
                 newton_iters=it + 1,
                 port_rates=dict(last_rates),
                 port_bhp=dict(last_bhp),
-                q_src_fracture=last_q,
+                q_src_fracture=last_qf,
+                q_src_matrix=last_qm,
+                max_mass_residual=mass_r,
+                max_volume_residual=vol_r,
+                newton_norm=nrm,
+                jac_s=t_jac,
+                solve_s=t_solve,
+                resid_s=t_res,
             )
+        t_j0 = time.perf_counter()
         jac = _coloring_jacobian(
-            grid,
+            ctx,
             spec,
             dual_rock,
             old,
@@ -312,15 +361,17 @@ def solve_dual_comp_step(
             n_scale,
             p_scale,
         )
-        try:
-            step = linalg.solve(jac, -res, assume_a="gen")
-        except linalg.LinAlgError as exc:
-            raise PhysicsConvergenceError("DPDP Newton Jacobian is singular") from exc
+        t_jac += time.perf_counter() - t_j0
+        jac_s = jac.tocsr().multiply(row_s[:, None]).tocsc()
+        t_s0 = time.perf_counter()
+        lin = solve_newton_system(jac_s, -(res * row_s))
+        t_solve += time.perf_counter() - t_s0
+        step = lin.x
         if not np.all(np.isfinite(step)):
             raise PhysicsConvergenceError("DPDP Newton step is not finite")
         alpha = 1.0
         accepted = False
-        r0 = float(np.linalg.norm(res))
+        r0 = float(np.linalg.norm(res * row_s))
         for _ in range(8):
             u_try = u + alpha * step
             trial2 = _state_from_u(u_try, n_cells, nc, t1)
@@ -329,19 +380,19 @@ def solve_dual_comp_step(
             trial2.fracture.pressure = np.clip(trial2.fracture.pressure, 1.0e4, 1.0e9)
             trial2.matrix.pressure = np.clip(trial2.matrix.pressure, 1.0e4, 1.0e9)
             packed = pack_dual(trial2)
-            r_try, _, _, rates_try, bhp_try, q_try = _residual(
+            r_try, _, _, rates_try, bhp_try, qf_try, qm_try = _residual(
                 grid, dual_rock, spec, trial2, old, dt, transfer, t_f, t_m, ports, cmap, t1, need_bhp=False
             )
-            if float(np.linalg.norm(r_try)) <= (1.0 - 1.0e-4 * alpha) * r0:
+            if float(np.linalg.norm(r_try * row_s)) <= (1.0 - 1.0e-4 * alpha) * r0:
                 u = packed
-                last_rates, last_bhp, last_q = rates_try, bhp_try, q_try
+                last_rates, last_bhp, last_qf, last_qm = rates_try, bhp_try, qf_try, qm_try
                 accepted = True
                 break
             alpha *= 0.5
         if not accepted:
-            u = pack_dual(_state_from_u(u + 0.1 * step, n_cells, nc, t1))
-    nrm = float(np.max(np.abs(last_res))) if last_res is not None else float("inf")
-    raise PhysicsConvergenceError(f"DPDP Newton failed, max|R|={nrm:.3e}")
+            raise PhysicsConvergenceError("DPDP Newton line search failed")
+    nrm = float(np.max(np.abs(last_res * row_s))) if last_res is not None else float("inf")
+    raise PhysicsConvergenceError(f"DPDP Newton failed, ||R*||_inf={nrm:.3e}")
 
 
 def simulate_dual_comp(
@@ -359,8 +410,11 @@ def simulate_dual_comp(
     dt_max: float = 60.0,
     max_steps: int = 12000,
     report_times: NDArray[np.float64] | None = None,
+    context: DPDPModelContext | None = None,
+    matrix_intercell: bool = True,
 ) -> tuple[Trajectory, DualCompositionalState]:
-    """Time loop for compositional DPDP. Wells are on the fracture continuum."""
+    """Time loop for compositional DPDP. Port coupling selects fracture/matrix/split."""
+    ctx = context if context is not None else DPDPModelContext.build(grid, spec.nc, matrix_intercell=matrix_intercell)
     if isinstance(state0, DualCompositionalState):
         dual = state0.copy()
     else:
@@ -373,7 +427,7 @@ def simulate_dual_comp(
     t_end = float(t_end)
     dt = min(float(dt_init), float(dt_max))
     reports: list[StepReport] = []
-    vis = dual_to_state(spec, dual)
+    vis = dual_to_state(spec, dual, dual_rock)
     states = [vis]
     times = [t]
     cmap = _control_map(controls)
@@ -387,7 +441,11 @@ def simulate_dual_comp(
     rates_hist = [dict(rates0)]
     bhp_hist = [dict(bhp0)]
     n_acc = 0
+    n_reject = 0
     last_its = 5
+    sum_jac = 0.0
+    sum_solve = 0.0
+    sum_res = 0.0
 
     while t < t_end - 1.0e-15:
         if n_acc >= int(max_steps):
@@ -397,13 +455,15 @@ def simulate_dual_comp(
             raise TimeStepUnderflow(f"failed to accept a DPDP step at t={t}")
         try:
             nxt = solve_dual_comp_step(
-                grid, dual_rock, spec, dual, dt, transfer, ports=ports, controls=cmap
+                grid, dual_rock, spec, dual, dt, transfer, ports=ports, controls=cmap, context=ctx
             )
         except PhysicsConvergenceError:
+            n_reject += 1
             dt *= 0.5
             continue
-        inj = np.sum(np.maximum(nxt.q_src_fracture, 0.0), axis=0) * dt
-        prod = np.sum(np.maximum(-nxt.q_src_fracture, 0.0), axis=0) * dt
+        q_tot = nxt.q_src_fracture + nxt.q_src_matrix
+        inj = np.sum(np.maximum(q_tot, 0.0), axis=0) * dt
+        prod = np.sum(np.maximum(-q_tot, 0.0), axis=0) * dt
         injected = injected + inj
         produced = produced + prod
         dual = nxt.state
@@ -415,6 +475,9 @@ def simulate_dual_comp(
             injected,
             produced,
         )
+        sum_jac += float(nxt.jac_s)
+        sum_solve += float(nxt.solve_s)
+        sum_res += float(nxt.resid_s)
         reports.append(
             StepReport(
                 time_s=t,
@@ -423,16 +486,35 @@ def simulate_dual_comp(
                 max_ds=0.0,
                 mass=mb,
                 port_rates=dict(nxt.port_rates),
-                notes=[],
+                notes=[
+                    f"max_mass_residual={nxt.max_mass_residual:.3e}",
+                    f"max_volume_residual={nxt.max_volume_residual:.3e}",
+                    f"newton_norm={nxt.newton_norm:.3e}",
+                    f"jac_s={nxt.jac_s:.4f}",
+                    f"solve_s={nxt.solve_s:.4f}",
+                    f"resid_s={nxt.resid_s:.4f}",
+                    f"n_reject={n_reject}",
+                ],
                 newton_its=nxt.newton_iters,
             )
         )
-        states.append(dual_to_state(spec, dual))
+        states.append(dual_to_state(spec, dual, dual_rock))
         times.append(t)
         rates_hist.append(dict(nxt.port_rates))
         bhp_hist.append(dict(nxt.port_bhp))
         dt = dt_from_newton_iters(dt, nxt.newton_iters, its0=last_its, dt_min=dt_min, dt_max=dt_max)
         last_its = nxt.newton_iters
+
+    if reports:
+        reports[-1].notes.extend(
+            [
+                f"sum_jac_s={sum_jac:.4f}",
+                f"sum_solve_s={sum_solve:.4f}",
+                f"sum_resid_s={sum_res:.4f}",
+                f"n_accept={n_acc}",
+                f"n_reject={n_reject}",
+            ]
+        )
 
     if report_times is not None:
         need = np.unique(np.asarray(report_times, dtype=float))

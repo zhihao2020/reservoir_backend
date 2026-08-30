@@ -271,7 +271,11 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
         fluid=fluid,
         temperature_k=float(phys_cfg.get("temperature_k", 350.0)),
         z_init=None if phys_cfg.get("z_init") is None else np.asarray(phys_cfg.get("z_init"), dtype=float),
-        shape_factor=float(phys_cfg.get("shape_factor", 40.0)),
+        shape_factor=float(
+            (phys_cfg.get("transfer") or {}).get(
+                "shape_factor_m2_inv", phys_cfg.get("shape_factor", 40.0)
+            )
+        ),
         phi_fracture=float(phys_cfg.get("phi_fracture", 0.02)),
         k_matrix_m2=(
             None
@@ -307,6 +311,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                 probe_diameter_m=float(probe or 0.0),
                 port_name=s.get("port"),
                 sigma=float(s.get("sigma", 1.0)),
+                medium=str(s.get("medium", "fracture")),
             )
         )
 
@@ -437,6 +442,7 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
         seed=int(inv.get("seed", 0)),
         alpha=None if alpha is None else list(alpha),
         clip_innovation=bool(inv.get("clip_innovation", False) or inv.get("robust_observations", False)),
+        n_workers=None if inv.get("n_workers") is None else int(inv.get("n_workers")),
     )
 
 

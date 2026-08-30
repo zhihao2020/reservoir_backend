@@ -25,17 +25,26 @@ class TwinUDPProtocol:
     notes: list[str] = field(default_factory=list)
 
     def handle_bytes(self, payload: bytes) -> bytes:
+        req_id = None
         try:
             msg = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            return json.dumps({"ok": False, "error": f"invalid json: {exc}"}).encode("utf-8")
+            return json.dumps(
+                {"ok": False, "error_code": 1, "error": f"invalid json: {exc}", "request_id": None}
+            ).encode("utf-8")
         if not isinstance(msg, dict):
-            return json.dumps({"ok": False, "error": "payload must be an object"}).encode("utf-8")
+            return json.dumps(
+                {"ok": False, "error_code": 1, "error": "payload must be an object", "request_id": None}
+            ).encode("utf-8")
+        req_id = msg.get("request_id")
         cmd = str(msg.get("cmd", "")).strip().lower()
         try:
             out = self._dispatch(cmd, msg)
+            out.setdefault("ok", True)
+            out.setdefault("error_code", 0)
         except Exception as exc:
-            out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            out = {"ok": False, "error_code": 2, "error": f"{type(exc).__name__}: {exc}"}
+        out["request_id"] = req_id
         return json.dumps(out).encode("utf-8")
 
     def _dispatch(self, cmd: str, msg: dict[str, Any]) -> dict[str, Any]:

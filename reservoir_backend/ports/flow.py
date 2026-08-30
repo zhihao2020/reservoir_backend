@@ -27,6 +27,8 @@ class FlowPort:
     geofac: float = 0.0
     axis: str = "k"  # Peaceman wellbore axis: i / j / k (CMG *GEOMETRY *I/*J/*K)
     min_bhp_Pa: float | None = None  # rate-well floor (IMEX *MIN *BHP); producers only
+    continuum_coupling: str = "fracture"  # fracture | matrix | split
+    fracture_fraction: float = 1.0  # used when coupling is split; fraction of q on fracture
 
     def __post_init__(self) -> None:
         role = str(self.role).strip().lower()
@@ -42,9 +44,21 @@ class FlowPort:
         cells = np.unique(np.asarray(self.cell_ids, dtype=np.int64).ravel())
         if cells.size == 0:
             raise InvalidControl(f"port {self.name} has no cells")
+        coupling = str(self.continuum_coupling).strip().lower()
+        if coupling in {"f", "frac", "fracture"}:
+            coupling = "fracture"
+        elif coupling in {"m", "mat", "matrix"}:
+            coupling = "matrix"
+        elif coupling in {"split", "both", "fm"}:
+            coupling = "split"
+        else:
+            raise InvalidControl(f"unsupported continuum_coupling: {self.continuum_coupling}")
+        frac = float(np.clip(self.fracture_fraction, 0.0, 1.0))
         object.__setattr__(self, "role", role)
         object.__setattr__(self, "control", control)
         object.__setattr__(self, "cell_ids", cells)
+        object.__setattr__(self, "continuum_coupling", coupling)
+        object.__setattr__(self, "fracture_fraction", frac)
 
     @classmethod
     def at_point(

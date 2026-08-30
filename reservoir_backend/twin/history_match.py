@@ -6,7 +6,9 @@ a fresh forward run after the parameter update.
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
+import os
 
 import numpy as np
 from numpy.typing import NDArray
@@ -41,27 +43,52 @@ def _clip_members(twin: DigitalTwin, members: NDArray[np.float64]) -> NDArray[np
     return x
 
 
+def _forward_one(payload: tuple) -> tuple[int, NDArray[np.float64] | None, str]:
+    """Picklable worker: (index, theta, series, t_end, twin) → predicted column."""
+    j, theta, series, t_end, twin = payload
+    try:
+        yj = np.asarray(twin._forward_vector(theta, series, t_end=t_end), dtype=float)
+        if not np.all(np.isfinite(yj)):
+            return j, None, "NaN predicted observation"
+        return j, yj, ""
+    except (PhysicsConvergenceError, TimeStepUnderflow, ValueError, ArithmeticError) as exc:
+        return j, None, f"{type(exc).__name__}: {exc}"
+
+
+def _worker_count(n_ens: int, n_cells: int, requested: int | None) -> int:
+    cpu = max(int(os.cpu_count() or 1), 1)
+    if n_cells < 125 and requested is None:
+        return 1
+    mem_cap = max(1, 8 if n_cells >= 8000 else 16 if n_cells >= 1000 else cpu)
+    want = cpu if requested is None else max(int(requested), 1)
+    return max(1, min(n_ens, cpu, mem_cap, want))
+
+
 def _forward_ensemble(
     twin: DigitalTwin,
     members: NDArray[np.float64],
     series: list[ObservationSeries],
     t_end: float,
+    *,
+    n_workers: int | None = None,
 ) -> tuple[NDArray[np.float64], list[dict[str, str]], int]:
     n_obs = stack_observations(series).values.size
     n_ens = members.shape[1]
     y = np.full((n_obs, n_ens), np.nan, dtype=float)
     failed: list[dict[str, str]] = []
-    n_forward = 0
-    for j in range(n_ens):
-        theta = members[:, j]
-        n_forward += 1
-        try:
-            y[:, j] = twin._forward_vector(theta, series, t_end=t_end)
-            if not np.all(np.isfinite(y[:, j])):
-                raise PhysicsConvergenceError("NaN predicted observation")
-        except (PhysicsConvergenceError, TimeStepUnderflow, ValueError, ArithmeticError) as exc:
-            failed.append({"member": str(j), "reason": f"{type(exc).__name__}: {exc}"})
-    return y, failed, n_forward
+    workers = _worker_count(n_ens, int(twin.grid.n_cells), n_workers)
+    jobs = [(j, members[:, j], series, t_end, twin) for j in range(n_ens)]
+    if workers <= 1:
+        rows = [_forward_one(job) for job in jobs]
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            rows = list(pool.map(_forward_one, jobs))
+    for j, yj, reason in rows:
+        if yj is None:
+            failed.append({"member": str(j), "reason": reason})
+        else:
+            y[:, int(j)] = yj
+    return y, failed, n_ens
 
 
 def _whitened_misfit(predicted: NDArray[np.float64], d: NDArray[np.float64], sigma: NDArray[np.float64]) -> float:
@@ -98,6 +125,7 @@ class HistoryMatchWorkflow:
         n_a = int(cfg.get("assimilation_steps", twin.inverse.assimilation_steps))
         seed = int(cfg.get("seed", twin.inverse.seed))
         alpha_cfg = cfg.get("alpha", twin.inverse.alpha)
+        n_workers = cfg.get("n_workers", getattr(twin.inverse, "n_workers", None))
         rng = np.random.default_rng(seed)
         alphas = inflation_schedule(n_a, None if alpha_cfg is None else np.asarray(alpha_cfg, dtype=float))
 
@@ -117,14 +145,18 @@ class HistoryMatchWorkflow:
         failed_all: list[dict[str, str]] = []
         predicted = np.zeros((d_obs.values.size, n_ens), dtype=float)
         for step, alpha in enumerate(alphas):
-            predicted, failed, n_fwd = _forward_ensemble(twin, members, assim, t_hist)
+            predicted, failed, n_fwd = _forward_ensemble(
+                twin, members, assim, t_hist, n_workers=n_workers
+            )
             n_forward += n_fwd
             failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(n_ens)])
             if np.any(failed_mask):
                 failed_all.extend({"step": str(step), **row} for row in failed)
                 members = replace_failed_members(members, failed_mask, rng, pstd)
                 members = _clip_members(twin, members)
-                predicted, failed2, n_fwd2 = _forward_ensemble(twin, members, assim, t_hist)
+                predicted, failed2, n_fwd2 = _forward_ensemble(
+                    twin, members, assim, t_hist, n_workers=n_workers
+                )
                 n_forward += n_fwd2
                 failed_all.extend({"step": str(step), "retry": "1", **row} for row in failed2)
                 failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(n_ens)])
@@ -149,7 +181,9 @@ class HistoryMatchWorkflow:
             )
             members = _clip_members(twin, members)
 
-        predicted, failed, n_fwd = _forward_ensemble(twin, members, assim, t_hist)
+        predicted, failed, n_fwd = _forward_ensemble(
+            twin, members, assim, t_hist, n_workers=n_workers
+        )
         n_forward += n_fwd
         if failed:
             failed_all.extend({"step": "posterior", **row} for row in failed)

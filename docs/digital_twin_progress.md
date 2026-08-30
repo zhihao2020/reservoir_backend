@@ -21,7 +21,7 @@
 ## 未完成
 
 - 实验室 `apply` 默认仍是两区 log K + LM（计划允许）
-- 电阻率 / EM / 声波独立反演仍是 `H` 的饱和度别名，不是单独物理模块
+- 30³ 阶梯：脚本 `scripts/dpdp_scale_bench.py`；pytest 含 5³ 与 10³。20³/30³ 由脚本记录，通过前不扩 zonal \(C_f\)
 
 ## 接口变化
 
@@ -42,4 +42,4 @@
 
 ## 下一阶段
 
-V1 Gate 0–5 已落地。实验室 `apply` 默认路径仍是两区 log K + LM。
+跑 `scripts/dpdp_scale_bench.py --max-n 30` 留下 20³/30³ 计时；通过后才允许 zonal \(C_f\)。

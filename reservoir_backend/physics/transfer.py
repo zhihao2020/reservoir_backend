@@ -74,12 +74,18 @@ class ComponentTransfer:
         cell_volume: NDArray[np.float64],
         props_matrix: PhaseProps,
         props_fracture: PhaseProps,
+        k_matrix: NDArray[np.float64] | float | None = None,
     ) -> TransferRates:
         pm = np.asarray(p_matrix, dtype=float).ravel()
         pf = np.asarray(p_fracture, dtype=float).ravel()
         vol = np.asarray(cell_volume, dtype=float).ravel()
         dphi = pm - pf
-        cond = float(self.shape_factor) * float(self.k_matrix_m2) * vol
+        if k_matrix is None:
+            km = float(self.k_matrix_m2)
+        else:
+            km_arr = np.asarray(k_matrix, dtype=float)
+            km = km_arr if km_arr.shape == vol.shape else float(np.ravel(km_arr)[0])
+        cond = float(self.shape_factor) * km * vol
         from_m = dphi >= 0.0
         lam_l = np.where(from_m, props_matrix.lam_l, props_fracture.lam_l)
         lam_v = np.where(from_m, props_matrix.lam_v, props_fracture.lam_v)

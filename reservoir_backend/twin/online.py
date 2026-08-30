@@ -36,9 +36,10 @@ class TwinCheckpoint:
 
     time_s: float
     parameter_ensemble: NDArray[np.float64]
-    dual_state: DualCompositionalState | None
+    dual_states: list[DualCompositionalState] | None
     rng_state: dict
     config_hash: str
+    controls_cursor: int = 0
 
 
 @dataclass
@@ -49,17 +50,20 @@ class OnlineAssimilationWorkflow:
     members: NDArray[np.float64]
     q_std: float = 0.02
     time_s: float = 0.0
-    dual_state: DualCompositionalState | None = None
+    dual_states: list[DualCompositionalState] | None = None
+    controls_cursor: int = 0
+    predicted_posterior: NDArray[np.float64] | None = None
     notes: list[str] = field(default_factory=list)
 
     def snapshot(self, rng: np.random.Generator) -> TwinCheckpoint:
-        dual = None if self.dual_state is None else self.dual_state.copy()
+        duals = None if self.dual_states is None else [s.copy() for s in self.dual_states]
         return TwinCheckpoint(
             time_s=float(self.time_s),
             parameter_ensemble=np.asarray(self.members, dtype=float).copy(),
-            dual_state=dual,
+            dual_states=duals,
             rng_state=rng.bit_generator.state,
             config_hash=_config_hash(self.twin),
+            controls_cursor=int(self.controls_cursor),
         )
 
     def restore(self, checkpoint: TwinCheckpoint, rng: np.random.Generator) -> None:
@@ -67,7 +71,8 @@ class OnlineAssimilationWorkflow:
             raise AssimilationError("checkpoint config hash does not match the twin")
         self.time_s = float(checkpoint.time_s)
         self.members = np.asarray(checkpoint.parameter_ensemble, dtype=float).copy()
-        self.dual_state = None if checkpoint.dual_state is None else checkpoint.dual_state.copy()
+        self.dual_states = None if checkpoint.dual_states is None else [s.copy() for s in checkpoint.dual_states]
+        self.controls_cursor = int(checkpoint.controls_cursor)
         rng.bit_generator.state = checkpoint.rng_state
 
     def forecast(self, rng: np.random.Generator) -> NDArray[np.float64]:
@@ -97,6 +102,38 @@ class OnlineAssimilationWorkflow:
                 rng,
             )
             self.members = xa
+            return xa
+        except Exception:
+            self.restore(checkpoint, rng)
+            raise
+
+    def cycle(
+        self,
+        predicted_fn,
+        observations: NDArray[np.float64],
+        sigma: NDArray[np.float64],
+        rng: np.random.Generator,
+    ) -> NDArray[np.float64]:
+        """checkpoint → forecast → H(F) → QC/EnKF → rollback → posterior members.
+
+        ``predicted_fn(members)`` must return H(F(members)) from the checkpoint
+        physical time. Physical rerun of the posterior is the caller's job with
+        the returned ensemble; this method never writes p/S into the filter.
+        """
+        checkpoint = self.snapshot(rng)
+        try:
+            self.forecast(rng)
+            y = predicted_fn(self.members)
+            xa = self.assimilate(y, observations, sigma, rng)
+            physical = checkpoint.dual_states
+            cursor = checkpoint.controls_cursor
+            t = checkpoint.time_s
+            self.restore(checkpoint, rng)
+            self.members = xa
+            self.dual_states = physical
+            self.controls_cursor = cursor
+            self.time_s = t
+            self.predicted_posterior = predicted_fn(xa)
             return xa
         except Exception:
             self.restore(checkpoint, rng)

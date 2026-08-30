@@ -13,6 +13,49 @@ from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.ports.flow import FlowPort
 
 
+def _bulk_weight(fracture: NDArray[np.float64], matrix: NDArray[np.float64], state: State) -> NDArray[np.float64]:
+    pf = np.asarray(state.phi_fracture if state.phi_fracture is not None else 0.02, dtype=float).ravel()
+    pm = np.asarray(state.phi_matrix if state.phi_matrix is not None else 0.08, dtype=float).ravel()
+    n = np.asarray(fracture, dtype=float).ravel()
+    if pf.size == 1:
+        pf = np.full(n.size, float(pf[0]))
+    if pm.size == 1:
+        pm = np.full(n.size, float(pm[0]))
+    den = np.maximum(pf + pm, 1.0e-18)
+    return (pf * n + pm * np.asarray(matrix, dtype=float).ravel()) / den
+
+
+def _pressure_field(state: State, medium: str) -> NDArray[np.float64]:
+    if medium == "matrix" and state.pressure_matrix is not None:
+        return np.asarray(state.pressure_matrix, dtype=float)
+    if medium == "bulk" and state.pressure_matrix is not None:
+        return _bulk_weight(state.pressure, state.pressure_matrix, state)
+    return np.asarray(state.pressure, dtype=float)
+
+
+def _sw_field(state: State, medium: str) -> NDArray[np.float64]:
+    if medium == "matrix" and state.sw_matrix is not None:
+        return np.asarray(state.sw_matrix, dtype=float)
+    if medium == "bulk" and state.sw_matrix is not None:
+        return _bulk_weight(state.sw, state.sw_matrix, state)
+    return np.asarray(state.sw, dtype=float)
+
+
+def _sg_field(state: State, medium: str) -> NDArray[np.float64]:
+    sg_f = state.sg if state.sg is not None else np.zeros_like(state.sw)
+    if medium == "matrix" and state.sg_matrix is not None:
+        return np.asarray(state.sg_matrix, dtype=float)
+    if medium == "bulk" and state.sg_matrix is not None:
+        return _bulk_weight(sg_f, state.sg_matrix, state)
+    return np.asarray(sg_f, dtype=float)
+
+
+def _so_field(state: State, medium: str) -> NDArray[np.float64]:
+    sw = _sw_field(state, medium)
+    sg = _sg_field(state, medium)
+    return 1.0 - sw - sg
+
+
 def _trilinear(grid: CartesianGrid, field: NDArray[np.float64], x: float, y: float, z: float) -> float:
     """Trilinear interpolation on the cell-center lattice."""
     values = np.asarray(field, dtype=float).ravel()
@@ -131,14 +174,13 @@ class ObservationOperator:
         port_bhp: dict[str, float] | None = None,
     ) -> float:
         if sensor.kind == "pressure":
-            return self.sample_field(sensor, state.pressure)
+            return self.sample_field(sensor, _pressure_field(state, sensor.medium))
         if sensor.kind == "saturation":
-            return self.sample_field(sensor, state.sw)
+            return self.sample_field(sensor, _sw_field(state, sensor.medium))
         if sensor.kind == "oil_saturation":
-            return self.sample_field(sensor, state.so())
+            return self.sample_field(sensor, _so_field(state, sensor.medium))
         if sensor.kind == "gas_saturation":
-            sg = state.sg if state.sg is not None else np.zeros_like(state.sw)
-            return self.sample_field(sensor, np.asarray(sg, dtype=float))
+            return self.sample_field(sensor, _sg_field(state, sensor.medium))
         if sensor.kind == "phase_rate":
             if not sensor.port_name:
                 raise InvalidObservation(f"phase_rate sensor {sensor.name} needs port_name")

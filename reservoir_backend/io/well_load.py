@@ -182,6 +182,10 @@ def _port_from_yaml(grid: Any, p: dict[str, Any]) -> FlowPort:
         port.axis = str(p["axis"]).strip().lower()[:1] or "k"
     if p.get("wi_multiplier") is not None:
         port.wi_multiplier = float(p["wi_multiplier"])
+    if p.get("continuum_coupling") is not None or p.get("coupling") is not None:
+        port.continuum_coupling = str(p.get("continuum_coupling", p.get("coupling")))
+    if p.get("fracture_fraction") is not None:
+        port.fracture_fraction = float(p["fracture_fraction"])
     return port
 
 

@@ -22,6 +22,7 @@ class Sensor:
     probe_diameter_m: float = 0.0
     port_name: str | None = None
     sigma: float = 0.0
+    medium: str = "fracture"
 
     def __post_init__(self) -> None:
         kind = str(self.kind).strip().lower()
@@ -55,6 +56,16 @@ class Sensor:
         else:
             raise ValueError(f"unsupported sensor kind: {self.kind}")
         object.__setattr__(self, "kind", kind)
+        medium = str(self.medium).strip().lower()
+        if medium in {"f", "frac", "fracture"}:
+            medium = "fracture"
+        elif medium in {"m", "mat", "matrix"}:
+            medium = "matrix"
+        elif medium in {"b", "bulk", "both", "pv"}:
+            medium = "bulk"
+        else:
+            raise ValueError(f"unsupported sensor medium: {self.medium}")
+        object.__setattr__(self, "medium", medium)
         if self.volume_m3 < 0.0:
             raise ValueError("sensor volume_m3 must be >= 0")
         if self.probe_diameter_m < 0.0:
@@ -201,6 +212,11 @@ class State:
     rs: NDArray[np.float64] | None = None
     moles: NDArray[np.float64] | None = None
     time_s: float = 0.0
+    pressure_matrix: NDArray[np.float64] | None = None
+    sw_matrix: NDArray[np.float64] | None = None
+    sg_matrix: NDArray[np.float64] | None = None
+    phi_fracture: NDArray[np.float64] | None = None
+    phi_matrix: NDArray[np.float64] | None = None
 
     def so(self) -> NDArray[np.float64]:
         sg = self.sg if self.sg is not None else 0.0
@@ -214,6 +230,11 @@ class State:
             rs=None if self.rs is None else np.asarray(self.rs, dtype=float).copy(),
             moles=None if self.moles is None else np.asarray(self.moles, dtype=float).copy(),
             time_s=float(self.time_s),
+            pressure_matrix=None if self.pressure_matrix is None else np.asarray(self.pressure_matrix, dtype=float).copy(),
+            sw_matrix=None if self.sw_matrix is None else np.asarray(self.sw_matrix, dtype=float).copy(),
+            sg_matrix=None if self.sg_matrix is None else np.asarray(self.sg_matrix, dtype=float).copy(),
+            phi_fracture=None if self.phi_fracture is None else np.asarray(self.phi_fracture, dtype=float).copy(),
+            phi_matrix=None if self.phi_matrix is None else np.asarray(self.phi_matrix, dtype=float).copy(),
         )
 
 

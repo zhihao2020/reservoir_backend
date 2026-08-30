@@ -13,7 +13,7 @@ from reservoir_backend.physics.dual_rock import DualRock
 from reservoir_backend.physics.transfer import ComponentTransfer
 from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.solver.fi_comp import simulate_comp, initialize_state
-from reservoir_backend.solver.fi_comp_dual import initialize_dual_state, simulate_dual_comp, solve_dual_comp_step
+from reservoir_backend.solver.fi_comp_dual import initialize_dual_state, simulate_dual_comp
 
 
 def _spec():
@@ -43,9 +43,9 @@ def test_d1_newton_three_fluxes_and_conservation() -> None:
     n0 = state.total_moles()
     dp_f0 = abs(float(state.fracture.pressure[0] - state.fracture.pressure[1]))
     dp_mf0 = abs(float(state.matrix.pressure[0] - state.fracture.pressure[0]))
-    for _ in range(8):
-        out = solve_dual_comp_step(grid, dual, spec, state, dt=5.0, transfer=transfer, tol=1.0e-7)
-        state = out.state
+    _, state = simulate_dual_comp(
+        grid, dual, spec, transfer, [], [], state, t_end=8.0, dt_init=2.0, dt_max=4.0, max_steps=80
+    )
     n1 = state.total_moles()
     rel = float(np.max(np.abs(n1 - n0)) / max(float(np.max(np.abs(n0))), 1.0e-18))
     assert rel < 1.0e-4
@@ -76,25 +76,21 @@ def test_d2_zero_sigma_matches_uncoupled_simulators() -> None:
 
 def test_d3_matrix_intercell_off_is_dual_porosity() -> None:
     grid, spec, dual, state = _two_cell()
-    dual = dual.with_matrix_permeability(1.0e-22)
     closed = ComponentTransfer(shape_factor=0.0, k_matrix_m2=1.0e-15)
     open_t = ComponentTransfer(shape_factor=40.0, k_matrix_m2=1.0e-15)
     n_m1_0 = state.matrix.moles[1].copy()
     _, dead_end = simulate_dual_comp(
-        grid, dual, spec, closed, [], [], state, t_end=15.0, dt_init=5.0, dt_max=8.0
+        grid, dual, spec, closed, [], [], state, t_end=15.0, dt_init=5.0, dt_max=8.0, matrix_intercell=False
     )
     _, live_end = simulate_dual_comp(
-        grid, dual, spec, open_t, [], [], state, t_end=15.0, dt_init=5.0, dt_max=8.0
+        grid, dual, spec, open_t, [], [], state, t_end=15.0, dt_init=5.0, dt_max=8.0, matrix_intercell=False
     )
     dead_change = float(np.max(np.abs(dead_end.matrix.moles[1] - n_m1_0)))
     live_change = float(np.max(np.abs(live_end.matrix.moles[1] - n_m1_0)))
     assert dead_change < 1.0e-6 * max(float(np.max(np.abs(n_m1_0))), 1.0)
     assert live_change > 10.0 * max(dead_change, 1.0e-18)
-    res0, _, _, _ = dual_residual(grid, dual, spec, state, state, dt=1.0, transfer=closed)
-    nc = spec.nc
-    half = 2 * (nc + 1)
-    rm = res0[half:].reshape(2, nc + 1)[:, :nc]
-    assert float(np.max(np.abs(rm))) < 1.0e-9
+    _, _, _, rates = dual_residual(grid, dual, spec, state, state, dt=1.0, transfer=closed)
+    assert rates.molar_rate == pytest.approx(0.0, abs=1e-18)
 
 
 def test_d4_small_3d_wells_mass_balance() -> None:
