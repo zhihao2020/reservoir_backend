@@ -40,7 +40,7 @@ class InverseSpec:
     post_ensemble_ne: int = 8
     post_ensemble_seed: int = 0
     algorithm: str = "lm"
-    ensemble_size: int = 16
+    ensemble_size: int = 12
     assimilation_steps: int = 4
     seed: int = 0
     alpha: NDArray[np.float64] | list[float] | None = None
@@ -454,8 +454,11 @@ class DigitalTwin:
             )
             from reservoir_backend.comp.properties import flash_compressibility, flash_state
 
-            pf = flash_state(self.physics.fluid, dual.fracture.pressure, dual.fracture.moles)
-            pm = flash_state(self.physics.fluid, dual.matrix.pressure, dual.matrix.moles)
+            pf = flash_state(self.physics.fluid, dual.fracture.pressure, dual.fracture.moles, k_hint=None if dual.flash is None or dual.flash.fracture is None else dual.flash.fracture.k)
+            pm = flash_state(self.physics.fluid, dual.matrix.pressure, dual.matrix.moles, k_hint=None if dual.flash is None or dual.flash.matrix is None else dual.flash.matrix.k)
+            from reservoir_backend.eos.flash_cache import DualFlashCache, FlashCache
+
+            dual.flash = DualFlashCache(FlashCache.from_props(pf), FlashCache.from_props(pm))
             self._last_dual = dual
             self._lam_f = pf.lam_l + pf.lam_v + pf.lam_w
             self._lam_m = pm.lam_l + pm.lam_v + pm.lam_w

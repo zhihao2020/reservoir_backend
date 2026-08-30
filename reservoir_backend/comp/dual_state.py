@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from reservoir_backend.eos.flash_cache import DualFlashCache
+
 
 @dataclass
 class CompositionalContinuumState:
@@ -40,6 +42,7 @@ class DualCompositionalState:
     fracture: CompositionalContinuumState
     matrix: CompositionalContinuumState
     time_s: float = 0.0
+    flash: DualFlashCache | None = None
 
     def __post_init__(self) -> None:
         if self.fracture.n_cells != self.matrix.n_cells:
@@ -53,6 +56,7 @@ class DualCompositionalState:
             fracture=self.fracture.copy(),
             matrix=self.matrix.copy(),
             time_s=float(self.time_s),
+            flash=None if self.flash is None else self.flash.copy(),
         )
 
     def total_moles(self) -> NDArray[np.float64]:

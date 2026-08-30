@@ -57,6 +57,11 @@ def test_udp_status_and_checkpoint() -> None:
     rb = proto.handle_bytes(b'{"cmd":"rollback"}')
     assert b'"ok": true' in rb
     assert proto.workflow.members == pytest.approx(members)
+    start = proto.handle_bytes(b'{"cmd":"start"}')
+    assert b'"ok": true' in start
+    field = proto.handle_bytes(b'{"cmd":"request_field","path":"results/p.npz"}')
+    assert b"npz" in field
+    assert b"27k" not in field
 
 
 def test_cycle_forecast_then_rollback_keeps_time() -> None:

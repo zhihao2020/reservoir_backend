@@ -32,7 +32,7 @@ Flash was the dominant term because `flash_tp` restarted from Wilson K and a sta
 python -m pytest -m "not slow"          # Codex / day-to-day
 python -m pytest -m dpdp                # dual solver
 python -m pytest -m "slow and assimilation"
-python scripts/dpdp_scale_bench.py --max-n 10 --t-end 0.5
+python scripts/dpdp_scale_gate.py --n 5 10 --t-end 0.05 --json-out docs/bench/dpdp_scale_gate.json
 ```
 
 Step reports include `jac_s`, `solve_s`, `resid_s` (flash lives in residual/Jacobian FD).
@@ -42,13 +42,19 @@ Step reports include `jac_s`, `solve_s`, `resid_s` (flash lives in residual/Jaco
 Step notes record `jac_s`, `solve_s`, `resid_s`, `flash_main_s`, `flash_jacobian_s`.
 `flash_s` on the residual path is **not** total flash: Jacobian flash lives in `flash_jacobian_s` (and inside `jac_s`). Measured (`docs/bench/dpdp_scale.json`, one accepted step, 7 colours):
 
-| grid | wall_s | jac_s | flash_main / jac | solve_s |
-|------|--------|-------|------------------|---------|
-| 4×3×2 (block J) | 19 | 9.0 | 7.2 / 8.8 | 0.002 |
-| 5³ (block J) | 103 | 47 | 40 / 46 | 0.01 |
-| 10³ (coloring, not remeasured) | 757 | 359 | 278 | 0.47 |
+| grid | wall_s | jac_s | flash_main / jac | solve_s | note |
+|------|--------|-------|------------------|---------|------|
+Use `docs/bench/dpdp_scale_gate.json` only (same `t_end=0.05`, `max_steps=1`, no wells):
 
-Flash still dominates; sparse solve is small. 20³/30³ stay off until \(10^3\) one-step \(<60\,\mathrm{s}\).
+| grid | wall_s | jac_s | flash | solve_s |
+|------|--------|-------|-------|---------|
+| 5³ | 1.57 | 0.59 | 0.59 | 0.004 |
+| 10³ | 2.36 | 0.84 | 0.81 | 0.17 |
+| 30³ | 85.5 | 8.86 | 7.16 | 64.6 |
+
+10³ was 757 s on coloring FD. Jacobian target 20–30 s at 30³ is met (8.9 s). Linear solve is still the 30³ limiter (CPR + Jacobi, ILU cached when J is reused).
+
+Flash is no longer the 30³ bottleneck; linear solve and Jacobian assembly are. Use `scripts/dpdp_scale_gate.py` for same-workload comparisons (`docs/bench/dpdp_scale_gate.json`). Linear backend: `RESERVOIR_LINEAR=cpr|gmres|direct`.
 
 ES-MDA wall time ≈ \(N_a N_e\) × forward. Smoke is `3×1×1`, Ne=4, Na=1 (`tests/inverse/test_esmda_smoke.py`).
 

@@ -29,8 +29,20 @@
 
 ## 未完成
 
-- 实验室 `apply` 默认仍是两区 log K + LM（计划允许）
-- 30³ 是 milestone。已提交 `docs/bench/dpdp_scale.json`：4×3×2 / 5³ / 10³ 单步通过（7-color）。20³/30³ 未跑（10³ 单步约 12.6 min）
+- 30³ 标准步（`dpdp_scale_gate`）约 85 s（原 223 s）；Jacobian 8.9 s 已低于 20–30 s 目标，线性求解约 65 s 仍是 60 s 总门槛的主因
+- 真实实验 PVT / 电阻率声波反演尚未接入实测数据
+
+## 规模（FastPR 后，见 `docs/bench/dpdp_scale_fastpr.json`）
+
+| 网格 | 墙钟 | 说明 |
+|------|------|------|
+| 5³ | ~2.5 s | 标准短步 |
+| 10³ | ~6.4 s | 已低于 60 s 门槛（原 coloring 约 757 s / 12.6 min） |
+| 20³ | ~717 s | 5 个接受步 + 3 次拒绝，**不可与单步 30³ 直接比** |
+| 30³ gate | **85 s** | 统一 `max_steps=1`；原 223 s。Jacobian 9 s，solve 65 s |
+| 30³ 快环 reuse | ~0.093 s | 首次分解 ~28 s |
+
+统一比较请跑 `python scripts/dpdp_scale_gate.py`。V1 apply：`examples/lab/lab_cf.yaml`。
 
 ## 接口变化
 

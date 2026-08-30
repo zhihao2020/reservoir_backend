@@ -54,6 +54,7 @@ def bench(n: int, dx: float = 0.01, n_steps: int = 3) -> dict:
         "reuse_s": float(np.mean(times[1:])) if len(times) > 1 else times[0],
         "n_factor": factor.n_factor,
         "n_reuse": factor.n_reuse,
+        "t_average_s": float(np.mean(times)),
         "ok": bool(np.all(np.isfinite(p_f)) and np.all(np.isfinite(p_m))),
     }
     return rec

@@ -1,6 +1,6 @@
 # 项目状态
 
-主线：30 cm 页岩油实验数字孪生。正演复用现有求解器；V1 反演目标是标量裂缝等效导流能力 \(C_f\)（log 空间）。实验室 `apply` 在 ES-MDA 落地前仍走两区 log K + LM。
+主线：30 cm 页岩油实验数字孪生。正演复用现有求解器；V1 反演目标是标量裂缝等效导流能力 \(C_f\)（log 空间）。V1 组分 apply 是 `examples/lab/lab_cf.yaml`（log \(C_f\) + DPDP + ES-MDA）。两区 log K + LM 仍在 `examples/lab/lab_apply.yaml`。
 
 | 状态 | 含义 |
 |------|------|

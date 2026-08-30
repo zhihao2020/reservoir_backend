@@ -13,6 +13,17 @@ from scipy.sparse.linalg import LinearOperator
 from reservoir_backend.exceptions import PhysicsConvergenceError
 
 _DIRECT_MAX = 2000
+_PREC_CACHE: dict = {"mat": None, "kind": None, "prec": None}
+
+
+def _cached_prec(mat, kind: str, factory):
+    if _PREC_CACHE["mat"] is mat and _PREC_CACHE["kind"] == kind and _PREC_CACHE["prec"] is not None:
+        return _PREC_CACHE["prec"]
+    prec = factory()
+    _PREC_CACHE["mat"] = mat
+    _PREC_CACHE["kind"] = kind
+    _PREC_CACHE["prec"] = prec
+    return prec
 
 
 @dataclass
@@ -39,9 +50,15 @@ class GMRESILUSolver(LinearSolver):
     def solve(self, jacobian: sparse.spmatrix, rhs: NDArray[np.float64]) -> LinearSolveResult:
         j = jacobian.tocsc()
         rhs = np.asarray(rhs, dtype=float).ravel()
+        n = int(rhs.size)
+        drop = 1.0e-3 if n > 20000 else 1.0e-4
+        fill = 3 if n > 20000 else 10
         try:
-            ilu = spilu(j, drop_tol=1.0e-4, fill_factor=10)
-            prec = LinearOperator(j.shape, matvec=ilu.solve)
+            def _fact():
+                ilu = spilu(j, drop_tol=drop, fill_factor=fill)
+                return LinearOperator(j.shape, matvec=ilu.solve)
+
+            prec = _cached_prec(jacobian, f"ilu-{drop}-{fill}", _fact)
         except Exception:
             prec = None
         try:
@@ -54,9 +71,81 @@ class GMRESILUSolver(LinearSolver):
         return LinearSolveResult(x=x, method="gmres_ilu")
 
 
-def solve_newton_system(jacobian: sparse.spmatrix, rhs: NDArray[np.float64]) -> LinearSolveResult:
+def _pressure_dofs(n_unknowns: int, n_comp: int) -> NDArray[np.int64]:
+    nu = int(n_comp) + 1
+    if n_unknowns % (2 * nu) != 0:
+        raise ValueError("unknown count is not 2 n_cells (nc+1)")
+    n_cells = n_unknowns // (2 * nu)
+    f = np.arange(n_cells, dtype=np.int64) * nu + n_comp
+    m = n_cells * nu + np.arange(n_cells, dtype=np.int64) * nu + n_comp
+    return np.concatenate([f, m])
+
+
+class CPRLikeSolver(LinearSolver):
+    """Pressure-block ILU + Jacobi global correction. No full-system ILU."""
+
+    def __init__(self, n_comp: int = 2):
+        self.n_comp = int(n_comp)
+
+    def solve(self, jacobian: sparse.spmatrix, rhs: NDArray[np.float64]) -> LinearSolveResult:
+        rhs = np.asarray(rhs, dtype=float).ravel()
+        n = int(rhs.size)
+        j = jacobian.tocsr()
+        jcsc = j.tocsc()
+        try:
+            def _fact():
+                pdofs = _pressure_dofs(n, self.n_comp)
+                jpp = j[pdofs, :][:, pdofs].tocsc()
+                diag = np.asarray(j.diagonal(), dtype=float)
+                diag = np.where(np.abs(diag) < 1.0e-30, 1.0, diag)
+                invd = 1.0 / diag
+                ilu_p = spilu(jpp, drop_tol=1.0e-3, fill_factor=5)
+
+                def _prec(v, _ilu=ilu_p, _invd=invd, _j=j, _pdofs=pdofs):
+                    v = np.asarray(v, dtype=float).ravel()
+                    y = np.zeros_like(v)
+                    y[_pdofs] = _ilu.solve(v[_pdofs])
+                    r = v - _j.dot(y)
+                    return y + _invd * r
+
+                return LinearOperator(j.shape, matvec=_prec)
+
+            prec = _cached_prec(jacobian, "cpr-jacobi", _fact)
+        except Exception:
+            return GMRESILUSolver().solve(jacobian, rhs)
+        rtol = 1.0e-5 if n > 20000 else 1.0e-8
+        maxiter = 80 if n > 20000 else 400
+        try:
+            x, info = gmres(jcsc, rhs, M=prec, rtol=rtol, atol=0.0, restart=30, maxiter=maxiter)
+        except TypeError:
+            x, info = gmres(jcsc, rhs, M=prec, tol=rtol, restart=30, maxiter=maxiter)
+        x = np.asarray(x, dtype=float).ravel()
+        if int(info) != 0 or x.size != rhs.size or not np.all(np.isfinite(x)):
+            return GMRESILUSolver().solve(jacobian, rhs)
+        return LinearSolveResult(x=x, method="cpr_gmres")
+
+
+def solve_newton_system(
+    jacobian: sparse.spmatrix,
+    rhs: NDArray[np.float64],
+    *,
+    n_comp: int | None = None,
+    backend: str | None = None,
+) -> LinearSolveResult:
+    import os
+
     n = int(np.asarray(rhs).size)
-    solver: LinearSolver = SparseDirectSolver() if n <= _DIRECT_MAX else GMRESILUSolver()
+    name = (backend or os.environ.get("RESERVOIR_LINEAR") or "").strip().lower()
+    if name in {"cpr", "cprlike"} and n_comp is not None:
+        solver: LinearSolver = CPRLikeSolver(n_comp=n_comp)
+    elif name in {"gmres", "gmres_ilu"}:
+        solver = GMRESILUSolver()
+    elif name in {"direct", "spsolve"} or n <= _DIRECT_MAX:
+        solver = SparseDirectSolver()
+    elif n_comp is not None and n > 20000:
+        solver = CPRLikeSolver(n_comp=n_comp)
+    else:
+        solver = GMRESILUSolver()
     try:
         return solver.solve(jacobian, rhs)
     except Exception:

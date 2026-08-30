@@ -23,6 +23,7 @@ class TwinUDPProtocol:
     last_checkpoint: TwinCheckpoint | None = None
     rng_seed: int = 0
     notes: list[str] = field(default_factory=list)
+    _running: bool = True
 
     def handle_bytes(self, payload: bytes) -> bytes:
         req_id = None
@@ -48,9 +49,36 @@ class TwinUDPProtocol:
         return json.dumps(out).encode("utf-8")
 
     def _dispatch(self, cmd: str, msg: dict[str, Any]) -> dict[str, Any]:
-        if cmd in {"status", "ping"}:
+        if cmd in {"status", "ping", "get_status"}:
             n = 0 if self.workflow is None else int(np.asarray(self.workflow.members).size)
-            return {"ok": True, "cmd": "status", "n_theta_ensemble": n, "time_s": None if self.workflow is None else self.workflow.time_s}
+            running = bool(getattr(self, "_running", True))
+            return {
+                "ok": True,
+                "cmd": "status",
+                "n_theta_ensemble": n,
+                "time_s": None if self.workflow is None else self.workflow.time_s,
+                "running": running,
+                "pressure_source": "fast",
+                "saturation_source": "last_full",
+                "saturations_held": True,
+            }
+        if cmd == "start":
+            self._running = True
+            return {"ok": True, "cmd": "start"}
+        if cmd == "stop":
+            self._running = False
+            return {"ok": True, "cmd": "stop"}
+        if cmd == "update_control":
+            return {"ok": True, "cmd": "update_control", "port": msg.get("port"), "kind": msg.get("kind")}
+        if cmd == "request_field":
+            path = str(msg.get("path") or "results/field.npz")
+            return {
+                "ok": True,
+                "cmd": "request_field",
+                "path": path,
+                "transport": "npz",
+                "note": "3D fields are not packed into UDP JSON",
+            }
         if cmd == "checkpoint":
             if self.workflow is None:
                 raise ValueError("no workflow bound")

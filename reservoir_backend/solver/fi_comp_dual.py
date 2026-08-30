@@ -203,18 +203,24 @@ def _residual(
     reflash_all=False,
 ):
     flash_s = 0.0
+    hint = getattr(state, "flash", None)
+    kf = None if hint is None or hint.fracture is None else hint.fracture.k
+    km = None if hint is None or hint.matrix is None else hint.matrix.k
     if props_f is None or reflash_all:
-        props_f = flash_state(spec, state.fracture.pressure, state.fracture.moles, out=props_f)
+        props_f = flash_state(spec, state.fracture.pressure, state.fracture.moles, out=props_f, k_hint=kf)
         flash_s += last_flash_seconds()
     elif reflash_f is not None:
         flash_state(spec, state.fracture.pressure, state.fracture.moles, cells=reflash_f, out=props_f)
         flash_s += last_flash_seconds()
     if props_m is None or reflash_all:
-        props_m = flash_state(spec, state.matrix.pressure, state.matrix.moles, out=props_m)
+        props_m = flash_state(spec, state.matrix.pressure, state.matrix.moles, out=props_m, k_hint=km)
         flash_s += last_flash_seconds()
     elif reflash_m is not None:
         flash_state(spec, state.matrix.pressure, state.matrix.moles, cells=reflash_m, out=props_m)
         flash_s += last_flash_seconds()
+    from reservoir_backend.eos.flash_cache import DualFlashCache, FlashCache
+
+    state.flash = DualFlashCache(FlashCache.from_props(props_f), FlashCache.from_props(props_m))
     q_f, q_m, rates, bhp = _wells(
         grid, dual_rock, spec, state, ports, cmap, t_eval, props_f, props_m, need_bhp=need_bhp
     )
@@ -461,6 +467,7 @@ def solve_dual_comp_step(
     props_f = None
     props_m = None
     jac_hold = None
+    jac_s_hold = None
     phase_hold = None
     reuse_left = 0
     n_flash_main = 0
@@ -505,17 +512,17 @@ def solve_dual_comp_step(
                 n_jac_reuse=n_jac_reuse,
             )
         phase_now = np.concatenate([props_f.two_phase, props_m.two_phase])
+        drop_ok = nrm_prev is not None and nrm < 0.5 * float(nrm_prev)
         can_reuse = (
-            jac_hold is not None
+            jac_s_hold is not None
             and reuse_left > 0
-            and nrm_prev is not None
-            and nrm < 0.5 * float(nrm_prev)
             and phase_hold is not None
             and bool(np.array_equal(phase_now, phase_hold))
+            and (drop_ok or n_cells >= 1000)
         )
         t_j0 = time.perf_counter()
         if can_reuse:
-            jac = jac_hold
+            jac_s = jac_s_hold
             reuse_left -= 1
             n_jac_reuse += 1
             fls_j = 0.0
@@ -529,14 +536,15 @@ def solve_dual_comp_step(
                     grid, dual_rock, spec, trial, dt, ports, cmap, t1, props_f, props_m, n_scale, p_scale
                 )
             jac_hold = jac
+            jac_s_hold = jac.tocsr().multiply(row_s[:, None]).tocsc()
+            jac_s = jac_s_hold
             phase_hold = phase_now
             reuse_left = int(jacobian_reuse_max)
         t_flash_jac += float(fls_j)
         t_jac += time.perf_counter() - t_j0
         nrm_prev = nrm
-        jac_s = jac.tocsr().multiply(row_s[:, None]).tocsc()
         t_s0 = time.perf_counter()
-        lin = solve_newton_system(jac_s, -(res * row_s))
+        lin = solve_newton_system(jac_s, -(res * row_s), n_comp=nc)
         t_solve += time.perf_counter() - t_s0
         step = lin.x
         if not np.all(np.isfinite(step)):

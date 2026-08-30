@@ -96,6 +96,7 @@ def flash_state(
     *,
     cells: NDArray[np.int64] | None = None,
     out: PhaseProps | None = None,
+    k_hint: NDArray[np.float64] | None = None,
 ) -> PhaseProps:
     """PT flash each listed cell. ``moles`` is (n_cells, spec.nc)."""
     p = np.asarray(pressure, dtype=float).ravel()
@@ -155,6 +156,12 @@ def flash_state(
             k_guess = np.clip(wilson_k_batch(spec.eos, p[idx], t), 1.0e-8, 1.0e8)
             k_guess[warm] = out.k_flash[idx[warm]]
             n_warm = int(np.count_nonzero(warm))
+    if (not jac_fd) and k_guess is None and k_hint is not None:
+        kh = np.asarray(k_hint, dtype=float)
+        if kh.ndim == 1:
+            kh = np.broadcast_to(kh, (n_idx, n_hc)).copy()
+        k_guess = np.clip(kh[idx] if kh.shape[0] == n_cells else kh, 1.0e-8, 1.0e8)
+        n_warm = n_idx
     backend = get_flash_backend()
     arr = backend.evaluate_batch(spec.eos, p[idx], t, z_all, k_guess=k_guess)
     n_fallback = 0

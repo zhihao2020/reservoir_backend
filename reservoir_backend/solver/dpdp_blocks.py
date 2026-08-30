@@ -108,44 +108,42 @@ def _faces(grid: CartesianGrid):
     return out
 
 
-def _add_acc_vol(
-    rows,
-    cols,
-    data,
+def _acc_coo(
     cont: int,
     moles: NDArray[np.float64],
     props: PhaseProps,
     th: CellThermoJac,
     spec: CompSpec,
     n_cells: int,
-):
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]]:
     nc = spec.nc
     nu = nc + 1
     n_hc = spec.n_hc
     hc = np.sum(moles[:, :n_hc], axis=1)
-    for c in range(n_cells):
-        r_vol = _uid(cont, c, nc, n_cells, nu)
-        for s in range(nu):
-            val = hc[c] * th.dv_mix[c, s]
-            if s < n_hc:
-                val += props.v_mix[c]
-            if spec.has_water:
-                val += moles[c, n_hc] * th.dvw[c, s]
-                if s == n_hc:
-                    val += props.vw[c]
-            rows.append(r_vol)
-            cols.append(_uid(cont, c, s, n_cells, nu))
-            data.append(float(val))
-        for i in range(nc):
-            rows.append(_uid(cont, c, i, n_cells, nu))
-            cols.append(_uid(cont, c, i, n_cells, nu))
-            data.append(1.0)
+    c = np.arange(n_cells, dtype=np.int64)
+    r_vol = cont * n_cells * nu + c * nu + nc
+    rows: list[NDArray[np.int64]] = []
+    cols: list[NDArray[np.int64]] = []
+    data: list[NDArray[np.float64]] = []
+    for s in range(nu):
+        val = hc * th.dv_mix[:, s]
+        if s < n_hc:
+            val = val + props.v_mix
+        if spec.has_water:
+            val = val + moles[:, n_hc] * th.dvw[:, s]
+            if s == n_hc:
+                val = val + props.vw
+        rows.append(r_vol)
+        cols.append(cont * n_cells * nu + c * nu + s)
+        data.append(val)
+    for i in range(nc):
+        rows.append(cont * n_cells * nu + c * nu + i)
+        cols.append(cont * n_cells * nu + c * nu + i)
+        data.append(np.ones(n_cells))
+    return np.concatenate(rows), np.concatenate(cols), np.concatenate(data)
 
 
-def _add_faces_jac(
-    rows,
-    cols,
-    data,
+def _faces_coo(
     cont: int,
     left: NDArray[np.int64],
     right: NDArray[np.int64],
@@ -156,77 +154,66 @@ def _add_faces_jac(
     spec: CompSpec,
     n_cells: int,
     dt: float,
-):
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]]:
+    t = np.asarray(t, dtype=float).ravel()
     if t.size == 0:
-        return
+        z = np.zeros(0, dtype=np.int64)
+        return z, z, np.zeros(0)
     nc = spec.nc
     nu = nc + 1
     n_hc = spec.n_hc
-    t = np.asarray(t, dtype=float).ravel()
-    for k in range(t.size):
-        L = int(left[k])
-        R = int(right[k])
-        T = float(t[k])
-        dphi = float(p[L] - p[R])
-        up = L if dphi >= 0.0 else R
-        q_l = T * float(props.lam_l[up]) * dphi
-        q_v = T * float(props.lam_v[up]) * dphi
-        up_l = L if q_l >= 0.0 else R
-        up_v = L if q_v >= 0.0 else R
-        q_w = 0.0
-        up_w = L
-        if spec.has_water:
-            q_w = T * float(props.lam_w[up]) * dphi
-            up_w = L if q_w >= 0.0 else R
-        for src in (L, R):
-            for s in range(nu):
-                d_pot = 0.0
-                if s == nc:
-                    d_pot = 1.0 if src == L else -1.0
-                dql = T * float(props.lam_l[up]) * d_pot
-                dqv = T * float(props.lam_v[up]) * d_pot
-                dqw = T * float(props.lam_w[up]) * d_pot if spec.has_water else 0.0
-                if src == up:
-                    dql += T * dphi * float(th.dlam_l[src, s])
-                    dqv += T * dphi * float(th.dlam_v[src, s])
-                    if spec.has_water:
-                        dqw += T * dphi * float(th.dlam_w[src, s])
-                col = _uid(cont, src, s, n_cells, nu)
-                for i in range(n_hc):
-                    dfi = float(props.xi_l[up_l]) * float(props.x[up_l, i]) * dql
-                    dfi += float(props.xi_v[up_v]) * float(props.y[up_v, i]) * dqv
-                    if src == up_l:
-                        dfi += q_l * (
-                            float(th.dxi_l[src, s]) * float(props.x[up_l, i])
-                            + float(props.xi_l[up_l]) * float(th.dx[src, i, s])
-                        )
-                    if src == up_v:
-                        dfi += q_v * (
-                            float(th.dxi_v[src, s]) * float(props.y[up_v, i])
-                            + float(props.xi_v[up_v]) * float(th.dy[src, i, s])
-                        )
-                    rows.append(_uid(cont, L, i, n_cells, nu))
-                    cols.append(col)
-                    data.append(float(dt) * dfi)
-                    rows.append(_uid(cont, R, i, n_cells, nu))
-                    cols.append(col)
-                    data.append(-float(dt) * dfi)
-                if spec.has_water:
-                    dfw = float(props.xi_w[up_w]) * dqw
-                    if src == up_w:
-                        dfw += q_w * float(th.dxi_w[src, s])
-                    rows.append(_uid(cont, L, n_hc, n_cells, nu))
-                    cols.append(col)
-                    data.append(float(dt) * dfw)
-                    rows.append(_uid(cont, R, n_hc, n_cells, nu))
-                    cols.append(col)
-                    data.append(-float(dt) * dfw)
+    L = np.asarray(left, dtype=np.int64).ravel()
+    R = np.asarray(right, dtype=np.int64).ravel()
+    dphi = p[L] - p[R]
+    up = np.where(dphi >= 0.0, L, R)
+    q_l = t * props.lam_l[up] * dphi
+    q_v = t * props.lam_v[up] * dphi
+    up_l = np.where(q_l >= 0.0, L, R)
+    up_v = np.where(q_v >= 0.0, L, R)
+    q_w = t * props.lam_w[up] * dphi if spec.has_water else np.zeros_like(t)
+    up_w = np.where(q_w >= 0.0, L, R) if spec.has_water else L
+    rows: list[NDArray[np.int64]] = []
+    cols: list[NDArray[np.int64]] = []
+    data: list[NDArray[np.float64]] = []
+    for src, pot_sign in ((L, 1.0), (R, -1.0)):
+        is_up = src == up
+        is_up_l = src == up_l
+        is_up_v = src == up_v
+        is_up_w = src == up_w if spec.has_water else np.zeros(src.size, dtype=bool)
+        for s in range(nu):
+            d_pot = np.full(src.size, pot_sign) if s == nc else np.zeros(src.size)
+            dql = t * props.lam_l[up] * d_pot
+            dqv = t * props.lam_v[up] * d_pot
+            dqw = t * props.lam_w[up] * d_pot if spec.has_water else np.zeros(src.size)
+            dql = dql + np.where(is_up, t * dphi * th.dlam_l[src, s], 0.0)
+            dqv = dqv + np.where(is_up, t * dphi * th.dlam_v[src, s], 0.0)
+            if spec.has_water:
+                dqw = dqw + np.where(is_up, t * dphi * th.dlam_w[src, s], 0.0)
+            col = cont * n_cells * nu + src * nu + s
+            for i in range(n_hc):
+                dfi = props.xi_l[up_l] * props.x[up_l, i] * dql + props.xi_v[up_v] * props.y[up_v, i] * dqv
+                extra_l = q_l * (th.dxi_l[src, s] * props.x[up_l, i] + props.xi_l[up_l] * th.dx[src, i, s])
+                extra_v = q_v * (th.dxi_v[src, s] * props.y[up_v, i] + props.xi_v[up_v] * th.dy[src, i, s])
+                dfi = dfi + np.where(is_up_l, extra_l, 0.0) + np.where(is_up_v, extra_v, 0.0)
+                rows.append(cont * n_cells * nu + L * nu + i)
+                cols.append(col)
+                data.append(float(dt) * dfi)
+                rows.append(cont * n_cells * nu + R * nu + i)
+                cols.append(col)
+                data.append(-float(dt) * dfi)
+            if spec.has_water:
+                dfw = props.xi_w[up_w] * dqw
+                dfw = dfw + np.where(is_up_w, q_w * th.dxi_w[src, s], 0.0)
+                rows.append(cont * n_cells * nu + L * nu + n_hc)
+                cols.append(col)
+                data.append(float(dt) * dfw)
+                rows.append(cont * n_cells * nu + R * nu + n_hc)
+                cols.append(col)
+                data.append(-float(dt) * dfw)
+    return np.concatenate(rows), np.concatenate(cols), np.concatenate(data)
 
 
-def _add_transfer_jac(
-    rows,
-    cols,
-    data,
+def _transfer_coo(
     pm,
     pf,
     vol,
@@ -239,55 +226,59 @@ def _add_transfer_jac(
     spec: CompSpec,
     n_cells: int,
     dt: float,
-):
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]]:
     nc = spec.nc
     nu = nc + 1
     n_hc = spec.n_hc
+    c = np.arange(n_cells, dtype=np.int64)
     cond = float(transfer.shape_factor) * np.asarray(km, dtype=float).ravel() * np.asarray(vol, dtype=float).ravel()
     dphi = np.asarray(pm, dtype=float).ravel() - np.asarray(pf, dtype=float).ravel()
-    for c in range(n_cells):
-        from_m = bool(dphi[c] >= 0.0)
-        lam_l = float(props_m.lam_l[c] if from_m else props_f.lam_l[c])
-        lam_v = float(props_m.lam_v[c] if from_m else props_f.lam_v[c])
-        q_l = float(cond[c]) * lam_l * float(dphi[c])
-        q_v = float(cond[c]) * lam_v * float(dphi[c])
-        up_l = 1 if q_l >= 0.0 else 0
-        up_v = 1 if q_v >= 0.0 else 0
-        props_ul = props_m if up_l else props_f
-        props_uv = props_m if up_v else props_f
-        th_ul = th_m if up_l else th_f
-        th_uv = th_m if up_v else th_f
-        th_pot = th_m if from_m else th_f
-        for cont_src, d_pot_p in ((1, 1.0), (0, -1.0)):
-            th_s = th_m if cont_src == 1 else th_f
-            for s in range(nu):
-                d_pot = d_pot_p if s == nc else 0.0
-                dql = float(cond[c]) * lam_l * d_pot
-                dqv = float(cond[c]) * lam_v * d_pot
-                if cont_src == (1 if from_m else 0):
-                    dql += float(cond[c]) * float(dphi[c]) * float(th_pot.dlam_l[c, s])
-                    dqv += float(cond[c]) * float(dphi[c]) * float(th_pot.dlam_v[c, s])
-                col = _uid(cont_src, c, s, n_cells, nu)
-                for i in range(n_hc):
-                    dNi = float(props_ul.xi_l[c]) * float(props_ul.x[c, i]) * dql
-                    dNi += float(props_uv.xi_v[c]) * float(props_uv.y[c, i]) * dqv
-                    if cont_src == up_l:
-                        dNi += q_l * (
-                            float(th_ul.dxi_l[c, s]) * float(props_ul.x[c, i])
-                            + float(props_ul.xi_l[c]) * float(th_ul.dx[c, i, s])
-                        )
-                    if cont_src == up_v:
-                        dNi += q_v * (
-                            float(th_uv.dxi_v[c, s]) * float(props_uv.y[c, i])
-                            + float(props_uv.xi_v[c]) * float(th_uv.dy[c, i, s])
-                        )
-                    rows.append(_uid(0, c, i, n_cells, nu))
-                    cols.append(col)
-                    data.append(-float(dt) * dNi)
-                    rows.append(_uid(1, c, i, n_cells, nu))
-                    cols.append(col)
-                    data.append(float(dt) * dNi)
-                _ = th_s
+    from_m = dphi >= 0.0
+    lam_l = np.where(from_m, props_m.lam_l, props_f.lam_l)
+    lam_v = np.where(from_m, props_m.lam_v, props_f.lam_v)
+    q_l = cond * lam_l * dphi
+    q_v = cond * lam_v * dphi
+    up_l = np.where(q_l >= 0.0, 1, 0)
+    up_v = np.where(q_v >= 0.0, 1, 0)
+    pot_cont = np.where(from_m, 1, 0)
+    rows: list[NDArray[np.int64]] = []
+    cols: list[NDArray[np.int64]] = []
+    data: list[NDArray[np.float64]] = []
+    for cont_src, d_pot_p in ((1, 1.0), (0, -1.0)):
+        th_s = th_m if cont_src == 1 else th_f
+        is_pot = cont_src == pot_cont
+        is_up_l = cont_src == up_l
+        is_up_v = cont_src == up_v
+        for s in range(nu):
+            d_pot = np.full(n_cells, d_pot_p) if s == nc else np.zeros(n_cells)
+            dql = cond * lam_l * d_pot
+            dqv = cond * lam_v * d_pot
+            dlam_l = np.where(from_m, th_m.dlam_l[:, s], th_f.dlam_l[:, s])
+            dlam_v = np.where(from_m, th_m.dlam_v[:, s], th_f.dlam_v[:, s])
+            dql = dql + np.where(is_pot, cond * dphi * dlam_l, 0.0)
+            dqv = dqv + np.where(is_pot, cond * dphi * dlam_v, 0.0)
+            col = cont_src * n_cells * nu + c * nu + s
+            xi_l = np.where(up_l == 1, props_m.xi_l, props_f.xi_l)
+            xi_v = np.where(up_v == 1, props_m.xi_v, props_f.xi_v)
+            dxi_l = np.where(up_l == 1, th_m.dxi_l[:, s], th_f.dxi_l[:, s])
+            dxi_v = np.where(up_v == 1, th_m.dxi_v[:, s], th_f.dxi_v[:, s])
+            for i in range(n_hc):
+                x_l = np.where(up_l == 1, props_m.x[:, i], props_f.x[:, i])
+                y_v = np.where(up_v == 1, props_m.y[:, i], props_f.y[:, i])
+                dx_l = np.where(up_l == 1, th_m.dx[:, i, s], th_f.dx[:, i, s])
+                dy_v = np.where(up_v == 1, th_m.dy[:, i, s], th_f.dy[:, i, s])
+                dNi = xi_l * x_l * dql + xi_v * y_v * dqv
+                extra_l = q_l * (dxi_l * x_l + xi_l * dx_l)
+                extra_v = q_v * (dxi_v * y_v + xi_v * dy_v)
+                dNi = dNi + np.where(is_up_l, extra_l, 0.0) + np.where(is_up_v, extra_v, 0.0)
+                rows.append(c * nu + i)
+                cols.append(col)
+                data.append(-float(dt) * dNi)
+                rows.append(n_cells * nu + c * nu + i)
+                cols.append(col)
+                data.append(float(dt) * dNi)
+            _ = th_s
+    return np.concatenate(rows), np.concatenate(cols), np.concatenate(data)
 
 
 def assemble_block_jacobian(
@@ -313,11 +304,16 @@ def assemble_block_jacobian(
     n_u = 2 * n_cells * nu
     th_f, fl_f = cell_thermo_fd(spec, state.fracture.pressure, state.fracture.moles, props_f, n_scale, p_scale)
     th_m, fl_m = cell_thermo_fd(spec, state.matrix.pressure, state.matrix.moles, props_m, n_scale, p_scale)
-    rows: list[int] = []
-    cols: list[int] = []
-    data: list[float] = []
-    _add_acc_vol(rows, cols, data, 0, state.fracture.moles, props_f, th_f, spec, n_cells)
-    _add_acc_vol(rows, cols, data, 1, state.matrix.moles, props_m, th_m, spec, n_cells)
+    parts_r: list[NDArray[np.int64]] = []
+    parts_c: list[NDArray[np.int64]] = []
+    parts_d: list[NDArray[np.float64]] = []
+    for piece in (
+        _acc_coo(0, state.fracture.moles, props_f, th_f, spec, n_cells),
+        _acc_coo(1, state.matrix.moles, props_m, th_m, spec, n_cells),
+    ):
+        parts_r.append(piece[0])
+        parts_c.append(piece[1])
+        parts_d.append(piece[2])
     face_pairs = _faces(grid)
     tf_axes: list[NDArray[np.float64]] = []
     tm_axes: list[NDArray[np.float64]] = []
@@ -331,12 +327,57 @@ def assemble_block_jacobian(
         tf_axes.append(t_f[2])
         tm_axes.append(t_m[2])
     for (left, right), tf, tm in zip(face_pairs, tf_axes, tm_axes):
-        _add_faces_jac(rows, cols, data, 0, left, right, tf, state.fracture.pressure, props_f, th_f, spec, n_cells, dt)
-        _add_faces_jac(rows, cols, data, 1, left, right, tm, state.matrix.pressure, props_m, th_m, spec, n_cells, dt)
+        fr = _faces_coo(0, left, right, tf, state.fracture.pressure, props_f, th_f, spec, n_cells, dt)
+        mr = _faces_coo(1, left, right, tm, state.matrix.pressure, props_m, th_m, spec, n_cells, dt)
+        parts_r.extend((fr[0], mr[0]))
+        parts_c.extend((fr[1], mr[1]))
+        parts_d.extend((fr[2], mr[2]))
     vol = grid.cell_volumes()
     km = np.asarray(dual_rock.matrix.permeability, dtype=float).ravel()
-    _add_transfer_jac(
-        rows, cols, data, state.matrix.pressure, state.fracture.pressure, vol, km, transfer, props_m, props_f, th_m, th_f, spec, n_cells, dt
+    tr = _transfer_coo(
+        state.matrix.pressure,
+        state.fracture.pressure,
+        vol,
+        km,
+        transfer,
+        props_m,
+        props_f,
+        th_m,
+        th_f,
+        spec,
+        n_cells,
+        dt,
     )
-    jac = sparse.csc_matrix((data, (rows, cols)), shape=(n_u, n_u))
+    parts_r.append(tr[0])
+    parts_c.append(tr[1])
+    parts_d.append(tr[2])
+    rows = np.concatenate(parts_r)
+    cols = np.concatenate(parts_c)
+    data = np.concatenate(parts_d)
+    jac = _csc_cached(rows, cols, data, n_u)
     return jac, fl_f + fl_m
+
+
+_JAC_CACHE: dict[tuple[int, int], tuple] = {}
+
+
+def _csc_cached(rows, cols, data, n_u: int):
+    """Reuse CSC indptr/indices; fill values with the same COO pattern."""
+    key = (int(n_u), int(rows.size))
+    cached = _JAC_CACHE.get(key)
+    if cached is None:
+        jac = sparse.csc_matrix((data, (rows, cols)), shape=(n_u, n_u))
+        indptr = np.asarray(jac.indptr, dtype=np.int64)
+        indices = np.asarray(jac.indices, dtype=np.int64)
+        col_csc = np.repeat(np.arange(n_u, dtype=np.int64), np.diff(indptr))
+        keys_csc = col_csc * int(n_u) + indices.astype(np.int64)
+        order = np.argsort(keys_csc, kind="mergesort")
+        sorted_keys = keys_csc[order]
+        keys_coo = cols.astype(np.int64) * int(n_u) + rows.astype(np.int64)
+        mapping = order[np.searchsorted(sorted_keys, keys_coo)]
+        _JAC_CACHE[key] = (indptr, indices, mapping)
+        return jac
+    indptr, indices, mapping = cached
+    acc = np.zeros(indices.size, dtype=float)
+    np.add.at(acc, mapping, data)
+    return sparse.csc_matrix((acc, indices, indptr), shape=(n_u, n_u))

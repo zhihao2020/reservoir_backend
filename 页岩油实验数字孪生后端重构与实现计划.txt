@@ -1,1358 +1,177 @@
-可以。基于最新 `main` 的 **`b1afe36`**，我建议后面不要再零散优化，而是按“硬门槛 + Gate”推进。
+基于最新 `main`（`7eab4ff`），下一步不需要再改大架构。现在应进入 **“验收 → 30³ 第二阶段性能 → 在线闭环 → 真实实验接入”**。最新版本已经把 10³ 单步从约 757 s 压到 6.43 s，并实际跑通 30³；30³ 单步目前约 223 s，其中 Jacobian 约 97 s、线性求解约 113 s，Flash 已降到个位数秒级。
 
-当前最重要的事实已经很明确：
+我建议严格按下面顺序做。
 
-$$
-5^3:\quad T_{wall}=103s
-$$
+1. **先冻结当前基线，修 benchmark 和文档可信度。**
+   当前最先要解决的不是算法，而是“以后怎么判断真的变好了”。20³ 和 30³ benchmark workload 不一致：20³ 有 5 次 accepted、3 次 rejected，而 30³ 只有 1 个 accepted step，因此两者 wall time不能直接比较。
+   建议建立统一 `dpdp_scale_gate`：同一初始状态、同一物理时间长度、同一 controls、同一 `max_steps`、同一线程数、同一 Flash backend。每个结果必须自动记录真实 commit SHA、CPU、线程数、Python/NumPy/SciPy 版本、`n_accept/n_reject/newton_its`、质量误差、Jacobian/linear/flash 时间。以后所有性能结论只认这一套 JSON。与此同时，把仍写着“10³=12.6 min、30³ 未跑”的旧文档更新掉，因为现在代码与文档已经明显漂移。
 
-其中大约：
+2. **修 Offline posterior ensemble → Online state ensemble 的一一对应。**
+   这是当前最重要的 correctness 问题。现在 `TwinLoops.from_posterior()` 虽然有不同的 posterior \(C_f^{(j)}\)，但初始化时仍把 `twin._last_dual` 同一个物理状态复制给所有 member。
+   应改成 offline ES-MDA 最后一次 posterior forward 时保存：
 
-$$
-T_{\text{flash-main}}\approx40s,\qquad
-T_{\text{flash-J}}\approx46s
-$$
+   $$
+   \{C_f^{(j)},\,p_f^{(j)},n_f^{(j)},p_m^{(j)},n_m^{(j)}\}_{j=1}^{N_e}
+   $$
 
-而：
+   即让 `PosteriorEnsemble` 正式携带 `dual_states`。Online 初始化必须严格：
 
-$$
-T_{\text{linear solve}}\approx0.01s
-$$
+   $$
+   \theta_j\leftrightarrow x_j
+   $$
 
-也就是说大约 **84% 的 wall time 已经直接落在 Flash 相关路径上**。现在再优化 GMRES、ILU、CPR，收益基本可以忽略。
+   而不是：
 
-而且最新 `dpdp_blocks.py` 已经把全局 colored-FD 改成了 local thermo derivatives + TPFA/transfer block assembly；方向正确，但没有提速，因为 `cell_thermo_fd()` 本质上仍然反复做完整 PR flash。
+   $$
+   \theta_j\leftrightarrow x_{\text{mean}}
+   $$
 
----
+   验收测试应明确让两个不同 \(C_f\) member 在 offline 末时刻产生不同压力/组成状态，并确认 online 第一窗分别从各自状态续算。
 
-# 总路线
+3. **扩大 FastPR 的物理验证范围，然后冻结其数学行为。**
+   FastPR 的设计现在已经很好：Reference PR 作为 truth，FastPR batch backend 可替换，当前 corpus parity 也有测试。
+   但现在主要是 C1–nC10、350 K、有限的 \(p-z\) 状态。下一步要重点增加相包络附近的数据：bubble/dew point 两侧、临界区、\(z_1\to0/1\)、低压高压极端状态，以及 DPDP 真实运行中自动采样出来的状态。对 phase classification 要零容忍错误；对 \(v_{mix},x,y,\xi,\lambda\) 建议保持 \(10^{-6}\) 左右甚至更严的相对误差。只有这些通过，FastPR 才可以正式作为生产默认 backend。
 
-后面的顺序应该固定成：
+4. **现在正式进入线性求解第二阶段：做 CPR/pressure-block preconditioning。**
+   这和上一阶段不同。以前 linear solve 几乎不要时间，不值得优化；FastPR 之后 30³ 的线性求解已经约 **113 s**，变成最大的单项成本。
+   不建议直接照搬完整 OPM CPR。先把当前 Jacobian按物理变量抽成：
 
-$$
-\boxed{
-\text{Correctness}
-\rightarrow
-\text{Fast Flash}
-\rightarrow
-\text{Newton 降调用次数}
-\rightarrow
-10^3
-\rightarrow
-20^3
-\rightarrow
-30^3
-\rightarrow
-\text{Ensemble}
-\rightarrow
-\text{Online/Product}
-}
-$$
+   $$
+   J=
+   \begin{bmatrix}
+   J_{nn}&J_{np}\\
+   J_{pn}&J_{pp}
+   \end{bmatrix}
+   $$
 
-我建议拆成下面 12 个 Gate。
+   或按 fracture/matrix pressure block建立近似 pressure system。第一版目标是 `GMRES + pressure AMG/ILU + global correction`。实现上把 `LinearSolver` 扩成 `GMRESILU` 和 `CPRLikeSolver` 两种 backend，保持可切换。硬指标：同样 30³ case，Newton 结果与原 solver 等价，linear solve 时间至少下降 3–5 倍。
 
----
+5. **同步优化 Jacobian 装配，因为它现在也约 97 s。**
+   Flash 已经不是 Jacobian 的主要成本，所以不要再盯着 thermodynamics。当前应 profile `dpdp_blocks.py` 的 Python block assembly。很可能还有大量 `rows.append/cols.append/data.append`、逐 face/逐 component Python 循环。
+   目标是提前预计算 CSR/BSR sparsity structure，然后每次 Newton **只更新 data array**：
 
-## Gate 0：冻结当前正确性基线
+   $$
+   \text{rowptr, colind 固定},\quad values=values(u)
+   $$
 
-这一阶段不追速度，先保证以后优化 Flash 不会把物理搞坏。
+   不再每次构建 Python list → sparse matrix。TPFA face contributions、transfer blocks、accumulation blocks都可批量 NumPy/Numba 装配。这个阶段不再修改方程，只修改装配实现。目标：30³ Jacobian 从约 97 s 压到 20–30 s 以下。
 
-必须保留当前：
+6. **让 FlashCache 真正成为 checkpoint 的组成部分。**
+   现在 `FlashCache` 已经定义得比较干净，明确“只做 guess/phase hint，不能当作未验证结果”。
+   下一步定义：
 
-* D0–D4；
-* component mass conservation；
-* block Jacobian vs reference Jacobian；
-* restart；
-* matrix/fracture/bulk observation；
-* online incremental EnKF；
-* failed-member recovery。
+   $$
+   \text{DualFlashCache}=(cache_f,cache_m)
+   $$
 
-当前 block Jacobian 对 coloring Jacobian 的测试容差还是：
+   和：
 
-$$
-\frac{\|J_b-J_c\|}{\|J_c\|}<5\times10^{-2}
-$$
+   $$
+   \text{DPDPCheckpoint}=(DualCompositionalState,DualFlashCache)
+   $$
 
-短期可以接受，但 Flash 重构以后建议逐步压到：
+   每个 ensemble member 都保存自己的 cache。这样 offline、online、rollback、posterior rerun都能真正 warm-start，而不是只有 state continuation。注意 cache 命中失败必须 fallback 到 canonical FastPR/Reference path，绝不能为了速度改变 equilibrium solution。
 
-$$
-10^{-3}
-$$
+7. **把 30³ full-model 性能设成新的硬门槛。**
+   当前 30³ one-step 已经“能算”，但约 223 s 还远不到在线 slow-loop 水平。
+   建议阶段门槛：
 
-远离相边界时最好：
+   $$
+   T_{30^3,\text{standard step}}<60s
+   $$
 
-$$
-10^{-4}
-$$
+   先达到这个再做更多复杂物理。如果 Jacobian 20–30 s、linear solve 20–30 s、Flash <10 s，这个目标是有逻辑基础的。之后再测真正实验时间窗，而不是只测 0.05 s 小步。
 
-另外新增一个固定的 **Flash regression corpus**：
+8. **完善 fast loop 的“失效规则”，不要只看 0.093 s reuse。**
+   当前 30³ 第一次 factorization 约 28 s，复用后一步只有约 0.093 s，这是很好的结果。
+   但现在关键问题变成“什么时候必须重新 factorize”。需要明确测试：rate setpoint变化是否只改 RHS；BHP setpoint变化是否只改 RHS；control mode变化是否重建矩阵；\(C_f\)、\(\lambda\)、\(c_t\) 更新是否必须 invalidate factorization。最终 fast-loop benchmark要报告：
 
-```text
-tests/fixtures/flash_states.npz
-```
+   $$
+   N_{\text{factor}},\quad N_{\text{reuse}},\quad T_{\text{average step}}
+   $$
 
-保存真实 DPDP 运行中抽出来的：
+   而不只是最好看的 reuse 时间。
 
-```text
-pressure
-composition
-phase state
-K
-x/y
-v_mix
-xi
-lambda
-```
+9. **用整个 Online EnKF cycle 的 wall time 驱动 slow interval。**
+   当前代码主要用一次 posterior mean full solve 的 `last_full_s` 调整 slow interval。
+   但一次在线 assimilation 实际包含 forecast ensemble、failed replacement（必要时）、analysis、posterior ensemble rerun、mean rerun。因此应统计：
 
-所有新 Flash backend 都必须与 reference backend 比。
-
----
-
-# Gate 1：先修在线 EnKF 最后一处架构问题
-
-最新版本已经修了：
-
-$$
-(t_{k-1},t_k]
-$$
-
-增量观测窗、QC、failed-member replacement 和 `from_posterior()`，这很好。
-
-但现在 `_forward_ensemble()` 最终还是通过 `_forward_vector()` 调：
-
-```python
-self.simulate(parameters=theta, t_end=t)
-```
-
-而 `_forward_vector()` 没有传入上一时刻的 `state0`。
-
-也就是说在线 t=60 s 时，很可能还是：
-
-$$
-0\rightarrow60s
-$$
-
-重新正演。
-
-正确 online filter 应该是：
-
-```text
-t(k-1) member checkpoint
-        ↓
-theta forecast
-        ↓
-只 forward 当前窗口
-t(k-1) → tk
-        ↓
-H
-        ↓
-Parameter EnKF
-        ↓
-rollback member state
-        ↓
-posterior theta
-        ↓
-重新跑当前窗口
-        ↓
-保存新的 member physical states
-```
-
-新增：
-
-```python
-@dataclass
-class OnlineMemberState:
-    theta
-    dual_state
-    flash_cache
-```
-
-`TwinLoops` 不只保存：
-
-```text
-members
-```
-
-还应保存：
-
-```text
-dual_states: list[DualCompositionalState]
-```
-
-这样既更符合 sequential filtering，也能大幅减少在线 full forward 的长度。
-
-这是 P0 correctness + performance。
-
----
-
-# Gate 2：给 Flash 建一个正式 Backend 接口
-
-不要继续让：
-
-```text
-flash_tp()
-flash_state()
-dpdp_blocks.py
-fi_comp_dual.py
-```
-
-互相直接耦合。
-
-增加：
-
-```text
-reservoir_backend/eos/flash_backend.py
-```
-
-接口类似：
-
-```text
-FlashBackend
-├── evaluate_batch(p, n, cache)
-├── derivatives_batch(p, n, props, cache)
-└── validate(...)
-```
-
-实现三个 backend：
-
-```text
-ReferencePRBackend
-FastPRBackend
-TabulatedPRBackend   # 后面再实现
-```
-
-现在的：
-
-```python
-flash_tp()
-```
-
-保留为 **reference truth implementation**。
-
-以后再怎么优化，都可以一键：
-
-```text
-reference vs fast
-```
-
-比较。
-
----
-
-# Gate 3：先优化“精确 PR Flash”本身
-
-当前 `flash_tp()` 每个 cell 包含：
-
-1. Wilson K；
-2. stability test；
-3. Rachford–Rice；
-4. liquid/vapor fugacity；
-5. successive substitution；
-6. PR cubic roots。
-
-Rachford–Rice 当前甚至最多二分：
-
-$$
-80
-$$
-
-次；two-phase fugacity iteration 最多：
-
-$$
-20
-$$
-
-次。
-
-这里有几个立即能做的优化。
-
-### 3.1 二组分 RR 直接特化
-
-你当前 V1 是：
-
-$$
-C1-nC10
-$$
-
-二元组分。
-
-二元 Rachford–Rice 可以直接求解 \(V\)，根本没必要 80 次 bisection。
-
-一般 \(N_c>2\) 再用：
-
-$$
-\text{safeguarded Newton}
-$$
-
-而不是纯 bisection。
-
----
-
-### 3.2 PR 的定温常量全部缓存
-
-你的模型是 isothermal。
-
-所以：
-
-$$
-a_i(T),\quad b_i,\quad a_{ij}(T)
-$$
-
-都不随 cell 和 Newton 改变。
-
-当前 `_ab_pure()` 已经缓存了一部分，但：
-
-```python
-aij = (1-kij)*sqrt(outer(ai,ai))
-```
-
-仍在多个 EOS 路径里重复生成。
-
-应该在：
-
-```text
-PengRobinsonKernel
-```
-
-初始化时直接保存：
-
-```text
-ai
-bi
-aij
-Wilson temperature factor
-```
-
-之后每个 cell 只计算 composition/pressure-dependent 部分。
-
----
-
-### 3.3 stability test 去掉重复 fugacity
-
-当前 `is_unstable()` 中 `ln_phi_z` 在 iteration 内反复计算，`tpd_trial()` 又重新计算一次。
-
-而同一个：
-
-$$
-(p,T,z)
-$$
-
-下：
-
-$$
-\ln\phi(z)
-$$
-
-完全不变。
-
-所以一次 stability test 应：
-
-```text
-ln_phi_z = once
-
-trial vapor
-    reuse ln_phi_z
-
-trial liquid
-    reuse ln_phi_z
-```
-
-这是纯等价优化，不改变物理。
-
----
-
-### 3.4 Flash 必须返回 convergence information
-
-当前 `flash_tp()` 如果到 `max_iter=20` 仍没真正收敛，也会继续返回结果。
-
-建议 `FlashResult` 增加：
-
-```text
-converged
-iterations
-fugacity_error
-stability_checked
-stability_margin
-fallback_used
-```
-
-如果：
-
-$$
-\|\ln(f_L/f_V)\|>\epsilon
-$$
-
-不能静默返回。
-
-先保证 Flash 是一个真正可靠的“黑箱热力学算子”，后面 cache 才安全。
-
----
-
-# Gate 4：解决你现在最纠结的跨 Newton Flash cache
-
-现在项目认为：
-
-> residual 用 cached K，而 Jacobian perturbation 用 Wilson，否则 \(J\neq\partial R\)。
-
-问题的根源不是“warm start 原理上不能用于 Jacobian”。
-
-真正要求应该是：
-
-$$
-\boxed{
-\text{initial guess 可以不同，但最终 equilibrium solution 必须相同}
-}
-$$
-
-也就是说：
-
-```text
-Wilson K
-   ↓
-flash converged
-
-previous K
-   ↓
-flash converged
-```
-
-必须满足：
-
-$$
-F_{\text{flash}}^{Wilson}(p,z)
-\approx
-F_{\text{flash}}^{warm}(p,z)
-$$
-
-如果二者不同，说明 Flash 当前存在：
-
-* 未完全收敛；
-* phase-path dependence；
-* stability 判断差异；
-
-而不是 K reuse 本身错。
-
-### 正确 cache 设计
-
-每个 continuum 保存：
-
-```text
-FlashCache
-├── K
-├── phase_status
-├── vapor_fraction
-├── p_last
-├── z_last
-├── x/y
-└── convergence metadata
-```
-
-生命周期：
-
-```text
-time step n
-    Newton 1
-      ↓
-    Newton 2
-      ↓
-    Newton 3
-      ↓
-time step n+1
-```
-
-甚至跨 timestep。
-
-但 cache **只能做 initial guess / phase hint**，不能未经验证直接把旧热力学结果当新结果。
-
----
-
-## Warm-start 验收硬门槛
-
-随机取几千个状态：
-
-$$
-(p,z)
-$$
-
-比较 cold/warm：
-
-$$
-vapor\ fraction
-$$
-
-$$
-x_i,y_i
-$$
-
-$$
-v_{mix}
-$$
-
-$$
-\xi,\lambda
-$$
-
-要求例如：
-
-$$
-rtol<10^{-8}
-$$
-
-如果 warm path 不能达到同一个结果：
-
-```text
-fallback → full stability + Wilson
-```
-
-通过这一关以后，Jacobian perturbation 才能安全地：
-
-```text
-copy base cache
-→ perturb p/z
-→ warm flash
-```
-
-J 仍然是同一个物理映射的数值导数。
-
-JutulDarcy 目前公开的 compositional 优化也是这个方向：`flash_reuse_guess` 会复用 previous flash guess，`flash_stability_bypass` 则对远离两相/影子区的 cell 跳过 stability；其 `fast_flash` 就是组合这两个机制。([Sintef Math][1])
-
----
-
-# Gate 5：真正的大提速——Batch / compiled Flash
-
-这一条我认为是把：
-
-$$
-757s\rightarrow60s
-$$
-
-最关键的措施。
-
-当前 `flash_state()` 是：
-
-```python
-for c in cells:
-    flash_tp(...)
-```
-
-Python cell loop。
-
-即使算法优化以后，27,000×2 continuum 仍会受到 Python 调度成本。
-
-要改成：
-
-$$
-\boxed{\text{batch flash}}
-$$
-
----
-
-## 推荐实现
-
-新增：
-
-```text
-reservoir_backend/eos/fast_pr.py
-reservoir_backend/eos/flash_batch.py
-```
-
-V1 先专门优化：
-
-$$
-\boxed{
-T=\text{constant},\quad N_c=2
-}
-$$
-
-因为你的 V1 恰好就是最低维度问题。
-
-Batch 输入：
-
-```text
-p: (N,)
-z1: (N,)
-K_previous: (N,2)
-phase_status: (N,)
-```
-
-一次计算：
-
-* Wilson K；
-* binary RR；
-* PR A/B；
-* cubic roots；
-* fugacity；
-* active two-phase iteration。
-
-不要每 cell 创建 Python `FlashResult` dataclass。
-
-直接返回 NumPy arrays：
-
-```text
-vapor_frac[N]
-x[N,2]
-y[N,2]
-v_liq[N]
-v_vap[N]
-K[N,2]
-phase[N]
-```
-
----
-
-## Numba 可以在这一阶段加入
-
-当前 `pyproject.toml` 只有 NumPy / SciPy / YAML，没有编译型数值 backend。
-
-我建议不要强制整个项目依赖 Numba，可以：
-
-```toml
-[project.optional-dependencies]
-perf = ["numba>=..."]
-```
-
-然后：
-
-```text
-ReferencePRBackend → pure NumPy/Python
-FastPRBackend      → Numba
-```
-
-如果以后迁 C++，只换 backend，不动 DPDP solver。
-
-### 这一 Gate 的硬门槛
-
-先单独测 10,000 个真实 flash states：
-
-$$
-\boxed{
-T_{\text{fast}} < T_{\text{reference}}/20
-}
-$$
-
-并且结果在容差内一致。
-
-如果连 Flash microbenchmark 都没有 20×，不要急着重新跑 10³ DPDP。
-
----
-
-# Gate 6：如果 exact batch Flash 仍不够——做 V1 专用 OBL / 热力学表
-
-这是我非常推荐你保留的第二路线。
-
-因为当前 V1 是：
-
-$$
-T=constant
-$$
-
-并且只有：
-
-$$
-C1+nC10
-$$
-
-整体组成只有一个独立变量：
-
-$$
-z_{C1}
-$$
-
-所以热力学状态实际上只有二维：
-
-$$
-\boxed{
-(p,z_{C1})
-}
-$$
-
-这特别适合做预计算。
-
-建立：
-
-```text
-TabulatedThermoBackend
-```
-
-将：
-
-$$
-(p,z_1)
-$$
-
-映射成：
-
-$$
-v_{mix},S_g,x,y,\xi,\lambda,K
-$$
-
-以及需要的导数。
-
-运行时直接二维插值。
-
-这并不是神经网络 surrogate，而是一个确定性的 thermo operator table。
-
-DARTS 的 Operator-Based Linearization 正是类似思想：复杂热力学算子可以在物理参数空间预计算/自适应采样，模拟过程中通过插值求值和导数，从而降低 nonlinear linearization 成本。([DARTS 文档][2])
-
-### 必须特别处理 phase boundary
-
-不能粗暴规则网格。
-
-应该：
-
-```text
-coarse table
-↓
-识别 bubble/dew boundary
-↓
-boundary refinement
-↓
-adaptive cells
-```
-
-运行时如果：
-
-* 超出表范围；
-* 靠近 phase boundary；
-* 插值 error estimator 超阈值；
-
-就：
-
-```text
-fallback exact PR flash
-```
-
-### 验收
-
-用 10k–100k 随机样本比较 exact PR：
-
-$$
-v_{mix},\xi,\lambda,x,y
-$$
-
-相态分类也必须测。
-
-这个方案对当前**二元等温 V1**特别有价值，但不要把它当成未来 8 组分通用方案——维数会爆炸。
-
----
-
-# Gate 7：减少 Newton 中“需要 Flash 的次数”
-
-等单次 Flash 快了，再优化调用次数。
-
-当前通常一个 accepted step：
-
-$$
-N_{Newton}\approx3
-$$
-
-所以即便 Flash 快 10×，还可以继续降。
-
-### 7.1 Jacobian lagging
-
-第一 Newton：
-
-$$
-J_1=\frac{\partial R}{\partial u}
-$$
-
-第二 Newton 如果：
-
-* phase status 没变化；
-* \(\Delta p,\Delta z\) 小；
-* residual 已明显下降；
-
-就先复用：
-
-$$
-J_1
-$$
-
-而不是重新 thermo derivative + Jacobian。
-
-如果 convergence 变差，再 rebuild。
-
-可以：
-
-```text
-jacobian_reuse_max = 1
-```
-
-保守开始。
-
----
-
-### 7.2 限制 Newton state change
-
-增加明确：
-
-$$
-|\Delta p|_{\max}
-$$
-
-$$
-|\Delta z|_{\max}
-$$
-
-$$
-|\Delta S|_{\max}
-$$
-
-而不是全靠 line search。
-
-JutulDarcy 的 compositional nonlinear controls 也明确包含 pressure、saturation、composition 最大变化限制。([Sintef Math][3])
-
-这样通常：
-
-$$
-\alpha=1
-$$
-
-直接成功的概率更高，减少 line-search Flash。
-
----
-
-### 7.3 记录 line-search Flash
-
-当前 profiler 还要增加：
-
-```text
-n_flash_main
-n_flash_thermo_jac
-n_flash_line_search
-n_stability
-n_stability_bypass
-n_warm_start
-n_warm_fallback
-```
-
-不能只看秒数。
-
-最终你需要知道：
-
-> 一个 accepted timestep 到底执行了多少次 cell flash。
-
----
-
-### 7.4 Inexact Newton
-
-早期 Newton：
-
-$$
-tol_{flash}=10^{-6}
-$$
-
-最后 Newton：
-
-$$
-10^{-8}
-$$
-
-这种可以后做。
-
-先不要第一轮就加，避免又引入 convergence/path dependence。
-
----
-
-# Gate 8：单独优化 1 秒 Fast Loop
-
-高频 loop 和 full DPDP 是两个独立性能问题。
-
-现在 frozen-\(\lambda\) pressure 已经是线性 sparse problem。
-
-但每秒如果都：
-
-```text
-assemble A
-→ sparse factorization
-→ solve
-```
-
-仍然浪费。
-
-在 slow refresh 之间：
-
-$$
-\lambda,c_t,C_f
-$$
-
-基本固定。
-
-所以矩阵：
-
-$$
-A
-$$
-
-大部分也是固定的。
-
-新增：
-
-```text
-FrozenPressureContext
-├── A
-├── LU/factorization
-├── last mobility version
-└── control mode signature
-```
-
-slow model 更新以后：
-
-```text
-assemble + factorize once
-```
-
-之后每秒：
-
-```text
-update RHS
-→ triangular solve
-```
-
-如果只是 rate value 或 BHP setpoint 改变，在 frozen mobility 前提下很多情况下矩阵结构/系数仍不需要重建。
-
-### 目标
-
-30³：
-
-$$
-\boxed{
-T_{\text{fast step}}<1s
-}
-$$
-
-这才是真正支撑“一秒一个三维压力场”的路径。
-
----
-
-# Gate 9：再重新跑规模阶梯
-
-不要现在直接 30³。
-
-硬顺序：
-
-```text
-5³
-↓
-10³
-↓
-20³
-↓
-30³
-```
-
-### 第一门槛
-
-当前已有：
-
-$$
-10^3\approx757s
-$$
-
-阶段性目标：
-
-$$
-\boxed{10^3<60s}
-$$
-
-但要注意：
-
-> **60 s 只是“允许继续放大”的门槛，不是最终产品性能目标。**
-
-因为 27k 是 1k 的 27 倍。
-
-如果仍线性：
-
-$$
-60s\times27=1620s
-$$
-
-还是 27 分钟。
-
-所以后面真正的产品门槛应该直接测：
-
-$$
-T_{30^3,\ full}
-$$
-
-最终 slow-loop 周期必须：
-
-$$
-T_{\text{full solve}}
-\lesssim
-T_{\text{slow interval}}
-$$
-
-否则 online queue 会不断积压。
-
-如果 full model 最终需要 2 min，那 slow interval 就不能机械写死 30 s，而应该变成 2–5 min，fast loop 继续每秒运行。
-
----
-
-# Gate 10：最后优化 ES-MDA / EnKF，而不是反过来
-
-单 forward 没快之前，不优化 ensemble。
-
-等 30³ 单 forward 跑通以后：
-
-### Offline
-
-继续：
-
-$$
-ES\text{-}MDA
-$$
-
-但因为现在只有：
-
-$$
-n_\theta=1
-$$
-
-一定要测试：
-
-$$
-N_e=8,12,16,24,32
-$$
-
-的 posterior 稳定性。
-
-如果：
-
-$$
-N_e=12
-$$
-
-和 32 几乎一样，就没必要浪费 2.7× forward。
-
----
-
-### Online
-
-Parameter EnKF 用：
-
-$$
-(t_{k-1},t_k]
-$$
-
-已经正确。
-
-下一步一定要变成：
-
-$$
-\boxed{\text{per-member checkpoint continuation}}
-$$
-
-而不是每轮 ensemble 从：
-
-$$
-t=0
-$$
-
-重算。
-
-每个 member 保存：
-
-$$
-C_f^{(j)},p_f^{(j)},n_f^{(j)},p_m^{(j)},n_m^{(j)}
-$$
-
-这会让 online cost 从：
-
-$$
-O(t_k)
-$$
-
-变成：
-
-$$
-O(t_k-t_{k-1})
-$$
-
-随着实验越来越长，不会越来越慢。
-
----
-
-### 防止嵌套并行
-
-以后 FastPR backend 如果自己使用多线程：
-
-```text
-ensemble workers × flash threads
-```
-
-必须限制。
-
-推荐：
-
-```text
-offline ensemble:
-    outer process parallel
-    flash threads = 1~2
-
-single production forward:
-    flash threads = CPU cores
-```
-
-不要造成 oversubscription。
-
----
-
-# Gate 11：真实页岩油 PVT 接入时先做组分归并
-
-当前 C1–nC10 是性能最友好的 V1。
-
-真实实验 PVT 以后可能有：
-
-$$
-C1,C2,C3,\dots,C30+
-$$
-
-不要直接全部进入 reservoir unknowns。
-
-先做 EOS characterization 和 pseudo-component lumping。
-
-例如最终可能得到：
-
-$$
-C1
-$$
-
-$$
-C2-C3
-$$
-
-$$
-C4-C6
-$$
-
-$$
-C7-C12
-$$
-
-$$
-C13+
-$$
-
-实际如何分必须根据实验 PVT 拟合决定，不是固定这五组。
-
-JutulDarcy 的公开 compositional 示例也采用类似 grouped/pseudo components，例如 `C2-5`、`C6-13`、`C14-24`。([Sintef Math][4])
-
-目标是用**最少 component 数**保持：
-
-* bubble/dew point；
-* density；
-* viscosity；
-* phase split；
-* GOR；
-  -关键实验 PVT。
-
-否则：
-
-$$
-N_u=2N_{cell}(N_c+1)
-$$
-
-会快速膨胀。
-
----
-
-# Gate 12：最后才切产品路径
-
-当下面这些都通过：
-
-$$
-\boxed{
-\begin{aligned}
-&\text{Flash reference/fast parity}\\
-&\text{D0-D4}\\
-&\text{mass conservation}\\
-&10^3<60s\\
-&30^3\text{ full model 可接受}\\
-&30^3\text{ fast loop}<1s\\
-&ES\text{-}MDA\ C_f\text{ recovery}\\
-&Online EnKF tracking
-\end{aligned}}
-$$
-
-再把实验室默认：
-
-```text
-2-region log K + LM
-```
-
-切换为：
-
-```text
-log Cf
-+
-compositional DPDP
-+
-offline ES-MDA
-+
-online Parameter EnKF
-```
-
-当前文档也承认实验室 `apply` 默认仍然是旧的两区 log K + LM。
-
-之后再补外围产品：
-
-```text
-raw resistivity/acoustic
-        ↓
-SignalInversionModel
-        ↓
-SaturationObservation + uncertainty
-        ↓
-H / assimilation
-```
-
-以及真正 UDP service。
-
-27k 三维场不要塞进 UDP JSON：
-
-```text
-UDP → command / metadata / request_id
-NPZ/HDF5 → large 3D fields
-```
-
----
-
-# 最终我建议 Codex 按这个开发批次执行
-
-### Batch A — Flash correctness
-
-```text
-FlashBackend
-FlashResult convergence metadata
-cold/warm parity tests
-stability/fugacity counters
-binary RR
-PR fixed-T cache
-```
-
-**不动 DPDP 物理。**
-
-### Batch B — Fast exact Flash
-
-```text
-batch binary PR
-Numba/compiled optional backend
-persistent K cache
-phase hint + fallback
-10k flash benchmark
-```
-
-目标：
-
-$$
->20\times\text{ Flash speedup}
-$$
-
-### Batch C — Newton performance
-
-```text
-thermo derivatives use FastPRBackend
-Jacobian lagging
-dp/dz limiter
-line-search counters
-```
-
-然后跑：
-
-$$
-5^3
-$$
-
-目标应该直接从当前 103 s 压到约：
-
-$$
-\boxed{<8\sim10s}
-$$
-
-否则根据近线性 scaling，10³ 很难达到 60 s。
-
-### Batch D — Scale Gate
-
-```text
-10³ < 60 s
-→ 20³
-→ 30³
-```
-
-每次必须记录：
-
-```text
-wall
-flash
-Newton
-linear
-memory
-mass
-hardware
-threads
-commit SHA
-```
-
-### Batch E — Online engineering
-
-```text
-per-member DualState checkpoint
-window-only forward
-frozen-pressure factorization reuse
-adaptive slow interval
-```
-
-### Batch F — Product
-
-```text
-switch apply
-sensor inversion
-UDP service
-full experiment replay
-```
-
----
-
-## 有几件事现在明确不要做
-
-暂时不要投入：
-
-* CPR；
-* AMG；
-* GPU sparse linear solver；
-* zonal \(C_f\)；
-* SRV；
-* 裂缝半长；
-* AMR；
-* PINN；
-* 更多反演算法；
-* 20³/30³ 暴力长跑。
-
-OPM 等工业模拟器确实大量使用 AD、block sparse、CPR 和 adaptive timestep；当前 OPM Flow 也明确采用自动微分装配和 block/CPR 类线性求解技术。([OPM项目][5]) 但你的 benchmark 已经证明**现在 linear solve 几乎不是成本**，所以不能机械模仿工业模拟器的优化优先级。
-
-对你这个项目，现在真正具有最高 ROI 的技术链就是：
-
-$$
-\boxed{
-\text{Canonical Flash}
-\rightarrow
-\text{Warm Start}
-\rightarrow
-\text{Batch/Compiled PR}
-\rightarrow
-\text{Tabulated Operator if needed}
-\rightarrow
-\text{Jacobian reuse}
-\rightarrow
-30^3
-}
-$$
-
-如果这条路线执行好，我认为现在最难的“架构是否正确”已经过去了；下一阶段基本就是一个可以用 benchmark 驱动的明确性能工程问题。
-
-[1]: https://sintefmath.github.io/JutulDarcy.jl/v0.2/man/highlevel?utm_source=chatgpt.com "High-level API | JutulDarcy.jl"
-[2]: https://open-darts.readthedocs.io/en/latest/about_darts/about_darts.html?utm_source=chatgpt.com "What is DARTS? — open-darts 0.1.5 documentation"
-[3]: https://sintefmath.github.io/JutulDarcy.jl/v0.2.28/man/highlevel/?utm_source=chatgpt.com "High-level API · JutulDarcy.jl"
-[4]: https://sintefmath.github.io/JutulDarcy.jl/stable/examples/compositional/compositional_5components?utm_source=chatgpt.com "A more complex compositional model | JutulDarcy.jl"
-[5]: https://opm-project.org/?page_id=19&utm_source=chatgpt.com "Flow | OPM"
+   $$
+   T_{\text{cycle}}
+   =
+   T_{\text{forecast ens}}
+   +T_{\text{analysis}}
+   +T_{\text{posterior ens}}
+   +T_{\text{mean}}
+   $$
+
+   并让：
+
+   $$
+   slow\_interval\ge T_{\text{cycle}}\times safety\ factor
+   $$
+
+   fast loop 仍然 1 s 输出。这样系统才不会实时运行几小时后出现 assimilation backlog。
+
+10. **重新评估 ensemble size，而不是默认一直 Ne=32。**
+    V1 只有一个反演参数：
+
+    $$
+    \theta=\log(C_f/C_{ref})
+    $$
+
+    参数维度极低。没有理由默认使用很大的 ensemble。应系统比较：
+
+    $$
+    N_e=8,12,16,24,32
+    $$
+
+    看 posterior P50/P05/P95、holdout RMSE和 \(C_f\) recovery是否稳定。如果 Ne=12 与 Ne=32差别很小，offline/online成本可以直接下降约 2–3 倍。scalar \(C_f\) 阶段不需要 localization。
+
+11. **然后接真实 PVT，而不是继续扩 synthetic physics。**
+    当前 C1–nC10 是 V1 数值验证流体，不应直接当最终实验油。真实实验进入后，先走：
+
+    $$
+    \text{PVT data}
+    \rightarrow
+    \text{PR EOS tuning}
+    \rightarrow
+    \text{pseudo-component lumping}
+    \rightarrow
+    \text{PVT validation}
+    $$
+
+    再放进 DPDP。真实油如果有十几个甚至几十个组分，不能原样全部进入 30³ FIM。应根据泡点、密度、体积系数、GOR、黏度和相分率等指标确定 3–6 个左右的 pseudo-components。FastPR也要针对这套真实 EOS重新建立 regression corpus。
+
+12. **最后接“原始传感器 → 观测”的外围链路。**
+    核心 solver 不应该重新塞回通用 Archie/EM/acoustic算法。按照软件要求，应独立建设：
+
+    $$
+    raw\ signal
+    \rightarrow
+    SignalInversionModel
+    \rightarrow
+    SaturationObservation(value,\sigma,x,y,z,t)
+    \rightarrow
+    ObservationOperator
+    \rightarrow
+    EnKF/ES\text{-}MDA
+    $$
+
+    压力传感器则直接形成 pressure observation。关键是每个饱和度结果必须带 uncertainty \(\sigma\)，否则后面的 ensemble assimilation不知道各传感器权重。
+
+13. **UDP 和前端只在上述稳定后收尾。**
+    UDP只做 control plane：
+    `start/stop/update_control/get_status/request_field/request_id/ACK/error`。27k 三维数组不要直接塞 UDP JSON，走 NPZ/HDF5/共享文件或后续二进制通道。实时输出要区分：
+    `pressure_source=fast`、`saturation_source=last_full`、`saturations_held=true/false`，避免前端把冻结的饱和度误解成每秒重新计算的 full compositional saturation。
+
+14. **最后补 CI 和发布门槛。**
+    最新 commit 当前仍没有 GitHub Actions status。开发 CI 至少跑 `not slow`、FastPR parity、D0–D4、Jacobian/reference、restart、EnKF incremental-window。30³ benchmark不放普通 CI，做 manual/nightly。每次准备切产品版本时必须同时满足：correctness tests全绿、标准 30³ benchmark达标、FastPR parity达标、online replay无 observation reuse、mass conservation达标。
+
+如果压缩成最近 **三轮开发**，我会这么定：
+
+**第一轮**只做：posterior member state一一对应、标准 benchmark、文档同步、CI。
+**第二轮**只做：30³ Jacobian预分配/向量化 + CPR-like线性预条件，把 223 s往 60 s内压。
+**第三轮**做：online整轮计时与自适应slow interval、真实PVT/lumping、真实传感器 observation接口。
+
+这三轮结束后，项目的性质就会从“30³ 已跑通的科研数字孪生原型”真正转向“可以接实验设备连续运行的 V1 后端”。

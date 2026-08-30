@@ -55,6 +55,9 @@ class TwinLoops:
     q_std: float = 0.02
     rng_seed: int | None = None
     last_full_s: float = 0.0
+    last_cycle_s: float = 0.0
+    cycle_safety: float = 1.2
+    flash_caches: list | None = None
     _frozen: FrozenPressureContext | None = field(default=None, repr=False)
 
     @classmethod
@@ -68,9 +71,12 @@ class TwinLoops:
         loops.last_traj = posterior.history
         if posterior.history is not None and posterior.history.times_s.size:
             loops.last_slow_s = float(posterior.history.times_s[-1])
-        last = getattr(twin, "_last_dual", None)
-        if last is not None:
-            loops.dual_states = [last.copy() for _ in range(loops.members.shape[1])]
+        ens_duals = getattr(posterior.ensemble, "dual_states", None)
+        if ens_duals:
+            loops.dual_states = [None if s is None else s.copy() for s in ens_duals]
+        ens_cache = getattr(posterior.ensemble, "flash_caches", None)
+        if ens_cache:
+            loops.flash_caches = [None if c is None else c.copy() for c in ens_cache]
         return loops
 
     def fast_state(self, t: float) -> State:
@@ -143,7 +149,11 @@ class TwinLoops:
     ) -> Posterior | None:
         """Parameter EnKF from the previous posterior ensemble. Not a full ES-MDA rerun."""
         t = float(t)
-        interval = max(float(self.slow_interval_s), float(self.last_full_s))
+        interval = max(
+            float(self.slow_interval_s),
+            float(self.last_full_s),
+            float(self.last_cycle_s) * float(self.cycle_safety),
+        )
         if not force and (t - self.last_slow_s) < interval - 1.0e-12:
             return None
         if observations is not None:
@@ -167,12 +177,15 @@ class TwinLoops:
             pmean = getattr(self.twin.parameterization, "prior_mean", self.twin.inverse.prior_mean)
             self.members = sample_log_prior(pmean, pstd, n_theta, n_ens, rng, log_min=lo, log_max=hi)
             self.members = _clip_members(self.twin, self.members)
+        t_cycle0 = time.perf_counter()
         members = forecast_parameters(self.members, self.q_std, rng)
         members = _clip_members(self.twin, members)
         checkpoints = self.dual_states
+        t_fc0 = time.perf_counter()
         predicted, failed, n_fwd, _ = _forward_ensemble(
             self.twin, members, series, t, dual_states=checkpoints
         )
+        t_forecast = time.perf_counter() - t_fc0
         failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(members.shape[1])])
         if np.any(failed_mask):
             members = replace_failed_members(members, failed_mask, rng, pstd)
@@ -188,12 +201,16 @@ class TwinLoops:
         active = status == ObservationStatus.ACTIVE.value
         if not np.any(active):
             raise AssimilationError("no ACTIVE observations after QC")
+        t_an0 = time.perf_counter()
         xa = analysis_parameters(members, predicted[active], d_obs.values[active], d_obs.sigma[active], rng)
         xa = _clip_members(self.twin, xa)
+        t_analysis = time.perf_counter() - t_an0
         self.members = xa
         theta_mean = np.mean(xa, axis=1)
         theta_std = np.std(xa, axis=1, ddof=1) if xa.shape[1] > 1 else np.zeros_like(theta_mean)
+        t_po0 = time.perf_counter()
         _, _, n_post, duals_post = _forward_ensemble(self.twin, xa, series, t, dual_states=checkpoints)
+        t_posterior = time.perf_counter() - t_po0
         n_fwd += n_post
         self.dual_states = duals_post
         j_mean = int(np.argmin(np.linalg.norm(xa - theta_mean[:, None], axis=0)))
@@ -202,7 +219,9 @@ class TwinLoops:
         hist = self.twin.simulate(
             parameters=theta_mean, t_end=t, report_times=d_obs.times, state0=state0
         )
-        self.last_full_s = time.perf_counter() - t0
+        t_mean = time.perf_counter() - t0
+        self.last_full_s = t_mean
+        self.last_cycle_s = time.perf_counter() - t_cycle0
         k_mean = np.asarray(self.twin.parameterization.expand(theta_mean), dtype=float).ravel()
         post = Posterior(
             theta=theta_mean,
@@ -213,7 +232,14 @@ class TwinLoops:
             forecast_rmse=None,
             identifiability=np.zeros_like(theta_mean),
             history=hist,
-            notes=[f"parameter EnKF at t={t} Ne={xa.shape[1]}"],
+            notes=[
+                f"parameter EnKF at t={t} Ne={xa.shape[1]}",
+                f"T_forecast={t_forecast:.4f}",
+                f"T_analysis={t_analysis:.4f}",
+                f"T_posterior={t_posterior:.4f}",
+                f"T_mean={t_mean:.4f}",
+                f"T_cycle={self.last_cycle_s:.4f}",
+            ],
             n_forward=int(n_fwd) + 1,
         )
         self.last_traj = hist

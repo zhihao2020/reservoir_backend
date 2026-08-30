@@ -18,6 +18,8 @@ class PosteriorEnsemble:
     k_std: NDArray[np.float64]
     theta_mean: NDArray[np.float64]
     theta_std: NDArray[np.float64]
+    dual_states: list | None = None
+    flash_caches: list | None = None
 
 
 def sample_posterior_ensemble(

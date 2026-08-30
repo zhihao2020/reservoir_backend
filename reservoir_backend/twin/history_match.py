@@ -229,7 +229,7 @@ class HistoryMatchWorkflow:
             )
             members = _clip_members(twin, members)
 
-        predicted, failed, n_fwd, _ = _forward_ensemble(
+        predicted, failed, n_fwd, duals_post = _forward_ensemble(
             twin, members, assim, t_hist, n_workers=n_workers
         )
         n_forward += n_fwd
@@ -274,6 +274,7 @@ class HistoryMatchWorkflow:
             k_std=k_std,
             theta_mean=theta_mean,
             theta_std=theta_std,
+            dual_states=duals_post,
         )
         return Posterior(
             theta=theta_mean,
