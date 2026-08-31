@@ -17,9 +17,14 @@ from reservoir_backend.twin.online import OnlineAssimilationWorkflow, TwinCheckp
 
 @dataclass
 class TwinUDPProtocol:
-    """Translate UDP payloads to checkpoint / observe / status commands."""
+    """Translate UDP payloads to checkpoint / observe / status commands.
+
+    When ``runtime`` is bound, Newton / EnKF run there. This class only
+    parses JSON. The 30³ field is never packed into a UDP datagram.
+    """
 
     workflow: OnlineAssimilationWorkflow | None = None
+    runtime: object | None = None
     last_checkpoint: TwinCheckpoint | None = None
     rng_seed: int = 0
     notes: list[str] = field(default_factory=list)
@@ -50,6 +55,8 @@ class TwinUDPProtocol:
 
     def _dispatch(self, cmd: str, msg: dict[str, Any]) -> dict[str, Any]:
         if cmd in {"status", "ping", "get_status"}:
+            if self.runtime is not None:
+                return dict(self.runtime.status())  # type: ignore[union-attr]
             n = 0 if self.workflow is None else int(np.asarray(self.workflow.members).size)
             running = bool(getattr(self, "_running", True))
             return {
@@ -64,13 +71,30 @@ class TwinUDPProtocol:
             }
         if cmd == "start":
             self._running = True
+            if self.runtime is not None:
+                return dict(self.runtime.start())  # type: ignore[union-attr]
             return {"ok": True, "cmd": "start"}
         if cmd == "stop":
             self._running = False
+            if self.runtime is not None:
+                return dict(self.runtime.stop())  # type: ignore[union-attr]
             return {"ok": True, "cmd": "stop"}
         if cmd == "update_control":
+            if self.runtime is not None:
+                return dict(
+                    self.runtime.update_control(  # type: ignore[union-attr]
+                        str(msg.get("port")),
+                        str(msg.get("kind")),
+                        float(msg["value"]),
+                        float(msg.get("time_s", 0.0)),
+                    )
+                )
             return {"ok": True, "cmd": "update_control", "port": msg.get("port"), "kind": msg.get("kind")}
         if cmd == "request_field":
+            if self.runtime is not None:
+                out = dict(self.runtime.request_field(time_s=msg.get("time_s")))  # type: ignore[union-attr]
+                out["note"] = "3D fields are not packed into UDP JSON"
+                return out
             path = str(msg.get("path") or "results/field.npz")
             return {
                 "ok": True,
@@ -92,6 +116,16 @@ class TwinUDPProtocol:
             self.workflow.restore(self.last_checkpoint, rng)
             return {"ok": True, "cmd": "rollback", "time_s": self.workflow.time_s}
         if cmd in {"observe", "observation"}:
+            if self.runtime is not None and msg.get("sensor_id"):
+                return dict(
+                    self.runtime.observe(  # type: ignore[union-attr]
+                        sensor_id=str(msg.get("sensor_id")),
+                        kind=str(msg.get("kind", "pressure")),
+                        value=float(msg["value"]),
+                        sigma=float(msg.get("sigma", 1.0)),
+                        time_s=float(msg.get("time_s", 0.0)),
+                    )
+                )
             if self.workflow is None:
                 raise ValueError("no workflow bound")
             d = np.asarray(msg.get("values"), dtype=float).ravel()

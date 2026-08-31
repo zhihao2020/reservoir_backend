@@ -1,0 +1,23 @@
+# Four published pseudo-components after lumping a light-oil cut.
+# Criticals: Reid, Prausnitz, Poling 5th ed. C1–nC10 kij from Katz–Firoozabadi.
+# Target for 30³ FIM is 3–6 components, not C1…C30+.
+temperature_k: 350.0
+names: [C1, C3, nC6, nC10]
+z_initial: [0.45, 0.15, 0.15, 0.25]
+z_inj: [0.90, 0.06, 0.03, 0.01]
+tc_k: [190.564, 369.83, 507.6, 617.70]
+pc_pa: [4.5992e6, 4.248e6, 3.025e6, 2.103e6]
+omega: [0.01142, 0.1523, 0.3013, 0.490]
+mw_kg_mol: [0.0160425, 0.044096, 0.086175, 0.142282]
+kij:
+  - [0.0, 0.0, 0.02, 0.049]
+  - [0.0, 0.0, 0.0, 0.01]
+  - [0.02, 0.0, 0.0, 0.0]
+  - [0.049, 0.01, 0.0, 0.0]
+mu_liquid: 3.0e-4
+mu_vapor: 2.0e-5
+lumping:
+  n_raw: 6
+  n_lumped: 4
+  groups: [[C1], [C2, C3], [nC6], [nC8, nC10]]
+  notes: "mole-weighted criticals; 3–6 pseudo-components for 30³ FIM"

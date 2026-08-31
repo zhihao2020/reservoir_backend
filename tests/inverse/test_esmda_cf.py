@@ -60,5 +60,7 @@ def test_yaml_log_conductivity_selects_esmda(tmp_path) -> None:
     spec = inverse_spec_from_cfg({"parameterization": "log_conductivity", "ensemble_size": 12})
     assert spec.algorithm == "esmda"
     assert spec.ensemble_size == 12
+    spec_default = inverse_spec_from_cfg({"parameterization": "log_conductivity"})
+    assert spec_default.ensemble_size == 12
     _ = yaml
     _ = Path

@@ -15,6 +15,10 @@ def corpus_path() -> Path:
     return Path(__file__).resolve().parents[1].parent / "tests" / "fixtures" / "flash_states.npz"
 
 
+def realfluid_corpus_path() -> Path:
+    return Path(__file__).resolve().parents[1].parent / "tests" / "fixtures" / "flash_states_realfluid.npz"
+
+
 def _grid_states(eos, temperature: float, n_p: int = 12, n_z: int = 12):
     p = np.geomspace(2.0e6, 3.0e7, n_p)
     z1 = np.linspace(0.08, 0.92, n_z)
@@ -97,5 +101,47 @@ def build_flash_corpus(path: Path | None = None, *, temperature: float = 350.0) 
         lam_v=krg / spec.mu_vapor,
         ref_vapor_frac=np.array([r.vapor_frac for r in ref]),
         ref_two_phase=np.array([r.two_phase for r in ref], dtype=bool),
+    )
+    return dest
+
+
+def build_realfluid_corpus(path: Path | None = None, *, card: Path | None = None, temperature: float = 350.0) -> Path:
+    """Flash regression on the lab_v1 EOS card (C1–nC10 or lumped 3–6)."""
+    from reservoir_backend.io.eos_load import load_eos_card
+
+    default_card = Path(__file__).resolve().parents[2] / "examples" / "lab_v1" / "pvt.yaml"
+    eos = load_eos_card(card or default_card)
+    p = np.concatenate(
+        [
+            np.geomspace(2.0e6, 3.0e7, 8),
+            np.linspace(1.0e7, 1.4e7, 6),
+        ]
+    )
+    if eos.nc == 2:
+        z1 = np.linspace(0.10, 0.90, 8)
+        pp, zz = np.meshgrid(p, z1, indexing="ij")
+        z = np.stack((zz.ravel(), 1.0 - zz.ravel()), axis=1)
+        p = pp.ravel()
+    else:
+        rng = np.random.default_rng(0)
+        z = rng.random((p.size * 4, eos.nc))
+        z = z / z.sum(axis=1, keepdims=True)
+        p = np.repeat(p, 4)
+    backend = get_flash_backend()
+    arr = backend.evaluate_batch(eos, p, temperature, z)
+    ref = [flash_tp(eos, float(p[i]), temperature, z[i]) for i in range(p.size)]
+    dest = path or realfluid_corpus_path()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        dest,
+        pressure=p,
+        composition=z,
+        temperature=np.array([temperature]),
+        two_phase=arr.two_phase,
+        k=arr.k,
+        vapor_frac=arr.vapor_frac,
+        ref_vapor_frac=np.array([r.vapor_frac for r in ref]),
+        ref_two_phase=np.array([r.two_phase for r in ref], dtype=bool),
+        names=np.array(eos.names),
     )
     return dest

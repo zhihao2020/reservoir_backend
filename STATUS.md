@@ -1,6 +1,6 @@
 # 项目状态
 
-主线：30 cm 页岩油实验数字孪生。正演复用现有求解器；V1 反演目标是标量裂缝等效导流能力 \(C_f\)（log 空间）。V1 组分 apply 是 `examples/lab/lab_cf.yaml`（log \(C_f\) + DPDP + ES-MDA）。两区 log K + LM 仍在 `examples/lab/lab_apply.yaml`。
+主线：30 cm 页岩油实验数字孪生。V1 产品 Case 是 `examples/lab_v1/`（30³ 组分 DPDP + 面注采 + log \(C_f\) + ES-MDA + Parameter EnKF）。饱和度由上游给出 \(S,\sigma\)；原始电/磁/声反演不在核心范围。`examples/lab/lab_cf.yaml` 是粗网格开发夹具；`lab_apply.yaml` 是遗留两区水驱演示。
 
 | 状态 | 含义 |
 |------|------|
@@ -65,6 +65,16 @@
 | Scalar \(C_f\) ES-MDA on DPDP | 已验证 | `LogConductivityParameterization`、`HistoryMatchWorkflow` | `tests/inverse/test_esmda_cf.py`；`m=\log(C_f/C_{\mathrm{ref}})` |
 | Observation QC | 已验证 | `observation.qc` | `tests/observation/test_qc.py` |
 | Online checkpoint / UDP | MVP | `twin.online`、`io.udp_api` | `tests/twin/test_online_checkpoint.py` |
+| 面注采 `make_face_port` | 已验证 | `ports.flow.make_face_port` | `tests/ports/test_face_port.py` |
+| V1 产品 Case `examples/lab_v1/` | MVP | `case.yaml` 30³ + `case_dev.yaml` | `tests/io/test_lab_v1.py` |
+| 传感器 CSV `sensor_id,…,sigma` | 已验证 | `io.case._read_sensors_csv` | `tests/io/test_lab_v1.py` |
+| 饱和度默认 bulk | 已验证 | `ObservationOperator` | `tests/observation/test_sensor_medium.py` |
+| Innovation trigger + \(E_p\) | MVP | `twin.loops.TwinLoops` | `tests/twin/test_loops.py` |
+| LinearSolveResult 诊断 + Schur CPR | MVP | `solver.linear` | `tests/solver/test_linear_result.py` |
+| Lab Gate（面 BC，非 scale gate） | MVP | `scripts/lab_v1_gate.py` | `tests/scripts/test_lab_v1_gate_schema.py` |
+| TwinRuntime / FieldStore | MVP | `runtime/` | `tests/runtime/test_runtime.py` |
+| 实验数据集 `experiments/EXP001` | MVP | `runtime.replay` | `reservoir replay experiments/EXP001` |
+| 真实 PVT YAML + 3–6 lumping | MVP | `examples/lab_v1/pvt.yaml`、`eos.pvt_ingest` | `tests/physics/test_realfluid_flash.py` |
 
 ## 排除
 
@@ -77,7 +87,8 @@
 ## 实验室默认（2026-08 重构）
 
 - 30 cm 立方，10 mm 网格，探头直径 6 mm（`H` 在插值场上做球平均）
-- 反演默认 2 region log K，不是粗网格 6³ / 逐格 K
+- V1 产品 Case：`examples/lab_v1/`（组分 DPDP + 面注采 + log \(C_f\) + ES-MDA）。`lab_cf.yaml` 仅粗网格夹具
+- 反演默认标量 log \(C_f\)（`ensemble_size=12`）。遗留水驱演示才是 2 region log K
 - 三维 p/S 是 F(m_post) 重建；产品尺子是自洽正演（F(m_true) → 反演 → 贴回 F），不是场 Dice 对 CMG
 - `reservoir harness` 已删除
 - 概念实验室 30 cm：`examples/lab/lab_concept.yaml` + `concept_probes.csv`（75 电阻率 + 16 新增 7.5 cm）。invert 对比 = \(F(m_{\mathrm{post}})\)/\(F(m_{\mathrm{true}})\) 场 nRMSE，不是 CMG。`tests/cases/test_lab_concept.py`。

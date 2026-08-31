@@ -94,6 +94,26 @@ class CartesianGrid:
         """Visualization layout ``(nz, ny, nx)`` only."""
         return (self.nz, self.ny, self.nx)
 
+    def face_cells(self, face: str) -> NDArray[np.int64]:
+        """All cells on a named Cartesian face (xmin/xmax/ymin/ymax/zmin/zmax)."""
+        key = str(face).strip().lower().replace("_", "").replace("-", "")
+        nx, ny, nz = self.nx, self.ny, self.nz
+        if key in {"xmin", "left", "west", "i0"}:
+            ijk = [(0, j, k) for k in range(nz) for j in range(ny)]
+        elif key in {"xmax", "right", "east"}:
+            ijk = [(nx - 1, j, k) for k in range(nz) for j in range(ny)]
+        elif key in {"ymin", "front", "south", "j0"}:
+            ijk = [(i, 0, k) for k in range(nz) for i in range(nx)]
+        elif key in {"ymax", "back", "north"}:
+            ijk = [(i, ny - 1, k) for k in range(nz) for i in range(nx)]
+        elif key in {"zmin", "bottom", "down", "k0"}:
+            ijk = [(i, j, 0) for j in range(ny) for i in range(nx)]
+        elif key in {"zmax", "top", "up"}:
+            ijk = [(i, j, nz - 1) for j in range(ny) for i in range(nx)]
+        else:
+            raise GridError(f"unknown face {face!r}")
+        return np.array([self.index(i, j, k) for i, j, k in ijk], dtype=np.int64)
+
     def index(self, i: int, j: int, k: int) -> int:
         if not (0 <= i < self.nx and 0 <= j < self.ny and 0 <= k < self.nz):
             raise GridError(f"ijk {(i, j, k)} out of bounds")

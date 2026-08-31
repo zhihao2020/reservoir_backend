@@ -1,177 +1,1753 @@
-基于最新 `main`（`7eab4ff`），下一步不需要再改大架构。现在应进入 **“验收 → 30³ 第二阶段性能 → 在线闭环 → 真实实验接入”**。最新版本已经把 10³ 单步从约 757 s 压到 6.43 s，并实际跑通 30³；30³ 单步目前约 223 s，其中 Jacobian 约 97 s、线性求解约 113 s，Flash 已降到个位数秒级。
+可以。基于当前最新 `main`（`5246884`），我建议从现在开始把项目当成一个**即将进入实验联调的 V1 产品**来推进，而不是继续做开放式科研开发。
 
-我建议严格按下面顺序做。
+当前数值核心已经比较完整：V1 主路径已经是 `log Cf + compositional DPDP + ES-MDA`，30³ 标准 Gate 已经跑到约 **85.5 s**，其中线性求解约 **64.6 s**；offline posterior member 也已经保存各自的 `DualCompositionalState` 并传入 online。
 
-1. **先冻结当前基线，修 benchmark 和文档可信度。**
-   当前最先要解决的不是算法，而是“以后怎么判断真的变好了”。20³ 和 30³ benchmark workload 不一致：20³ 有 5 次 accepted、3 次 rejected，而 30³ 只有 1 个 accepted step，因此两者 wall time不能直接比较。
-   建议建立统一 `dpdp_scale_gate`：同一初始状态、同一物理时间长度、同一 controls、同一 `max_steps`、同一线程数、同一 Flash backend。每个结果必须自动记录真实 commit SHA、CPU、线程数、Python/NumPy/SciPy 版本、`n_accept/n_reject/newton_its`、质量误差、Jacobian/linear/flash 时间。以后所有性能结论只认这一套 JSON。与此同时，把仍写着“10³=12.6 min、30³ 未跑”的旧文档更新掉，因为现在代码与文档已经明显漂移。
+因此下一阶段的目标应该明确成：
 
-2. **修 Offline posterior ensemble → Online state ensemble 的一一对应。**
-   这是当前最重要的 correctness 问题。现在 `TwinLoops.from_posterior()` 虽然有不同的 posterior \(C_f^{(j)}\)，但初始化时仍把 `twin._last_dual` 同一个物理状态复制给所有 member。
-   应改成 offline ES-MDA 最后一次 posterior forward 时保存：
+$$
+\boxed{
+\text{把“已有模块”串成一个真正可运行的 30 cm 实验数字孪生闭环}
+}
+$$
 
-   $$
-   \{C_f^{(j)},\,p_f^{(j)},n_f^{(j)},p_m^{(j)},n_m^{(j)}\}_{j=1}^{N_e}
-   $$
+总体执行顺序固定为：
 
-   即让 `PosteriorEnsemble` 正式携带 `dual_states`。Online 初始化必须严格：
+$$
+\boxed{
+\text{实验Case冻结}
+\rightarrow
+\text{Synthetic闭环}
+\rightarrow
+\text{Offline ES-MDA}
+\rightarrow
+\text{Online EnKF}
+\rightarrow
+\text{30}^3\text{性能}
+\rightarrow
+\text{真实PVT}
+\rightarrow
+\text{实验数据/UDP}
+\rightarrow
+\text{V1验收}
+}
+$$
 
-   $$
-   \theta_j\leftrightarrow x_j
-   $$
+---
 
-   而不是：
+# 0. 先冻结 V1 范围
 
-   $$
-   \theta_j\leftrightarrow x_{\text{mean}}
-   $$
+这一阶段非常重要，否则 Codex 很容易继续往项目里塞不需要的东西。
 
-   验收测试应明确让两个不同 \(C_f\) member 在 offline 末时刻产生不同压力/组成状态，并确认 online 第一窗分别从各自状态续算。
+V1 明确只解决：
 
-3. **扩大 FastPR 的物理验证范围，然后冻结其数学行为。**
-   FastPR 的设计现在已经很好：Reference PR 作为 truth，FastPR batch backend 可替换，当前 corpus parity 也有测试。
-   但现在主要是 C1–nC10、350 K、有限的 \(p-z\) 状态。下一步要重点增加相包络附近的数据：bubble/dew point 两侧、临界区、\(z_1\to0/1\)、低压高压极端状态，以及 DPDP 真实运行中自动采样出来的状态。对 phase classification 要零容忍错误；对 \(v_{mix},x,y,\xi,\lambda\) 建议保持 \(10^{-6}\) 左右甚至更严的相对误差。只有这些通过，FastPR 才可以正式作为生产默认 backend。
+$$
+Q_{inj}(t),P_{prod}(t),P_{obs},S_{obs}
+$$
 
-4. **现在正式进入线性求解第二阶段：做 CPR/pressure-block preconditioning。**
-   这和上一阶段不同。以前 linear solve 几乎不要时间，不值得优化；FastPR 之后 30³ 的线性求解已经约 **113 s**，变成最大的单项成本。
-   不建议直接照搬完整 OPM CPR。先把当前 Jacobian按物理变量抽成：
+输入以后，重建：
 
-   $$
-   J=
-   \begin{bmatrix}
-   J_{nn}&J_{np}\\
-   J_{pn}&J_{pp}
-   \end{bmatrix}
-   $$
+$$
+p(x,y,z,t)
+$$
 
-   或按 fracture/matrix pressure block建立近似 pressure system。第一版目标是 `GMRES + pressure AMG/ILU + global correction`。实现上把 `LinearSolver` 扩成 `GMRESILU` 和 `CPRLikeSolver` 两种 backend，保持可切换。硬指标：同样 30³ case，Newton 结果与原 solver 等价，linear solve 时间至少下降 3–5 倍。
+$$
+S_w,S_o,S_g
+$$
 
-5. **同步优化 Jacobian 装配，因为它现在也约 97 s。**
-   Flash 已经不是 Jacobian 的主要成本，所以不要再盯着 thermodynamics。当前应 profile `dpdp_blocks.py` 的 Python block assembly。很可能还有大量 `rows.append/cols.append/data.append`、逐 face/逐 component Python 循环。
-   目标是提前预计算 CSR/BSR sparsity structure，然后每次 Newton **只更新 data array**：
+$$
+z_i
+$$
 
-   $$
-   \text{rowptr, colind 固定},\quad values=values(u)
-   $$
+并持续估计：
 
-   不再每次构建 Python list → sparse matrix。TPFA face contributions、transfer blocks、accumulation blocks都可批量 NumPy/Numba 装配。这个阶段不再修改方程，只修改装配实现。目标：30³ Jacobian 从约 97 s 压到 20–30 s 以下。
+$$
+C_f
+$$
 
-6. **让 FlashCache 真正成为 checkpoint 的组成部分。**
-   现在 `FlashCache` 已经定义得比较干净，明确“只做 guess/phase hint，不能当作未验证结果”。
-   下一步定义：
+电阻率、电磁、声学统一认为上游已经完成：
 
-   $$
-   \text{DualFlashCache}=(cache_f,cache_m)
-   $$
+$$
+raw\ signal\rightarrow saturation
+$$
 
-   和：
+reservoir backend 只接：
 
-   $$
-   \text{DPDPCheckpoint}=(DualCompositionalState,DualFlashCache)
-   $$
+$$
+\boxed{
+S_\alpha,\sigma,x,y,z,t
+}
+$$
 
-   每个 ensemble member 都保存自己的 cache。这样 offline、online、rollback、posterior rerun都能真正 warm-start，而不是只有 state continuation。注意 cache 命中失败必须 fallback 到 canonical FastPR/Reference path，绝不能为了速度改变 equilibrium solution。
+建议立即修改：
 
-7. **把 30³ full-model 性能设成新的硬门槛。**
-   当前 30³ one-step 已经“能算”，但约 223 s 还远不到在线 slow-loop 水平。
-   建议阶段门槛：
+```text
+docs/model_assumptions.md
+docs/target_architecture.md
+STATUS.md
+```
 
-   $$
-   T_{30^3,\text{standard step}}<60s
-   $$
+明确写：
 
-   先达到这个再做更多复杂物理。如果 Jacobian 20–30 s、linear solve 20–30 s、Flash <10 s，这个目标是有逻辑基础的。之后再测真正实验时间窗，而不是只测 0.05 s 小步。
+> V1 assumes saturation observations are already provided by upstream sensing/inversion systems. Raw electrical, electromagnetic and acoustic inversion is outside the reservoir-core scope.
 
-8. **完善 fast loop 的“失效规则”，不要只看 0.093 s reuse。**
-   当前 30³ 第一次 factorization 约 28 s，复用后一步只有约 0.093 s，这是很好的结果。
-   但现在关键问题变成“什么时候必须重新 factorize”。需要明确测试：rate setpoint变化是否只改 RHS；BHP setpoint变化是否只改 RHS；control mode变化是否重建矩阵；\(C_f\)、\(\lambda\)、\(c_t\) 更新是否必须 invalidate factorization。最终 fast-loop benchmark要报告：
+同时把这些东西明确列为 V1 不做：
 
-   $$
-   N_{\text{factor}},\quad N_{\text{reuse}},\quad T_{\text{average step}}
-   $$
+```text
+Archie inversion
+EM inversion
+acoustic inversion
+PINN
+SRV
+DFM/EDFM
+AMR
+thermal
+zonal Cf
+per-cell K inversion
+fracture half-length inversion
+```
 
-   而不只是最好看的 reuse 时间。
+这一阶段的验收条件只有一个：
 
-9. **用整个 Online EnKF cycle 的 wall time 驱动 slow interval。**
-   当前代码主要用一次 posterior mean full solve 的 `last_full_s` 调整 slow interval。
-   但一次在线 assimilation 实际包含 forecast ensemble、failed replacement（必要时）、analysis、posterior ensemble rerun、mean rerun。因此应统计：
+> 仓库所有主文档对 V1 范围的表述一致。
 
-   $$
-   T_{\text{cycle}}
-   =
-   T_{\text{forecast ens}}
-   +T_{\text{analysis}}
-   +T_{\text{posterior ens}}
-   +T_{\text{mean}}
-   $$
+---
 
-   并让：
+# 1. 建立唯一的真实实验 Case：`lab_v1`
 
-   $$
-   slow\_interval\ge T_{\text{cycle}}\times safety\ factor
-   $$
+不要再让 `lab_cf.yaml`、`lab_apply.yaml`、concept case、scale benchmark 同时承担“产品 Case”的职责。
 
-   fast loop 仍然 1 s 输出。这样系统才不会实时运行几小时后出现 assimilation backlog。
+建议新增：
 
-10. **重新评估 ensemble size，而不是默认一直 Ne=32。**
-    V1 只有一个反演参数：
+```text
+examples/lab_v1/
+├── case.yaml
+├── controls.csv
+├── sensors.csv
+├── observations_synthetic.csv
+├── pvt.yaml
+└── README.md
+```
 
-    $$
-    \theta=\log(C_f/C_{ref})
-    $$
+其中：
 
-    参数维度极低。没有理由默认使用很大的 ensemble。应系统比较：
+## `case.yaml`
 
-    $$
-    N_e=8,12,16,24,32
-    $$
+固定：
 
-    看 posterior P50/P05/P95、holdout RMSE和 \(C_f\) recovery是否稳定。如果 Ne=12 与 Ne=32差别很小，offline/online成本可以直接下降约 2–3 倍。scalar \(C_f\) 阶段不需要 localization。
+```text
+domain:
+  size: 0.3 × 0.3 × 0.3 m
 
-11. **然后接真实 PVT，而不是继续扩 synthetic physics。**
-    当前 C1–nC10 是 V1 数值验证流体，不应直接当最终实验油。真实实验进入后，先走：
+grid:
+  dx: 0.01
+  dy: 0.01
+  dz: 0.01
 
-    $$
-    \text{PVT data}
-    \rightarrow
-    \text{PR EOS tuning}
-    \rightarrow
-    \text{pseudo-component lumping}
-    \rightarrow
-    \text{PVT validation}
-    $$
+grid cells:
+  30 × 30 × 30 = 27000
+```
 
-    再放进 DPDP。真实油如果有十几个甚至几十个组分，不能原样全部进入 30³ FIM。应根据泡点、密度、体积系数、GOR、黏度和相分率等指标确定 3–6 个左右的 pseudo-components。FastPR也要针对这套真实 EOS重新建立 regression corpus。
+physics：
 
-12. **最后接“原始传感器 → 观测”的外围链路。**
-    核心 solver 不应该重新塞回通用 Archie/EM/acoustic算法。按照软件要求，应独立建设：
+```text
+model = compositional_dpdp
+temperature = fixed
+matrix k = fixed
+matrix phi = fixed
+fracture phi = fixed
+shape factor = fixed
+Cf = inverted
+EOS = fixed during assimilation
+relperm = fixed
+```
 
-    $$
-    raw\ signal
-    \rightarrow
-    SignalInversionModel
-    \rightarrow
-    SaturationObservation(value,\sigma,x,y,z,t)
-    \rightarrow
-    ObservationOperator
-    \rightarrow
-    EnKF/ES\text{-}MDA
-    $$
+反演：
 
-    压力传感器则直接形成 pressure observation。关键是每个饱和度结果必须带 uncertainty \(\sigma\)，否则后面的 ensemble assimilation不知道各传感器权重。
+```text
+parameterization = log_conductivity
+algorithm = esmda
+```
 
-13. **UDP 和前端只在上述稳定后收尾。**
-    UDP只做 control plane：
-    `start/stop/update_control/get_status/request_field/request_id/ACK/error`。27k 三维数组不要直接塞 UDP JSON，走 NPZ/HDF5/共享文件或后续二进制通道。实时输出要区分：
-    `pressure_source=fast`、`saturation_source=last_full`、`saturations_held=true/false`，避免前端把冻结的饱和度误解成每秒重新计算的 full compositional saturation。
+在线：
 
-14. **最后补 CI 和发布门槛。**
-    最新 commit 当前仍没有 GitHub Actions status。开发 CI 至少跑 `not slow`、FastPR parity、D0–D4、Jacobian/reference、restart、EnKF incremental-window。30³ benchmark不放普通 CI，做 manual/nightly。每次准备切产品版本时必须同时满足：correctness tests全绿、标准 30³ benchmark达标、FastPR parity达标、online replay无 observation reuse、mass conservation达标。
+```text
+parameter filter = Parameter EnKF
+fast predictor = frozen-lambda pressure
+```
 
-如果压缩成最近 **三轮开发**，我会这么定：
+---
 
-**第一轮**只做：posterior member state一一对应、标准 benchmark、文档同步、CI。
-**第二轮**只做：30³ Jacobian预分配/向量化 + CPR-like线性预条件，把 223 s往 60 s内压。
-**第三轮**做：online整轮计时与自适应slow interval、真实PVT/lumping、真实传感器 observation接口。
+# 2. 把实验边界条件真正做成“面注入/面生产”
 
-这三轮结束后，项目的性质就会从“30³ 已跑通的科研数字孪生原型”真正转向“可以接实验设备连续运行的 V1 后端”。
+这个地方不要偷懒。
+
+你的物理实验不是一个地下井，而是：
+
+* 左侧注入；
+* 右侧生产；
+* 其余面封闭。
+
+因此应该建立：
+
+```text
+left face  → rate controlled port
+right face → pressure controlled port
+other faces → no flow
+```
+
+30×30 的一个面有：
+
+$$
+900
+$$
+
+个 cell。
+
+不要给 900 个 cell 各自一个完整 \(Q_{inj}\)。
+
+总注入量必须满足：
+
+$$
+\sum_{i\in inlet}Q_i=Q_{inj}
+$$
+
+建议不要重新设计 Solver，而是在 Port 层增加一个简单 helper：
+
+```python
+make_face_port(
+    face="xmin",
+    control="rate",
+    total_rate=...
+)
+```
+
+它只负责：
+
+```text
+face
+↓
+cell_ids
+↓
+connection weights
+↓
+FlowPort
+```
+
+右面：
+
+```python
+make_face_port(
+    face="xmax",
+    control="pressure"
+)
+```
+
+---
+
+# 3. 正式定义传感器数据格式
+
+建议以后实验所有观测都转换成一个统一结构。
+
+```text
+sensor_id
+kind
+x_m
+y_m
+z_m
+continuum
+sigma
+```
+
+比如：
+
+```csv
+sensor_id,kind,x_m,y_m,z_m,continuum,sigma
+P001,pressure,0.05,0.10,0.15,bulk,2000
+P002,pressure,0.10,0.10,0.15,bulk,2000
+S001,sw,0.06,0.08,0.12,bulk,0.03
+S002,sw,0.12,0.08,0.12,bulk,0.03
+```
+
+这里最关键的是：
+
+$$
+\sigma
+$$
+
+一定要存在。
+
+ES-MDA / EnKF 实际使用：
+
+$$
+R=
+\operatorname{diag}(\sigma_1^2,\dots,\sigma_n^2)
+$$
+
+没有观测不确定度，就没有合理的数据权重。
+
+---
+
+# 4. 饱和度传感器默认使用 `bulk`
+
+不要默认：
+
+```text
+fracture saturation
+```
+
+因为实验电磁/电阻率最终给出的等效饱和度通常对应一个空间感应体积。
+
+V1 可以先定义：
+
+$$
+S_{\alpha,bulk}
+=
+\frac{
+\phi_mS_{\alpha,m}
++
+\phi_fS_{\alpha,f}
+}{
+\phi_m+\phi_f
+}
+$$
+
+如果探头还有有限体积，再对附近 cell 做空间平均：
+
+$$
+H_S(x_s)=
+\frac{\sum_i w_iS_{\alpha,bulk,i}}
+{\sum_iw_i}
+$$
+
+现有 ObservationOperator 已经支持非格点观测，这部分不需要重写。仓库状态也把非格点 ObservationOperator 标为已验证。
+
+---
+
+# 5. 做第一个真正的 30 cm Synthetic Truth
+
+这是下一步开发中**最重要的任务**。
+
+创建：
+
+```text
+scripts/lab_v1_generate_truth.py
+```
+
+流程：
+
+```text
+known Cf_true
+     ↓
+30³ DPDP
+     ↓
+真实注采 controls
+     ↓
+full state
+     ↓
+ObservationOperator
+     ↓
+P sensors + S sensors
+     ↓
+add noise
+     ↓
+synthetic observations
+```
+
+例如设置：
+
+$$
+C_f^{true}
+$$
+
+然后故意用一个明显不同的 prior：
+
+$$
+C_f^{prior}\neq C_f^{true}
+$$
+
+例如：
+
+$$
+C_f^{prior}=0.3C_f^{true}
+$$
+
+或者：
+
+$$
+3C_f^{true}
+$$
+
+不需要固定这两个值，只要保证 initial mismatch 足够明显。
+
+输出：
+
+```text
+examples/lab_v1/truth/
+├── truth_parameters.json
+├── truth_pressure.npz
+├── truth_saturation.npz
+├── observations.csv
+└── controls.csv
+```
+
+---
+
+# 6. Synthetic observation 必须同时有压力和饱和度
+
+不要只验证压力。
+
+至少做三种 Case：
+
+### Case A
+
+$$
+P_{obs}
+$$
+
+只用压力。
+
+验证：
+
+$$
+C_f
+$$
+
+是否可辨识。
+
+### Case B
+
+$$
+P_{obs}+S_{obs}
+$$
+
+同时加入饱和度。
+
+看：
+
+$$
+Var(C_f|P,S)
+$$
+
+是否小于：
+
+$$
+Var(C_f|P)
+$$
+
+### Case C
+
+压力 + 饱和度 + outlier/dropout。
+
+验证 QC。
+
+这三种 case 可以共用一个 truth。
+
+---
+
+# 7. 正式建立 train / holdout
+
+不要所有传感器都参加同化。
+
+例如 75 个 saturation sensors：
+
+$$
+60\rightarrow assimilation
+$$
+
+$$
+15\rightarrow holdout
+$$
+
+压力点同样拆。
+
+最好不是随机到处撒，而是空间分层。
+
+例如：
+
+```text
+inlet zone
+middle zone
+outlet zone
+```
+
+每个区域都保留一些 holdout。
+
+最终必须同时报告：
+
+$$
+RMSE_{assim}
+$$
+
+和：
+
+$$
+RMSE_{holdout}
+$$
+
+---
+
+# 8. 建立 Offline ES-MDA 端到端验收脚本
+
+新增：
+
+```text
+scripts/lab_v1_offline.py
+```
+
+流程严格固定：
+
+```text
+load case
+↓
+load controls
+↓
+load observations
+↓
+split assimilation / holdout
+↓
+sample Cf ensemble
+↓
+ensemble DPDP
+↓
+ES-MDA
+↓
+posterior Cf ensemble
+↓
+posterior full forward
+↓
+assimilation RMSE
+holdout RMSE
+field reconstruction
+```
+
+输出：
+
+```text
+results/lab_v1/offline/
+├── posterior.json
+├── cf_ensemble.npy
+├── pressure_mean.npz
+├── pressure_std.npz
+├── sw_mean.npz
+├── sw_std.npz
+├── sg_mean.npz
+├── sg_std.npz
+├── residuals.csv
+└── report.json
+```
+
+---
+
+# 9. Offline 阶段必须设硬门槛
+
+推荐先使用这些作为开发 Gate，而不是最终实验科学标准。
+
+### 无噪声 synthetic
+
+应该要求：
+
+$$
+\frac{|C_f^{P50}-C_f^{true}|}
+{C_f^{true}}
+<5\%
+$$
+
+### 有噪声 synthetic
+
+推荐：
+
+$$
+<10\%-15\%
+$$
+
+同时：
+
+$$
+RMSE_{holdout,posterior}
+<
+RMSE_{holdout,prior}
+$$
+
+而且不能只是下降一点。
+
+建议目标：
+
+$$
+\frac{RMSE_{post}}
+{RMSE_{prior}}
+<0.7
+$$
+
+也就是至少改善约 30%。
+
+如果没有达到，就不要进入 online。
+
+先检查：
+
+```text
+ObservationOperator
+sensor distribution
+Cf sensitivity
+prior spread
+sigma
+forward correctness
+```
+
+---
+
+# 10. 做 Cf 的可辨识性实验
+
+因为 V1 只反演一个参数，所以现在非常适合把它研究透。
+
+新增：
+
+```text
+scripts/lab_v1_sensitivity.py
+```
+
+扫描：
+
+$$
+0.1C_f^{ref}
+\rightarrow
+10C_f^{ref}
+$$
+
+计算：
+
+$$
+P_j(C_f)
+$$
+
+$$
+S_j(C_f)
+$$
+
+然后估计：
+
+$$
+\frac{\partial P_j}{\partial\log C_f}
+$$
+
+$$
+\frac{\partial S_j}{\partial\log C_f}
+$$
+
+最后输出：
+
+```text
+sensor_id
+pressure_sensitivity
+saturation_sensitivity
+```
+
+这样可以直接判断：
+
+> 哪些探头真正对 \(C_f\) 有信息。
+
+这比盲目增加传感器数量更有价值。
+
+---
+
+# 11. 顺便完成 sensor placement 评估
+
+不是优化传感器位置，只做信息量排序。
+
+例如定义：
+
+$$
+I_j=
+\frac{
+\left(
+\partial y_j/\partial m
+\right)^2
+}{
+\sigma_j^2
+}
+$$
+
+其中：
+
+$$
+m=\log(C_f/C_{ref})
+$$
+
+按 \(I_j\) 对传感器排序。
+
+最终你会得到：
+
+```text
+very informative
+moderately informative
+almost insensitive
+```
+
+这对真实实验布置非常有用。
+
+---
+
+# 12. Ensemble size 不再默认 32
+
+因为：
+
+$$
+n_\theta=1
+$$
+
+所以应该正式做：
+
+$$
+N_e=8,12,16,24,32
+$$
+
+比较：
+
+* posterior median；
+* posterior std；
+* holdout RMSE；
+* forward calls；
+* wall time。
+
+如果：
+
+$$
+N_e=12
+$$
+
+和：
+
+$$
+N_e=32
+$$
+
+结果基本一致，那么 V1 默认直接用：
+
+$$
+12\sim16
+$$
+
+即可。
+
+这样 offline 和 online 速度都会显著下降。
+
+---
+
+# 13. Offline 通过后，冻结 ES-MDA
+
+到这个阶段：
+
+$$
+\boxed{\text{不要再换反演算法}}
+$$
+
+不需要：
+
+* MCMC；
+* adjoint inversion；
+* CMA-ES；
+* Bayesian optimization；
+* neural inverse；
+* PINN inversion。
+
+Scalar \(C_f\) 用 ES-MDA 已经完全够了。
+
+---
+
+# 14. 接下来做真正 Online Replay
+
+新增：
+
+```text
+scripts/lab_v1_online_replay.py
+```
+
+它不需要真实 UDP。
+
+直接读取：
+
+```text
+controls.csv
+observations.csv
+```
+
+模拟实验数据逐秒到达。
+
+流程：
+
+```text
+offline posterior
+      ↓
+TwinLoops.from_posterior()
+      ↓
+1 s fast loop
+      ↓
+new P/S observations
+      ↓
+window observations
+      ↓
+Parameter EnKF
+      ↓
+posterior Cf
+      ↓
+full DPDP correction
+      ↓
+refresh λ / ct / S / composition
+      ↓
+fast loop
+```
+
+---
+
+# 15. Online 必须验证 6 个问题
+
+第一是：
+
+$$
+\boxed{\text{旧数据不能重复同化}}
+$$
+
+已经有 incremental window，但 lab replay 要重新验证。
+
+第二是：
+
+$$
+(\theta_j,x_j)
+$$
+
+必须一一对应。当前代码已经实现 per-member `DualState`，也有针对性测试。
+
+第三是：
+
+$$
+C_f
+$$
+
+不能无故乱漂。
+
+第四是 sensor dropout 不能让 filter 崩溃。
+
+第五是一个 ensemble member Newton failure 后能恢复。
+
+第六是：
+
+$$
+T_{cycle}
+$$
+
+不能产生越来越大的 backlog。
+
+当前 `TwinLoops` 已经开始根据整个 assimilation cycle wall time调整 slow interval。
+
+---
+
+# 16. 给 Online 加一个 Innovation Trigger
+
+现在不仅可以固定：
+
+$$
+T_{slow}=60s
+$$
+
+还应该允许：
+
+$$
+innovation
+$$
+
+触发 slow correction。
+
+定义：
+
+$$
+\nu_k=d_k-H(x_k)
+$$
+
+再做 normalized innovation：
+
+$$
+\eta_k=
+\sqrt{
+\frac{1}{N}
+\sum_i
+\left(
+\frac{\nu_i}{\sigma_i}
+\right)^2
+}
+$$
+
+当：
+
+$$
+\eta_k>\eta_{threshold}
+$$
+
+连续若干次，就提前运行 Parameter EnKF/full correction。
+
+因此最终 slow trigger：
+
+```text
+periodic trigger
+OR
+innovation trigger
+```
+
+不要每秒 EnKF。
+
+---
+
+# 17. 对 Fast Loop 做“误差监控”
+
+每次 full DPDP 到来时，都有：
+
+$$
+p_{full}
+$$
+
+可以拿之前 fast predictor 的：
+
+$$
+p_{fast}
+$$
+
+做比较：
+
+$$
+E_p=
+\frac{
+\|p_{fast}-p_{full}\|_2
+}{
+\|p_{full}\|_2
+}
+$$
+
+同时记录最大误差：
+
+$$
+E_{\infty}
+=
+\max|p_{fast}-p_{full}|
+$$
+
+如果误差越来越大：
+
+```text
+reduce slow interval
+```
+
+如果长期很小：
+
+```text
+increase slow interval
+```
+
+这比固定 30 秒更合理。
+
+---
+
+# 18. 然后正式攻当前最大性能瓶颈：Linear Solver
+
+最新标准 30³：
+
+$$
+T_{wall}=85.5s
+$$
+
+其中：
+
+$$
+T_{linear}=64.6s
+$$
+
+而：
+
+$$
+T_J=8.86s
+$$
+
+$$
+T_{flash}=7.16s
+$$
+
+所以接下来**不要再主要优化 Flash**。
+
+重点只看：
+
+$$
+\boxed{\text{CPR / GMRES}}
+$$
+
+---
+
+# 19. 先给 LinearSolveResult 增加完整诊断
+
+当前 `LinearSolveResult` 主要只有：
+
+```python
+x
+method
+```
+
+建议增加：
+
+```python
+iterations
+final_residual
+setup_s
+solve_s
+preconditioner
+fallback_used
+```
+
+否则现在你只知道：
+
+> linear solve 用了 65 秒。
+
+但不知道：
+
+> 是 ILU setup 慢，还是 GMRES iteration 太多。
+
+这是下一轮性能优化的前提。
+
+---
+
+# 20. 对三种 solver 做标准对比
+
+同一个 30³ Gate：
+
+```text
+RESERVOIR_LINEAR=gmres
+RESERVOIR_LINEAR=cpr
+RESERVOIR_LINEAR=direct
+```
+
+direct 过大可以跳过。
+
+记录：
+
+$$
+N_{iter}
+$$
+
+$$
+T_{setup}
+$$
+
+$$
+T_{solve}
+$$
+
+$$
+\|J\Delta u+b\|
+$$
+
+再决定到底是：
+
+* CPR operator 不够好；
+* pressure ILU 太慢；
+* GMRES convergence 太差。
+
+---
+
+# 21. CPR 第二版：不要只抽 \(J_{pp}\)
+
+当前 CPR-like 主要直接提取 pressure DOFs。
+
+下一版应该构造近似 Schur pressure system。
+
+原系统：
+
+$$
+\begin{bmatrix}
+J_{nn}&J_{np}\\
+J_{pn}&J_{pp}
+\end{bmatrix}
+$$
+
+近似：
+
+$$
+S_p
+=
+J_{pp}
+-
+J_{pn}
+D_{nn}^{-1}J_{np}
+$$
+
+其中：
+
+$$
+D_{nn}
+$$
+
+先使用 composition block diagonal/近似。
+
+不要真的求：
+
+$$
+J_{nn}^{-1}
+$$
+
+这样可以得到比直接 \(J_{pp}\) 更接近真实 pressure equation 的 CPR stage 1。
+
+---
+
+# 22. Pressure preconditioner 再接 AMG
+
+如果 quasi-IMPES pressure operator形成以后，压力系统仍然慢，再引入：
+
+```text
+PyAMG
+```
+
+作为 optional dependency。
+
+结构：
+
+```text
+Stage 1:
+pressure Schur approximation
+↓
+AMG
+
+Stage 2:
+global Jacobi / ILU correction
+```
+
+不要一开始就把整个 162k unknown system扔进 AMG。
+
+---
+
+# 23. 30³ 性能硬门槛保持不变
+
+阶段目标：
+
+$$
+\boxed{T_{30^3}<60s}
+$$
+
+现在：
+
+$$
+85.5s
+$$
+
+所以只要把 linear：
+
+$$
+64.6s
+\rightarrow
+25\sim30s
+$$
+
+就基本可以做到：
+
+$$
+45\sim55s
+$$
+
+Jacobian 和 Flash 暂时不用大改。
+
+---
+
+# 24. 新增第二套 benchmark：`lab_gate`
+
+现有：
+
+```text
+dpdp_scale_gate
+```
+
+必须保留。
+
+它回答：
+
+> solver 本身 scaling 怎么样？
+
+但是还需要：
+
+```text
+scripts/lab_v1_gate.py
+```
+
+里面包含：
+
+* 30³；
+* 左面定流量；
+* 右面定压力；
+* matrix-fracture transfer；
+* real sensor H；
+* composition；
+* phase change；
+* realistic dt。
+
+它回答：
+
+> 真正实验 workflow 能不能跑？
+
+两者不能混。
+
+---
+
+# 25. Lab Gate 必须记录更多信息
+
+至少：
+
+```text
+wall_s
+physical_time_advanced_s
+accepted_steps
+rejected_steps
+newton_iterations
+linear_iterations
+flash_calls
+mass_error
+max_dp
+max_dS
+peak_memory
+```
+
+以及：
+
+$$
+\frac{wall\ time}{physical\ second}
+$$
+
+这样才知道慢到底发生在哪里。
+
+---
+
+# 26. 这个阶段顺手修 final posterior failed-member 小洞
+
+Offline ES-MDA 的 assimilation iterations 已经有 failed-member replacement。
+
+但最后一次 posterior ensemble forward 也应该强制：
+
+```text
+failed
+↓
+replace
+↓
+rerun
+↓
+still failed → reject posterior
+```
+
+不能允许：
+
+```python
+dual_states[j] = None
+```
+
+进入 online。
+
+`TwinLoops.from_posterior()` 在：
+
+$$
+t>0
+$$
+
+时也应强制：
+
+```python
+all(member dual states exist)
+```
+
+否则直接报错。
+
+---
+
+# 27. 接着做真实 PVT 接口
+
+这一步不是马上做复杂算法，而是先定义数据格式。
+
+例如：
+
+```text
+examples/lab_v1/pvt.yaml
+```
+
+包括：
+
+```text
+temperature
+component names
+z_initial
+
+Tc
+Pc
+acentric factor
+MW
+kij
+
+viscosity parameters
+```
+
+另外实验数据：
+
+```text
+PVT measurements
+bubble pressure
+density
+viscosity
+volume
+GOR
+```
+
+---
+
+# 28. 做 EOS Characterization，而不是直接塞几十组分
+
+最终真实流体不能还是：
+
+$$
+C1+nC10
+$$
+
+但也不能直接：
+
+$$
+C1,C2,\dots,C30+
+$$
+
+全部进入 DPDP。
+
+先做：
+
+$$
+\text{raw composition}
+\rightarrow
+\text{lumping}
+\rightarrow
+3\sim6\text{ pseudo-components}
+$$
+
+然后 tune PR。
+
+验收对象不是“组分越多越好”，而是：
+
+$$
+P_b
+$$
+
+$$
+\rho
+$$
+
+$$
+\mu
+$$
+
+$$
+V
+$$
+
+$$
+GOR
+$$
+
+等关键 PVT 是否复现。
+
+---
+
+# 29. 换真实 EOS 后重新跑 Flash regression
+
+现有 FastPR framework 可以继续用。
+
+必须重新生成：
+
+```text
+flash_states_realfluid.npz
+```
+
+覆盖：
+
+```text
+pressure range
+composition range
+phase boundary
+experiment runtime states
+```
+
+比较：
+
+$$
+FastPR
+$$
+
+和：
+
+$$
+ReferencePR
+$$
+
+通过以后才能用于 lab_v1。
+
+---
+
+# 30. 然后实现正式 Experiment Dataset
+
+最终每次实验建立一个目录：
+
+```text
+experiments/
+└── EXP001/
+    ├── metadata.yaml
+    ├── case.yaml
+    ├── pvt.yaml
+    ├── sensors.csv
+    ├── controls.csv
+    ├── pressure.csv
+    ├── saturation.csv
+    └── results/
+```
+
+`controls.csv`：
+
+```csv
+time_s,port,kind,value
+0,INJ,rate,...
+0,PROD,pressure,...
+```
+
+`pressure.csv`：
+
+```csv
+time_s,P001,P002,P003,...
+```
+
+`saturation.csv`：
+
+```csv
+time_s,S001,S002,S003,...
+```
+
+不要让 Reservoir Core 解析原始电阻率文件。
+
+---
+
+# 31. 做一个非实时 `experiment replay`
+
+在 UDP 前先实现：
+
+```text
+reservoir replay experiments/EXP001
+```
+
+或者 Python：
+
+```text
+scripts/replay_experiment.py
+```
+
+按照时间轴：
+
+```text
+control arrives
+sensor arrives
+↓
+fast propagation
+↓
+assimilation trigger
+↓
+EnKF
+↓
+full correction
+↓
+field output
+```
+
+只要 replay 都没完全跑通，就不要急着接真实 socket。
+
+---
+
+# 32. Replay 通过后，再把 UDP 从“协议”变成“Runtime Service”
+
+当前 `udp_api.py` 已经有：
+
+```text
+status
+start
+stop
+update_control
+request_field
+checkpoint
+rollback
+observe
+```
+
+但是现在很多还只是协议 ACK。
+
+建议增加：
+
+```text
+reservoir_backend/runtime/
+├── twin_runtime.py
+├── command_queue.py
+└── field_store.py
+```
+
+UDP只负责：
+
+```text
+bytes
+↓
+protocol
+↓
+command
+↓
+TwinRuntime
+```
+
+绝不能让 socket handler直接运行 Newton。
+
+---
+
+# 33. `update_control` 要真正修改 ControlSeries
+
+例如收到：
+
+```json
+{
+  "cmd": "update_control",
+  "port": "INJ",
+  "kind": "rate",
+  "value": ...,
+  "time_s": ...
+}
+```
+
+runtime 应该：
+
+```text
+validate
+↓
+append control point
+↓
+invalidate frozen factor if necessary
+↓
+ACK
+```
+
+而不是现在只返回成功。
+
+---
+
+# 34. `observe` 只接受已经得到的压力/饱和度
+
+例如：
+
+```json
+{
+  "cmd": "observe",
+  "time_s": 61,
+  "sensor_id": "S013",
+  "kind": "sw",
+  "value": 0.46,
+  "sigma": 0.025
+}
+```
+
+runtime：
+
+```text
+append observation
+↓
+QC
+↓
+check trigger
+↓
+possibly enqueue slow assimilation
+```
+
+---
+
+# 35. `request_field` 真正写 snapshot
+
+不要 UDP 发送：
+
+$$
+27000\times Nvar
+$$
+
+的大数组。
+
+实际：
+
+```text
+request_field
+↓
+FieldStore
+↓
+field_000123.npz
+↓
+UDP returns:
+frame_id
+path
+time_s
+```
+
+NPZ 里：
+
+```text
+pressure_fracture
+pressure_matrix
+sw
+so
+sg
+Cf_mean
+Cf_std
+```
+
+---
+
+# 36. Field metadata 必须明确 fast/full
+
+非常重要。
+
+输出必须带：
+
+```text
+pressure_source = fast/full
+saturation_source = last_full
+saturations_held = true/false
+last_full_time_s
+Cf_update_time_s
+```
+
+否则前端可能把：
+
+> 1 秒刷新一次的 held saturation
+
+误认为：
+
+> 1 秒重新进行了完整组分模拟。
+
+---
+
+# 37. 最后建立一个真正的 V1 Acceptance Suite
+
+新增：
+
+```text
+docs/v1_acceptance.md
+```
+
+核心 Gate 建议固定为：
+
+| Gate                         | 要求                   |
+| ---------------------------- | -------------------- |
+| DPDP D0–D4                   | pass                 |
+| Mass conservation            | \(<10^{-4}\)，实际应远低于此 |
+| FastPR parity                | pass                 |
+| 30³ scale gate               | `<60 s`              |
+| Lab Gate                     | stable               |
+| Synthetic noiseless Cf       | error `<5%`          |
+| Synthetic noisy Cf           | error 推荐 `<10–15%`   |
+| Holdout RMSE                 | posterior < prior    |
+| Online old-observation reuse | 0                    |
+| Per-member state consistency | pass                 |
+| Sensor dropout               | recover              |
+| One failed ensemble member   | recover              |
+| Fast pressure reuse          | `<1 s`               |
+| Replay                       | complete             |
+| UDP control update           | functional           |
+| Field snapshot               | functional           |
+
+这些通过之后，才打：
+
+```text
+v1.0-lab
+```
+
+---
+
+# 38. 推荐实际提交顺序
+
+不要一次让 Codex改整个仓库。
+
+建议按下面 8 个提交推进：
+
+1. `feat: freeze lab-v1 scope and observation contract`
+   只改范围、数据合同、文档。
+
+2. `feat: add 30cm lab-v1 face-controlled case`
+   只做真实几何、face ports、controls、sensors。
+
+3. `test: add lab-v1 synthetic truth and holdout recovery`
+   生成 truth，测试 \(C_f\) recovery 和 holdout。
+
+4. `feat: add lab-v1 online replay`
+   验证 ES-MDA → EnKF → fast/slow 闭环。
+
+5. `perf: instrument and improve DPDP pressure preconditioner`
+   只做 linear solver，冲 30³ <60 s。
+
+6. `perf: add realistic lab gate`
+   把真实边界和 phase behavior纳入性能验收。
+
+7. `feat: add experimental PVT and lumped EOS input`
+   接真实流体。
+
+8. `feat: bind UDP runtime to controls observations and fields`
+   最后完成实验通信。
+
+---
+
+## 当前最近一步应该做什么
+
+如果今天只启动一个开发任务，我会直接做：
+
+$$
+\boxed{\text{30 cm lab\_v1 synthetic end-to-end case}}
+$$
+
+也就是一次完成：
+
+```text
+30³ grid
++
+left rate / right pressure
++
+P sensors
++
+S sensors
++
+Cf_true
++
+synthetic observations
++
+train/holdout
++
+ES-MDA
++
+posterior field
+```
+
+先证明：
+
+$$
+\boxed{
+C_f^{prior}
+\rightarrow
+C_f^{posterior}
+\approx
+C_f^{true}
+}
+$$
+
+并且：
+
+$$
+\boxed{
+RMSE_{holdout,post}
+<
+RMSE_{holdout,prior}
+}
+$$
+
+这一步一旦通过，整个项目就第一次真正证明：
+
+> **已有的 DPDP、PVT、ObservationOperator、ES-MDA、传感器布局和三维场重建共同组成了一套有效的实验数字孪生。**
+
+然后再做在线、性能和真实 PVT，会非常顺。

@@ -67,6 +67,8 @@ IGNORE_EXACT = {
     "references/",
     "reservoir_backend/",
     "validation/",
+    "experiments/",
+    "examples/lab_v1/",
 }
 
 

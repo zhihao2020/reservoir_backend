@@ -68,6 +68,14 @@ def test_from_posterior_does_not_resample_prior() -> None:
         theta_mean=np.array([2.5]),
         theta_std=np.array([1.0]),
     )
+    from reservoir_backend.comp.dual_state import CompositionalContinuumState, DualCompositionalState
+
+    dummy = DualCompositionalState(
+        fracture=CompositionalContinuumState(np.array([1.0e7]), np.ones((1, 2)) * 1.0e-4),
+        matrix=CompositionalContinuumState(np.array([1.2e7]), np.ones((1, 2)) * 4.0e-4),
+        time_s=30.0,
+    )
+    ens.dual_states = [dummy.copy() for _ in range(4)]
     post = Posterior(
         theta=np.array([2.5]),
         k=np.ones(1),
@@ -89,6 +97,41 @@ def test_from_posterior_does_not_resample_prior() -> None:
     assert loops.members.shape == (1, 4)
     assert loops.last_slow_s == pytest.approx(30.0)
     assert loops.members[0, 0] == pytest.approx(1.0)
+    assert loops.dual_states is not None
+    assert all(s is not None for s in loops.dual_states)
+
+
+def test_from_posterior_requires_duals_at_t_positive() -> None:
+    from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble
+    from reservoir_backend.twin.offline import Posterior
+
+    members = np.array([[1.0, 2.0]])
+    ens = PosteriorEnsemble(
+        theta_members=members.T,
+        k_members=np.ones((2, 1)),
+        k_mean=np.ones(1),
+        k_std=np.ones(1),
+        theta_mean=np.array([1.5]),
+        theta_std=np.array([0.5]),
+    )
+    post = Posterior(
+        theta=np.array([1.5]),
+        k=np.ones(1),
+        theta_std=np.array([0.5]),
+        assimilate_rmse=0.0,
+        holdout_rmse=0.0,
+        forecast_rmse=None,
+        identifiability=np.array([1.0]),
+        history=Trajectory(times_s=np.array([0.0, 10.0]), states=[], reports=[], port_rates=[]),
+        notes=[],
+        ensemble=ens,
+    )
+
+    class _Twin:
+        pass
+
+    with pytest.raises(ValueError, match="DualState"):
+        TwinLoops.from_posterior(_Twin(), post)  # type: ignore[arg-type]
 
 
 def test_slow_loop_is_parameter_enkf_not_calibrate() -> None:
@@ -101,6 +144,8 @@ def test_slow_loop_is_parameter_enkf_not_calibrate() -> None:
     assert "window_observations" in src
     assert "classify_observations" in src
     assert "replace_failed_members" in src
+    assert "eta_threshold" in src
+    assert "last_fast_error" in src
 
 
 def test_fast_step_marks_saturations_held() -> None:

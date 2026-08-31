@@ -149,7 +149,16 @@ def _port_from_yaml(grid: Any, p: dict[str, Any]) -> FlowPort:
         )
     else:
         perforation = str(p.get("perforation", "point")).lower()
-        if perforation in {"column", "full_column", "z"}:
+        if perforation in {"face", "boundary"} or p.get("face"):
+            port = FlowPort.face(
+                grid,
+                name,
+                role,
+                control,
+                str(p.get("face", perforation)),
+                sw_inj=sw_inj,
+            )
+        elif perforation in {"column", "full_column", "z"}:
             port = FlowPort.column(
                 grid,
                 name,

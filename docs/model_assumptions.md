@@ -1,5 +1,13 @@
 # 模型假设与适用边界
 
+## V1 产品范围
+
+V1 assumes saturation observations are already provided by upstream sensing/inversion systems. Raw electrical, electromagnetic and acoustic inversion is outside the reservoir-core scope.
+
+The lab backend ingests \(Q_{inj}(t)\), \(P_{prod}(t)\), \(P_{obs}\), \(S_{obs}(\sigma,x,y,z,t)\) and reconstructs \(p\), \(S_w,S_o,S_g\), \(z_i\), while estimating scalar \(C_f\).
+
+V1 明确不做：Archie / EM / acoustic inversion、PINN、SRV、DFM/EDFM、AMR、thermal、zonal \(C_f\)、逐格 \(K\)、裂缝半长反演。产品 Case 是 `examples/lab_v1/`，不是 `lab_apply.yaml`。
+
 ## 当前相位
 
 - 正演 \(F\) 默认仍是顺序黑油：TPFA 压力 + 后向 Euler 隐式饱和度。守恒仍是 \(\partial_t(\varphi b_\alpha S_\alpha)+\nabla\cdot(b_\alpha v_\alpha)=q_\alpha^s\)
@@ -76,6 +84,8 @@
 参考实现只放在 `references/methods/`（Equinor IES、pyesmda、dass、Emerick 2013），产品代码不 import。
 
 ```text
+python scripts/lab_v1_generate_truth.py --dev --case B
+python scripts/lab_v1_offline.py --dev
 reservoir invert examples/lab/lab_cf.yaml --self-check --output results/cf
 ```
 

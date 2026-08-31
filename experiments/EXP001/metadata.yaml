@@ -1,0 +1,8 @@
+experiment_id: EXP001
+kind: synthetic_placeholder
+description: V1 dataset contract. Reservoir core does not parse raw resistivity.
+case: case.yaml
+pvt: pvt.yaml
+notes:
+  - saturation.csv is already inverted S_w
+  - pressure.csv is gauge pressure in Pa

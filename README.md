@@ -35,7 +35,7 @@ reservoir apply examples/two_layer/case_from_csv.yaml --output results/examples/
 
 仓库里的 `observations.csv` 是自洽正演造的示例读数，用来先跑通。换岩样后用自己的表覆盖；`sigma` 用该探头重复性，不要照抄 2 kPa / 0.04。
 
-给了 `region_map` 就用图。层状用 `region_axis: z`。标量 \(C_f\) 用 `examples/lab/lab_cf.yaml`。
+给了 `region_map` 就用图。层状用 `region_axis: z`。V1 标量 \(C_f\) 用 `examples/lab_v1/`。粗网格夹具 `examples/lab/lab_cf.yaml`。验收表：[docs/v1_acceptance.md](docs/v1_acceptance.md)。
 
 ### 没有测点：`--demo` 是自检，不是正式用法
 

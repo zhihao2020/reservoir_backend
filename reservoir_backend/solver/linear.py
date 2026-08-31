@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import numpy as np
 from numpy.typing import NDArray
@@ -30,6 +31,12 @@ def _cached_prec(mat, kind: str, factory):
 class LinearSolveResult:
     x: NDArray[np.float64]
     method: str
+    iterations: int = 0
+    final_residual: float = 0.0
+    setup_s: float = 0.0
+    solve_s: float = 0.0
+    preconditioner: str = ""
+    fallback_used: bool = False
 
 
 class LinearSolver:
@@ -39,11 +46,14 @@ class LinearSolver:
 
 class SparseDirectSolver(LinearSolver):
     def solve(self, jacobian: sparse.spmatrix, rhs: NDArray[np.float64]) -> LinearSolveResult:
+        t0 = time.perf_counter()
         j = jacobian.tocsc()
         x = np.asarray(spsolve(j, np.asarray(rhs, dtype=float)), dtype=float).ravel()
+        dt = time.perf_counter() - t0
         if x.size != int(rhs.size) or not np.all(np.isfinite(x)):
             raise PhysicsConvergenceError("DPDP sparse direct solve failed")
-        return LinearSolveResult(x=x, method="spsolve")
+        r = float(np.linalg.norm(j.dot(x) - np.asarray(rhs, dtype=float).ravel()))
+        return LinearSolveResult(x=x, method="spsolve", iterations=1, final_residual=r, setup_s=0.0, solve_s=dt, preconditioner="none")
 
 
 class GMRESILUSolver(LinearSolver):
@@ -53,6 +63,7 @@ class GMRESILUSolver(LinearSolver):
         n = int(rhs.size)
         drop = 1.0e-3 if n > 20000 else 1.0e-4
         fill = 3 if n > 20000 else 10
+        t_setup0 = time.perf_counter()
         try:
             def _fact():
                 ilu = spilu(j, drop_tol=drop, fill_factor=fill)
@@ -61,14 +72,31 @@ class GMRESILUSolver(LinearSolver):
             prec = _cached_prec(jacobian, f"ilu-{drop}-{fill}", _fact)
         except Exception:
             prec = None
+        setup_s = time.perf_counter() - t_setup0
+        niter = [0]
+
+        def _cb(_r):
+            niter[0] += 1
+
+        t1 = time.perf_counter()
         try:
-            x, info = gmres(j, rhs, M=prec, rtol=1.0e-8, atol=0.0, restart=40, maxiter=400)
+            x, info = gmres(j, rhs, M=prec, rtol=1.0e-8, atol=0.0, restart=40, maxiter=400, callback=_cb)
         except TypeError:
-            x, info = gmres(j, rhs, M=prec, tol=1.0e-8, restart=40, maxiter=400)
+            x, info = gmres(j, rhs, M=prec, tol=1.0e-8, restart=40, maxiter=400, callback=_cb)
+        solve_s = time.perf_counter() - t1
         x = np.asarray(x, dtype=float).ravel()
         if int(info) != 0 or x.size != rhs.size or not np.all(np.isfinite(x)):
             raise PhysicsConvergenceError(f"DPDP GMRES failed, info={info}")
-        return LinearSolveResult(x=x, method="gmres_ilu")
+        rfin = float(np.linalg.norm(j.dot(x) - rhs))
+        return LinearSolveResult(
+            x=x,
+            method="gmres_ilu",
+            iterations=niter[0],
+            final_residual=rfin,
+            setup_s=setup_s,
+            solve_s=solve_s,
+            preconditioner="ilu",
+        )
 
 
 def _pressure_dofs(n_unknowns: int, n_comp: int) -> NDArray[np.int64]:
@@ -92,10 +120,11 @@ class CPRLikeSolver(LinearSolver):
         n = int(rhs.size)
         j = jacobian.tocsr()
         jcsc = j.tocsc()
+        t0 = time.perf_counter()
         try:
             def _fact():
                 pdofs = _pressure_dofs(n, self.n_comp)
-                jpp = j[pdofs, :][:, pdofs].tocsc()
+                jpp, _ = _schur_pressure(j, pdofs)
                 diag = np.asarray(j.diagonal(), dtype=float)
                 diag = np.where(np.abs(diag) < 1.0e-30, 1.0, diag)
                 invd = 1.0 / diag
@@ -112,17 +141,56 @@ class CPRLikeSolver(LinearSolver):
 
             prec = _cached_prec(jacobian, "cpr-jacobi", _fact)
         except Exception:
-            return GMRESILUSolver().solve(jacobian, rhs)
+            fb = GMRESILUSolver().solve(jacobian, rhs)
+            fb.fallback_used = True
+            return fb
+        setup_s = time.perf_counter() - t0
         rtol = 1.0e-5 if n > 20000 else 1.0e-8
         maxiter = 80 if n > 20000 else 400
+        niter = [0]
+
+        def _cb(_r):
+            niter[0] += 1
+
+        t1 = time.perf_counter()
         try:
-            x, info = gmres(jcsc, rhs, M=prec, rtol=rtol, atol=0.0, restart=30, maxiter=maxiter)
+            x, info = gmres(jcsc, rhs, M=prec, rtol=rtol, atol=0.0, restart=30, maxiter=maxiter, callback=_cb)
         except TypeError:
-            x, info = gmres(jcsc, rhs, M=prec, tol=rtol, restart=30, maxiter=maxiter)
+            x, info = gmres(jcsc, rhs, M=prec, tol=rtol, restart=30, maxiter=maxiter, callback=_cb)
+        solve_s = time.perf_counter() - t1
         x = np.asarray(x, dtype=float).ravel()
         if int(info) != 0 or x.size != rhs.size or not np.all(np.isfinite(x)):
-            return GMRESILUSolver().solve(jacobian, rhs)
-        return LinearSolveResult(x=x, method="cpr_gmres")
+            fb = GMRESILUSolver().solve(jacobian, rhs)
+            fb.fallback_used = True
+            return fb
+        rfin = float(np.linalg.norm(j.dot(x) - rhs))
+        return LinearSolveResult(
+            x=x,
+            method="cpr_gmres",
+            iterations=niter[0],
+            final_residual=rfin,
+            setup_s=setup_s,
+            solve_s=solve_s,
+            preconditioner="schur_ilu_jacobi",
+        )
+
+
+def _schur_pressure(j: sparse.spmatrix, pdofs: NDArray[np.int64]):
+    """S_p ≈ J_pp - J_pn diag(J_nn)^{-1} J_np. Does not invert J_nn."""
+    n = int(j.shape[0])
+    mask = np.ones(n, dtype=bool)
+    mask[np.asarray(pdofs, dtype=np.int64)] = False
+    ndofs = np.flatnonzero(mask)
+    jsr = j.tocsr()
+    jpp = jsr[pdofs, :][:, pdofs]
+    if ndofs.size == 0:
+        return jpp.tocsc(), pdofs
+    jpn = jsr[pdofs, :][:, ndofs]
+    jnp = jsr[ndofs, :][:, pdofs]
+    dnn = np.asarray(jsr.diagonal(), dtype=float)[ndofs]
+    dnn = np.where(np.abs(dnn) < 1.0e-30, 1.0, dnn)
+    schur = jpp - (jpn @ sparse.diags(1.0 / dnn) @ jnp)
+    return schur.tocsc(), pdofs
 
 
 def solve_newton_system(

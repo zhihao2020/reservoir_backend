@@ -233,8 +233,19 @@ class HistoryMatchWorkflow:
             twin, members, assim, t_hist, n_workers=n_workers
         )
         n_forward += n_fwd
-        if failed:
+        failed_mask = np.array([d is None or not np.all(np.isfinite(predicted[:, j])) for j, d in enumerate(duals_post)])
+        if np.any(failed_mask):
             failed_all.extend({"step": "posterior", **row} for row in failed)
+            members = replace_failed_members(members, failed_mask, rng, pstd)
+            members = _clip_members(twin, members)
+            predicted, failed2, n_fwd2, duals_post = _forward_ensemble(
+                twin, members, assim, t_hist, n_workers=n_workers
+            )
+            n_forward += n_fwd2
+            failed_all.extend({"step": "posterior", "retry": "1", **row} for row in failed2)
+            failed_mask = np.array([d is None or not np.all(np.isfinite(predicted[:, j])) for j, d in enumerate(duals_post)])
+            if np.any(failed_mask):
+                raise AssimilationError("posterior ensemble member still failed after replacement")
         misfit.append(_whitened_misfit(predicted, d_obs.values, d_obs.sigma))
 
         theta_mean = np.mean(members, axis=1)

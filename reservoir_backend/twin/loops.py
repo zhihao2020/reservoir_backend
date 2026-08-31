@@ -57,6 +57,12 @@ class TwinLoops:
     last_full_s: float = 0.0
     last_cycle_s: float = 0.0
     cycle_safety: float = 1.2
+    eta_threshold: float = 2.0
+    eta_streak_need: int = 3
+    eta_streak: int = 0
+    last_fast_pressure: NDArray[np.float64] | None = None
+    last_fast_error: float = 0.0
+    last_fast_error_inf: float = 0.0
     flash_caches: list | None = None
     _frozen: FrozenPressureContext | None = field(default=None, repr=False)
 
@@ -72,6 +78,9 @@ class TwinLoops:
         if posterior.history is not None and posterior.history.times_s.size:
             loops.last_slow_s = float(posterior.history.times_s[-1])
         ens_duals = getattr(posterior.ensemble, "dual_states", None)
+        if loops.last_slow_s > 1.0e-15:
+            if not ens_duals or any(s is None for s in ens_duals) or len(ens_duals) != loops.members.shape[1]:
+                raise ValueError("online start at t>0 requires a DualState for every ensemble member")
         if ens_duals:
             loops.dual_states = [None if s is None else s.copy() for s in ens_duals]
         ens_cache = getattr(posterior.ensemble, "flash_caches", None)
@@ -125,7 +134,7 @@ class TwinLoops:
         sg_f = np.asarray(self.twin._sg_f if self.twin._sg_f is not None else np.zeros(pf.size), dtype=float)
         sw_m = np.asarray(self.twin._sw_m if self.twin._sw_m is not None else np.zeros(pm.size), dtype=float)
         sg_m = np.asarray(self.twin._sg_m if self.twin._sg_m is not None else np.zeros(pm.size), dtype=float)
-        return State(
+        st = State(
             pressure=pf.copy(),
             sw=sw_f.copy(),
             sg=sg_f.copy(),
@@ -139,6 +148,8 @@ class TwinLoops:
             phi_matrix=phi_m.copy(),
             saturations_held=True,
         )
+        self.last_fast_pressure = st.pressure.copy()
+        return st
 
     def maybe_slow(
         self,
@@ -149,6 +160,38 @@ class TwinLoops:
     ) -> Posterior | None:
         """Parameter EnKF from the previous posterior ensemble. Not a full ES-MDA rerun."""
         t = float(t)
+        if observations is not None:
+            if getattr(self.twin, "experiment", None) is None:
+                raise RuntimeError("twin has no experiment to attach observations")
+            self.twin.experiment.observations = list(observations)
+        from reservoir_backend.twin.history_match import _clip_members, _forward_ensemble
+        from reservoir_backend.twin.offline import predict_from_trajectory
+
+        exp = getattr(self.twin, "experiment", None)
+        if exp is None:
+            interval = max(
+                float(self.slow_interval_s),
+                float(self.last_full_s),
+                float(self.last_cycle_s) * float(self.cycle_safety),
+            )
+            if not force and (t - self.last_slow_s) < interval - 1.0e-12:
+                return None
+            return None
+        series = window_observations(list(exp.observations), self.last_slow_s, t)
+        if series and self.last_traj is not None:
+            d_tmp = stack_observations(series)
+            try:
+                pred = predict_from_trajectory(self.twin.operator, self.twin.experiment, self.last_traj, series)
+                eta = float(np.sqrt(np.mean(((pred - d_tmp.values) / np.maximum(d_tmp.sigma, 1.0e-12)) ** 2)))
+            except Exception:
+                eta = 0.0
+            if eta > float(self.eta_threshold):
+                self.eta_streak += 1
+            else:
+                self.eta_streak = 0
+            if self.eta_streak >= int(self.eta_streak_need):
+                force = True
+                self.notes.append(f"innovation trigger eta={eta:.3g} streak={self.eta_streak}")
         interval = max(
             float(self.slow_interval_s),
             float(self.last_full_s),
@@ -156,11 +199,6 @@ class TwinLoops:
         )
         if not force and (t - self.last_slow_s) < interval - 1.0e-12:
             return None
-        if observations is not None:
-            self.twin.experiment.observations = list(observations)
-        from reservoir_backend.twin.history_match import _clip_members, _forward_ensemble
-
-        series = window_observations(self.twin.experiment.observations, self.last_slow_s, t)
         if not series:
             self.notes.append(f"slow skip, no new observations in ({self.last_slow_s},{t}]")
             self.last_slow_s = t
@@ -222,6 +260,17 @@ class TwinLoops:
         t_mean = time.perf_counter() - t0
         self.last_full_s = t_mean
         self.last_cycle_s = time.perf_counter() - t_cycle0
+        if self.last_fast_pressure is not None and hist.states:
+            pfull = np.asarray(hist.states[-1].pressure, dtype=float).ravel()
+            pfast = np.asarray(self.last_fast_pressure, dtype=float).ravel()
+            n = min(pfull.size, pfast.size)
+            denom = max(float(np.linalg.norm(pfull[:n])), 1.0)
+            self.last_fast_error = float(np.linalg.norm(pfast[:n] - pfull[:n]) / denom)
+            self.last_fast_error_inf = float(np.max(np.abs(pfast[:n] - pfull[:n])))
+            if self.last_fast_error > 0.10:
+                self.slow_interval_s = max(5.0, 0.5 * float(self.slow_interval_s))
+            elif self.last_fast_error < 0.01:
+                self.slow_interval_s = min(300.0, 1.25 * float(self.slow_interval_s))
         k_mean = np.asarray(self.twin.parameterization.expand(theta_mean), dtype=float).ravel()
         post = Posterior(
             theta=theta_mean,

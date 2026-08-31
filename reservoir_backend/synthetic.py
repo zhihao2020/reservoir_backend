@@ -646,3 +646,140 @@ def make_scalar_cf_twin(
     experiment.observations = observations
     return SyntheticCase(grid=grid, twin=twin, k_true=k_true, theta_true=theta_true)
 
+
+def make_lab_v1_face_twin(
+    *,
+    n: tuple[int, int, int] = (3, 2, 1),
+    size_m: tuple[float, float, float] = (0.30, 0.20, 0.10),
+    k_matrix: float = 1.0e-15,
+    cf_true: float = 1.0e-12,
+    phi: float = 0.08,
+    phi_fracture: float = 0.02,
+    q_inj: float = 2.0e-4,
+    p_prod: float = 1.18e7,
+    t_end: float = 6.0,
+    n_times: int = 2,
+    noise_p: float = 0.0,
+    noise_s: float = 0.0,
+    seed: int = 3,
+    ensemble_size: int = 8,
+    assimilation_steps: int = 2,
+    with_saturation: bool = True,
+) -> SyntheticCase:
+    """Tiny face-inject / face-produce DPDP twin. Same contract as lab_v1, not 30³."""
+    from reservoir_backend.comp.fluid import fluid_from_name
+    from reservoir_backend.ports.flow import make_face_port
+
+    nx, ny, nz = n
+    grid = CartesianGrid(
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        dx=np.full(nx, size_m[0] / nx),
+        dy=np.full(ny, size_m[1] / ny),
+        dz=np.full(nz, size_m[2] / nz),
+    )
+    mask = np.ones(grid.n_cells, dtype=bool)
+    cond = FractureConductivityModel(n_cells=grid.n_cells, fracture_mask=mask, k_matrix_m2=float(k_matrix))
+    param = LogConductivityParameterization(
+        n_zones=1,
+        phi=phi,
+        phi_fracture=phi_fracture,
+        conductivity=cond,
+        prior_mean=0.0,
+        prior_std=0.75,
+    )
+    theta_true = param.encode(np.array([float(cf_true)], dtype=float))
+    param.prior_mean = float(np.log(0.3)) + float(theta_true[0])
+    k_true = param.expand(theta_true)
+    inj = make_face_port(grid, "INJ", "injector", "rate", "xmin")
+    prod = make_face_port(grid, "PROD", "producer", "pressure", "xmax")
+    times = np.linspace(0.0, float(t_end), int(n_times) + 1)[1:]
+    controls = [
+        ControlSeries("INJ", "rate", times, np.full(times.size, q_inj)),
+        ControlSeries("INJ", "composition", times, np.full(times.size, 0.95)),
+        ControlSeries("PROD", "pressure", times, np.full(times.size, p_prod)),
+    ]
+    y0 = size_m[1] * 0.50
+    zmid = size_m[2] * 0.50
+    sig_p = max(float(noise_p), 2.0e4)
+    sig_s = max(float(noise_s), 0.03)
+    sensors = [
+        Sensor("P_in", "pressure", size_m[0] * 0.25, y0, zmid, probe_diameter_m=0.006, sigma=sig_p, medium="bulk"),
+        Sensor("P_mid", "pressure", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=sig_p, medium="bulk"),
+        Sensor("P_out", "pressure", size_m[0] * 0.75, y0, zmid, probe_diameter_m=0.006, sigma=sig_p, medium="bulk"),
+    ]
+    if with_saturation:
+        sensors += [
+            Sensor("S_in", "sw", size_m[0] * 0.25, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="bulk"),
+            Sensor("S_mid", "sw", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="bulk"),
+            Sensor("S_out", "sw", size_m[0] * 0.75, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="bulk"),
+        ]
+    hold = {"P_out", "S_out"}
+    experiment = Experiment(
+        size_m=size_m,
+        sensors=sensors,
+        controls=controls,
+        observations=[],
+        history_end_s=float(t_end),
+    )
+    fluid = fluid_from_name("example", temperature_k=350.0)
+    physics = PhysicsSpec(
+        sw_init=0.0,
+        p_init=1.20e7,
+        dt_init=0.5,
+        dt_min=1.0e-6,
+        dt_max=2.0,
+        max_steps=40,
+        implicit_transport=True,
+        fully_implicit=False,
+        model="compositional_dpdp",
+        fluid=fluid,
+        shape_factor=40.0,
+        phi_fracture=float(phi_fracture),
+        k_matrix_m2=float(k_matrix),
+    )
+    twin = DigitalTwin(
+        grid,
+        experiment,
+        [inj, prod],
+        physics,
+        param,
+        inverse=InverseSpec(
+            prior_mean=float(param.prior_mean),
+            prior_std=float(param.prior_std),
+            algorithm="esmda",
+            ensemble_size=int(ensemble_size),
+            assimilation_steps=int(assimilation_steps),
+            seed=int(seed),
+        ),
+    )
+    traj = twin.simulate(parameters=theta_true, t_end=t_end, report_times=times)
+    rng = np.random.default_rng(seed)
+    observations: list[ObservationSeries] = []
+    for sensor in sensors:
+        vals = []
+        for t in times:
+            st = traj.state_at(t)
+            rates, bhp = traj.rates_and_bhp_at(t)
+            vals.append(twin.operator.sample(sensor, st, port_rates=rates, port_bhp=bhp))
+        vals_a = np.asarray(vals, dtype=float)
+        if sensor.kind == "pressure":
+            noise = np.zeros_like(vals_a) if float(noise_p) <= 0.0 else rng.normal(0.0, sensor.sigma, size=vals_a.size)
+        else:
+            noise = np.zeros_like(vals_a) if float(noise_s) <= 0.0 else rng.normal(0.0, sensor.sigma, size=vals_a.size)
+        observations.append(
+            ObservationSeries(
+                sensor_name=sensor.name,
+                kind=sensor.kind,
+                times_s=times,
+                values=vals_a + noise,
+                sigma=np.full(times.size, sensor.sigma),
+                holdout=sensor.name in hold,
+            )
+        )
+    experiment.observations = observations
+    return SyntheticCase(
+        grid=grid, twin=twin, k_true=k_true, theta_true=theta_true, p_true_end=traj.states[-1].pressure
+    )
+

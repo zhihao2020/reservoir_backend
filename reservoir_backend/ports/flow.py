@@ -127,6 +127,38 @@ class FlowPort:
             geofac=geofac,
         )
 
+    @classmethod
+    def face(
+        cls,
+        grid: CartesianGrid,
+        name: str,
+        role: str,
+        control: str,
+        face: str,
+        sw_inj: float = 1.0,
+    ) -> FlowPort:
+        """All cells on one Cartesian face. Total rate is split by WI."""
+        return cls(
+            name=name,
+            role=role,
+            control=control,
+            cell_ids=grid.face_cells(face),
+            sw_inj=sw_inj,
+        )
+
+
+def make_face_port(
+    grid: CartesianGrid,
+    name: str,
+    role: str,
+    control: str,
+    face: str,
+    *,
+    sw_inj: float = 1.0,
+) -> FlowPort:
+    """Helper: xmin rate inlet / xmax pressure outlet without 900 separate Q_i."""
+    return FlowPort.face(grid, name, role, control, face, sw_inj=sw_inj)
+
 
 def peaceman_wi(
     grid: CartesianGrid,

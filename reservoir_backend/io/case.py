@@ -114,23 +114,34 @@ def _read_sensors_csv(path: Path) -> list[dict[str, Any]]:
         raise ValueError(f"sensors CSV is empty: {path}")
     out: list[dict[str, Any]] = []
     for i, row in enumerate(rows):
-        name = str(row.get("name") or row.get("sensor") or f"S{i}").strip()
+        name = str(row.get("sensor_id") or row.get("name") or row.get("sensor") or f"S{i}").strip()
         if not name:
             continue
         kind = str(row.get("kind") or "saturation")
         sigma = row.get("sigma")
         if sigma in (None, ""):
+            if row.get("sensor_id"):
+                raise ValueError(f"sensor {name} is missing sigma")
             sigma = 2.0e3 if kind.lower() in {"p", "pressure"} else 0.04
+        x = row.get("x_m", row.get("x"))
+        y = row.get("y_m", row.get("y"))
+        z = row.get("z_m", row.get("z"))
+        if x in (None, "") or y in (None, "") or z in (None, ""):
+            raise ValueError(f"sensor {name} needs x_m,y_m,z_m")
+        medium = str(row.get("continuum") or row.get("medium") or "")
+        if not medium:
+            medium = "bulk" if kind.lower() not in {"p", "pressure", "bhp"} else "fracture"
         out.append(
             {
                 "name": name,
                 "kind": kind,
-                "x": float(row["x"]),
-                "y": float(row["y"]),
-                "z": float(row["z"]),
+                "x": float(x),
+                "y": float(y),
+                "z": float(z),
                 "volume_m3": float(row.get("volume_m3") or 0.0),
                 "port": row.get("port") or None,
                 "sigma": float(sigma),
+                "medium": medium,
             }
         )
         probe = row.get("probe_diameter_m")
@@ -311,7 +322,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                 probe_diameter_m=float(probe or 0.0),
                 port_name=s.get("port"),
                 sigma=float(s.get("sigma", 1.0)),
-                medium=str(s.get("medium", "fracture")),
+                medium=str(s.get("medium", "bulk" if str(s["kind"]).lower() not in {"p", "pressure", "bhp"} else "fracture")),
             )
         )
 
@@ -424,7 +435,7 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
         algorithm = "esmda" if kind in _CF_KINDS else "lm"
     else:
         algorithm = str(algo_raw).strip().lower()
-    n_ens = inv.get("ensemble_size", inv.get("n_ensemble", 16))
+    n_ens = inv.get("ensemble_size", inv.get("n_ensemble", 12))
     n_a = inv.get("assimilation_steps", inv.get("n_assimilations", 4))
     alpha = inv.get("alpha", inv.get("inflation"))
     return InverseSpec(

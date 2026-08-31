@@ -51,6 +51,10 @@ class DualCompStepResult:
     n_flash_thermo_jac: int = 0
     n_flash_line_search: int = 0
     n_jac_reuse: int = 0
+    linear_iterations: int = 0
+    linear_residual: float = 0.0
+    linear_setup_s: float = 0.0
+    linear_method: str = ""
 
 
 def initialize_dual_state(
@@ -478,6 +482,10 @@ def solve_dual_comp_step(
     jacobian_reuse_max = 1 if n_cells > 4 else 0
     nrm_prev = None
 
+    linear_it = 0
+    linear_setup = 0.0
+    linear_res = 0.0
+    linear_method = ""
     for it in range(int(max_newton)):
         trial = _state_from_u(u, n_cells, nc, t1)
         t_r0 = time.perf_counter()
@@ -510,6 +518,10 @@ def solve_dual_comp_step(
                 n_flash_thermo_jac=n_flash_thermo_jac,
                 n_flash_line_search=n_flash_line_search,
                 n_jac_reuse=n_jac_reuse,
+                linear_iterations=linear_it,
+                linear_residual=linear_res,
+                linear_setup_s=linear_setup,
+                linear_method=linear_method,
             )
         phase_now = np.concatenate([props_f.two_phase, props_m.two_phase])
         drop_ok = nrm_prev is not None and nrm < 0.5 * float(nrm_prev)
@@ -546,6 +558,10 @@ def solve_dual_comp_step(
         t_s0 = time.perf_counter()
         lin = solve_newton_system(jac_s, -(res * row_s), n_comp=nc)
         t_solve += time.perf_counter() - t_s0
+        linear_it += int(getattr(lin, "iterations", 0) or 0)
+        linear_setup += float(getattr(lin, "setup_s", 0.0) or 0.0)
+        linear_res = float(getattr(lin, "final_residual", 0.0) or 0.0)
+        linear_method = str(getattr(lin, "method", "") or "")
         step = lin.x
         if not np.all(np.isfinite(step)):
             raise PhysicsConvergenceError("DPDP Newton step is not finite")
@@ -634,6 +650,9 @@ def simulate_dual_comp(
     n_flash_thermo_jac = 0
     n_flash_line_search = 0
     n_jac_reuse = 0
+    sum_lin_it = 0
+    max_dp_all = 0.0
+    max_ds_all = 0.0
 
     while t < t_end - 1.0e-15:
         if n_acc >= int(max_steps):
@@ -673,6 +692,7 @@ def simulate_dual_comp(
         n_flash_thermo_jac += int(nxt.n_flash_thermo_jac)
         n_flash_line_search += int(nxt.n_flash_line_search)
         n_jac_reuse += int(nxt.n_jac_reuse)
+        sum_lin_it += int(getattr(nxt, "linear_iterations", 0) or 0)
         reports.append(
             StepReport(
                 time_s=t,
@@ -695,6 +715,10 @@ def simulate_dual_comp(
                     f"n_flash_thermo_jac={nxt.n_flash_thermo_jac}",
                     f"n_flash_line_search={nxt.n_flash_line_search}",
                     f"n_reject={n_reject}",
+                    f"linear_iterations={getattr(nxt, 'linear_iterations', 0)}",
+                    f"linear_method={getattr(nxt, 'linear_method', '')}",
+                    f"linear_setup_s={float(getattr(nxt, 'linear_setup_s', 0.0) or 0.0):.4f}",
+                    f"linear_residual={float(getattr(nxt, 'linear_residual', 0.0) or 0.0):.3e}",
                 ],
                 newton_its=nxt.newton_iters,
             )
@@ -706,6 +730,7 @@ def simulate_dual_comp(
             if vis.sg is not None and states[-1].sg is not None:
                 ds = max(ds, float(np.max(np.abs(vis.sg - states[-1].sg))))
         reports[-1].max_ds = ds
+        max_ds_all = max(max_ds_all, ds)
         states.append(vis)
         times.append(t)
         rates_hist.append(dict(nxt.port_rates))
@@ -723,6 +748,7 @@ def simulate_dual_comp(
             float(np.max(np.abs(_z(dual.fracture.moles) - _z(prev.fracture.moles)))),
             float(np.max(np.abs(_z(dual.matrix.moles) - _z(prev.matrix.moles)))),
         )
+        max_dp_all = max(max_dp_all, dp)
         if dp > 5.0e5 or dz > 0.15 or ds > 0.20:
             dt = max(float(dt_min), 0.5 * dt)
         last_its = nxt.newton_iters
@@ -742,6 +768,9 @@ def simulate_dual_comp(
                 f"n_jac_reuse={n_jac_reuse}",
                 f"n_accept={n_acc}",
                 f"n_reject={n_reject}",
+                f"linear_iterations={sum_lin_it}",
+                f"max_dp={max_dp_all:.4g}",
+                f"max_dS={max_ds_all:.4g}",
             ]
         )
 

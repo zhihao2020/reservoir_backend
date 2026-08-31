@@ -7,7 +7,8 @@
 | 目录 | 用途 |
 |------|------|
 | `two_layer/`、`channel/` | 用户交付默认路径 |
-| `lab/` | 正式 10 mm / 30³、概念实验室、通道图、标量 \(C_f\) ES-MDA（`lab_cf.yaml`） |
+| `lab_v1/` | **V1 产品 Case**：30 cm 组分 DPDP + 面注采 + log \(C_f\) |
+| `lab/` | 粗网格夹具 `lab_cf.yaml`、遗留水驱 `lab_apply.yaml`、概念实验室 |
 | `compositional/` | EXAMPLE 组分孪生 |
 
 | 场合 | 命令 | 测点从哪来 |
@@ -94,6 +95,6 @@ time,time_unit,sensor,kind,value,unit,sigma,holdout
 - `holdout=1` 的探头不参与同化，只用来打分。也可在 YAML 的 `holdout_sensors` 里点名。
 - 不要把定压井的流量当观测。
 
-层状用 `region_axis: z`。已知通道用 `region_map`。标量裂缝导流用 `examples/lab/lab_cf.yaml`（ES-MDA）。
+层状用 `region_axis: z`。已知通道用 `region_map`。V1 标量裂缝导流用 `examples/lab_v1/`（ES-MDA）。粗网格夹具仍是 `examples/lab/lab_cf.yaml`。
 
 示例 CSV 由 `examples/_make_observations.py` 用本正演生成；改了网格或探头后重新跑一遍即可。

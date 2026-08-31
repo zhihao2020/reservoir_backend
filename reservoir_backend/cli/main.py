@@ -317,6 +317,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--demo", action="store_true", help="if no observations, generate lab-consistent two-layer data")
     p = sub.add_parser("synthetic")
     p.add_argument("--output", type=Path, default=None)
+    rp = sub.add_parser("replay", help="replay experiments/EXP00N controls and sensors (no UDP)")
+    rp.add_argument("experiment", type=Path)
+    rp.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
     if args.cmd == "validate":
         return cmd_validate(args.case, args.output)
@@ -345,6 +348,12 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_apply(args.case, args.output, demo=args.demo)
     if args.cmd == "synthetic":
         return cmd_synthetic(args.output)
+    if args.cmd == "replay":
+        from reservoir_backend.runtime.replay import replay_experiment
+
+        report = replay_experiment(args.experiment, output=args.output)
+        print(json.dumps(report, indent=2))
+        return 0
     return 2
 
 
