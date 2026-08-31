@@ -14,6 +14,7 @@ from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.inverse.lm import identifiability, run_lm
 from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble, sample_posterior_ensemble
 from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
+from reservoir_backend.inverse.log_cf_tmf import LogCfTmfParameterization
 from reservoir_backend.inverse.parameterization import (
     ContrastParameterization,
     RegionParameterization,
@@ -46,6 +47,7 @@ class InverseSpec:
     alpha: NDArray[np.float64] | list[float] | None = None
     clip_innovation: bool = False
     n_workers: int | None = None
+    outlier_nsigma: float = 8.0
 
 
 @dataclass
@@ -81,6 +83,17 @@ class PhysicsSpec:
     shape_factor: float = 40.0
     phi_fracture: float = 0.02
     k_matrix_m2: float | None = None
+
+
+def physical_from_theta(parameterization, theta: NDArray[np.float64]) -> dict[str, float]:
+    """Decode θ to C_f and β_mf. One-parameter C_f models keep β_mf = 1."""
+    decode_phys = getattr(parameterization, "decode_physical", None)
+    if callable(decode_phys):
+        return dict(decode_phys(theta))
+    phys = np.asarray(parameterization.decode(theta), dtype=float).ravel()
+    cf = float(phys[0])
+    beta = float(phys[1]) if phys.size > 1 else 1.0
+    return {"cf_m2": cf, "tmf_multiplier": beta}
 
 
 def three_phase_for_fim(relperm, existing=None):
@@ -286,10 +299,10 @@ class DigitalTwin:
         return model in {"dpdp", "compositional_dpdp", "dual", "dual_compositional"}
 
     def dual_rock_from_theta(self, theta: NDArray[np.float64]):
-        if isinstance(self.parameterization, LogConductivityParameterization):
+        if hasattr(self.parameterization, "dual_rock"):
             return self.parameterization.dual_rock(theta)
-        cf = float(np.asarray(self.parameterization.decode(theta), dtype=float).ravel()[0])
-        return self.dual_rock_from_cf(cf)
+        phys = physical_from_theta(self.parameterization, theta)
+        return self.dual_rock_from_cf(float(phys["cf_m2"]))
 
     def dual_rock_from_cf(self, cf_m2: float):
         from reservoir_backend.physics.dual_rock import DualRock
@@ -320,7 +333,7 @@ class DigitalTwin:
             )
         return self._dpdp_ctx
 
-    def transfer_operator(self):
+    def transfer_operator(self, theta: NDArray[np.float64] | None = None):
         from reservoir_backend.physics.transfer import ComponentTransfer
 
         km = float(
@@ -328,7 +341,31 @@ class DigitalTwin:
             or self.physics.k_matrix_m2
             or 1.0e-15
         )
-        return ComponentTransfer(shape_factor=float(self.physics.shape_factor), k_matrix_m2=km)
+        beta = 1.0
+        if theta is not None:
+            beta = float(physical_from_theta(self.parameterization, theta)["tmf_multiplier"])
+        return ComponentTransfer(
+            shape_factor=float(self.physics.shape_factor),
+            k_matrix_m2=km,
+            transfer_multiplier=beta,
+        )
+
+    def transfer_from_physical(self, physical: dict):
+        from reservoir_backend.physics.transfer import ComponentTransfer
+
+        km = float(
+            getattr(getattr(self.parameterization, "conductivity", None), "k_matrix_m2", None)
+            or self.physics.k_matrix_m2
+            or 1.0e-15
+        )
+        return ComponentTransfer(
+            shape_factor=float(self.physics.shape_factor),
+            k_matrix_m2=km,
+            transfer_multiplier=float(physical.get("tmf_multiplier", 1.0)),
+        )
+
+    def dual_rock_from_physical(self, physical: dict):
+        return self.dual_rock_from_cf(float(physical["cf_m2"]))
 
     def initial_state(self) -> State:
         n = self.grid.n_cells
@@ -440,7 +477,7 @@ class DigitalTwin:
                 self.grid,
                 dual_rock,
                 self.physics.fluid,
-                self.transfer_operator(),
+                self.transfer_operator(parameters),
                 self.ports,
                 controls,
                 dual0,
@@ -672,6 +709,7 @@ class DigitalTwin:
                     "alpha": self.inverse.alpha,
                     "clip_innovation": self.inverse.clip_innovation,
                     "n_workers": self.inverse.n_workers,
+                    "outlier_nsigma": getattr(self.inverse, "outlier_nsigma", 8.0),
                 },
             )
 

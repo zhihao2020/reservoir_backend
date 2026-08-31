@@ -415,7 +415,17 @@ _FORBIDDEN_INVERSE = frozenset(
     }
 )
 
-_CF_KINDS = frozenset({"log_conductivity", "cf", "scalar_cf", "fracture_conductivity"})
+_CF_KINDS = frozenset(
+    {
+        "log_conductivity",
+        "cf",
+        "scalar_cf",
+        "fracture_conductivity",
+        "log_cf_tmf",
+        "cf_tmf",
+        "joint_cf_tmf",
+    }
+)
 
 
 def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
@@ -435,6 +445,11 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
         algorithm = "esmda" if kind in _CF_KINDS else "lm"
     else:
         algorithm = str(algo_raw).strip().lower()
+    if kind in {"log_cf_tmf", "cf_tmf", "joint_cf_tmf"}:
+        if inv.get("prior_mean") is None:
+            pm = np.array([0.0, 0.0], dtype=float)
+        if inv.get("prior_std") is None:
+            ps = np.array([0.8, 0.5], dtype=float)
     n_ens = inv.get("ensemble_size", inv.get("n_ensemble", 12))
     n_a = inv.get("assimilation_steps", inv.get("n_assimilations", 4))
     alpha = inv.get("alpha", inv.get("inflation"))

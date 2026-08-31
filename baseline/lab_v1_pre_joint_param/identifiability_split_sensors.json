@@ -1,0 +1,12 @@
+{
+  "singular_values": [
+    62.46052731285803,
+    1.612156454007645
+  ],
+  "condition_number": 38.74346510078968,
+  "column_correlation": -0.04824846051667487,
+  "pressure_information": 1495.154011562464,
+  "saturation_information": 2408.7625090700194,
+  "n_obs": 30,
+  "joint_ok": true
+}

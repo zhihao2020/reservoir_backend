@@ -15,7 +15,11 @@ from numpy.typing import NDArray
 
 from reservoir_backend.domain.types import ObservationSeries
 from reservoir_backend.exceptions import AssimilationError, PhysicsConvergenceError, TimeStepUnderflow
-from reservoir_backend.inverse.ensemble import replace_failed_members, sample_log_prior
+from reservoir_backend.inverse.ensemble import (
+    replace_failed_member_bundle,
+    replace_failed_members,
+    sample_log_prior,
+)
 from reservoir_backend.inverse.esmda import esmda_update, inflation_schedule
 from reservoir_backend.observation.qc import ObservationStatus, classify_observations
 from reservoir_backend.inverse.lm import identifiability
@@ -139,6 +143,54 @@ def _forward_ensemble(
     return y, failed, n_ens, duals
 
 
+def joint_phase_schedule(n_a: int, n_theta: int) -> list[str]:
+    """Hierarchical ES-MDA: freeze C_f while T_mf fits matrix P/S, then freeze T_mf
+    while C_f fits fracture pressure.
+
+    A single Kalman update on both parameters from the prior lets T_mf absorb
+    the matrix signal and drives C_f to the bound. Freeze the other coordinate
+    until the last steps.
+    """
+    n_a = int(n_a)
+    if int(n_theta) < 2 or n_a < 2:
+        return ["joint"] * max(n_a, 1)
+    # Two T_mf steps so the first C_f update sees a usable T_mf (one step leaves
+    # C_f ~16% high). Then T_mf / C_f so C_f is not frozen at a T_mf-compensated
+    # value, and the schedule ends on C_f.
+    if n_a == 2:
+        return ["tmf", "cf"]
+    if n_a == 3:
+        return ["tmf", "cf", "tmf"]
+    if n_a == 4:
+        return ["tmf", "tmf", "cf", "cf"]
+    if n_a == 5:
+        return ["tmf", "tmf", "cf", "tmf", "cf"]
+    n_tmf = max(1, (n_a + 1) // 2)
+    n_cf = n_a - n_tmf
+    return ["tmf"] * n_tmf + ["cf"] * n_cf
+
+
+def observation_mask_for_phase(twin: DigitalTwin, d_obs, phase: str) -> NDArray[np.bool_]:
+    n = int(d_obs.values.size)
+    if phase == "joint" or int(twin.parameterization.n_params) < 2:
+        return np.ones(n, dtype=bool)
+    smap = twin.experiment.sensor_map()
+    mask = np.zeros(n, dtype=bool)
+    sat_kinds = {"saturation", "gas_saturation", "oil_saturation"}
+    for i, (name, kind) in enumerate(zip(d_obs.names, d_obs.kinds)):
+        sen = smap.get(name)
+        med = str(getattr(sen, "medium", "fracture") if sen is not None else "fracture")
+        if phase == "cf":
+            # T_mf is frozen; fracture ΔP identifies C_f. Matrix/sat stay out so
+            # residual T_mf error cannot compensate through C_f.
+            mask[i] = med == "fracture" and kind == "pressure"
+        else:
+            mask[i] = med == "matrix" or kind in sat_kinds
+    if not np.any(mask):
+        return np.ones(n, dtype=bool)
+    return mask
+
+
 def _whitened_misfit(predicted: NDArray[np.float64], d: NDArray[np.float64], sigma: NDArray[np.float64]) -> float:
     finite = np.all(np.isfinite(predicted), axis=0)
     if not np.any(finite):
@@ -192,7 +244,10 @@ class HistoryMatchWorkflow:
         n_forward = 0
         failed_all: list[dict[str, str]] = []
         predicted = np.zeros((d_obs.values.size, n_ens), dtype=float)
+        phases = joint_phase_schedule(n_a, n_theta)
+        notes_phases: list[str] = []
         for step, alpha in enumerate(alphas):
+            phase = phases[step] if step < len(phases) else "joint"
             predicted, failed, n_fwd, _ = _forward_ensemble(
                 twin, members, assim, t_hist, n_workers=n_workers
             )
@@ -200,7 +255,7 @@ class HistoryMatchWorkflow:
             failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(n_ens)])
             if np.any(failed_mask):
                 failed_all.extend({"step": str(step), **row} for row in failed)
-                members = replace_failed_members(members, failed_mask, rng, pstd)
+                members, _, _ = replace_failed_member_bundle(members, failed_mask, rng, pstd)
                 members = _clip_members(twin, members)
                 predicted, failed2, n_fwd2, _ = _forward_ensemble(
                     twin, members, assim, t_hist, n_workers=n_workers
@@ -214,10 +269,20 @@ class HistoryMatchWorkflow:
                         + ", ".join(r["reason"] for r in failed2)
                     )
             misfit.append(_whitened_misfit(predicted, d_obs.values, d_obs.sigma))
-            status = classify_observations(predicted, d_obs.values, d_obs.sigma)
-            active = status == ObservationStatus.ACTIVE.value
+            print(f"ES-MDA {step + 1}/{n_a} phase={phase} misfit={misfit[-1]:.4g}", flush=True)
+            status = classify_observations(
+                predicted,
+                d_obs.values,
+                d_obs.sigma,
+                outlier_nsigma=float(cfg.get("outlier_nsigma", getattr(twin.inverse, "outlier_nsigma", 8.0))),
+            )
+            phase_mask = observation_mask_for_phase(twin, d_obs, phase)
+            active = (status == ObservationStatus.ACTIVE.value) & phase_mask
+            if not np.any(active):
+                active = status == ObservationStatus.ACTIVE.value
             if not np.any(active):
                 raise AssimilationError("no ACTIVE observations after QC")
+            frozen = members.copy()
             members = esmda_update(
                 members,
                 predicted[active],
@@ -227,7 +292,12 @@ class HistoryMatchWorkflow:
                 rng,
                 clip_innovation=bool(cfg.get("clip_innovation", twin.inverse.clip_innovation)),
             )
+            if phase == "cf" and n_theta >= 2:
+                members[1:, :] = frozen[1:, :]
+            elif phase == "tmf" and n_theta >= 2:
+                members[0, :] = frozen[0, :]
             members = _clip_members(twin, members)
+            notes_phases.append(phase)
 
         predicted, failed, n_fwd, duals_post = _forward_ensemble(
             twin, members, assim, t_hist, n_workers=n_workers
@@ -236,7 +306,9 @@ class HistoryMatchWorkflow:
         failed_mask = np.array([d is None or not np.all(np.isfinite(predicted[:, j])) for j, d in enumerate(duals_post)])
         if np.any(failed_mask):
             failed_all.extend({"step": "posterior", **row} for row in failed)
-            members = replace_failed_members(members, failed_mask, rng, pstd)
+            members, duals_post, _ = replace_failed_member_bundle(
+                members, failed_mask, rng, pstd, dual_states=duals_post
+            )
             members = _clip_members(twin, members)
             predicted, failed2, n_fwd2, duals_post = _forward_ensemble(
                 twin, members, assim, t_hist, n_workers=n_workers
@@ -271,13 +343,20 @@ class HistoryMatchWorkflow:
         ident = identifiability(prior_spread, theta_std)
         notes = list(self.notes)
         notes.append(f"ES-MDA Ne={n_ens} Na={n_a} seed={seed}")
+        notes.append(f"phases={notes_phases}")
         notes.append(f"alpha={alphas.tolist()}")
         notes.append(f"assimilation whitened RMSE={assim_rmse:.4g}")
         notes.append(f"hold-out whitened RMSE={hold_rmse:.4g}")
         if failed_all:
             notes.append(f"failed members: {failed_all}")
         q = np.quantile(members, [0.05, 0.50, 0.95], axis=1)
-        notes.append(f"Cf latent P05={q[0].tolist()} P50={q[1].tolist()} P95={q[2].tolist()}")
+        notes.append(f"theta P05={q[0].tolist()} P50={q[1].tolist()} P95={q[2].tolist()}")
+        from reservoir_backend.twin.offline import physical_from_theta
+
+        phys_members = [physical_from_theta(twin.parameterization, members[:, j]) for j in range(n_ens)]
+        cfs = np.array([p["cf_m2"] for p in phys_members], dtype=float)
+        betas = np.array([p["tmf_multiplier"] for p in phys_members], dtype=float)
+        notes.append(f"Cf P50={float(np.quantile(cfs, 0.50)):.4g} Tmf P50={float(np.quantile(betas, 0.50)):.4g}")
         ensemble = PosteriorEnsemble(
             theta_members=members.T,
             k_members=k_members,

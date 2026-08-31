@@ -45,13 +45,15 @@ ports:
 sensors: sensors.csv
 
 inverse:
-  parameterization: log_conductivity
+  parameterization: log_cf_tmf
   algorithm: esmda
   ensemble_size: 8
   assimilation_steps: 2
   seed: 3
-  prior_mean: 0.0
-  prior_std: 0.8
+  cf_ref_m2: 1.0e-12
+  tmf_multiplier_ref: 1.0
+  prior_mean: [0.0, 0.0]
+  prior_std: [0.8, 0.5]
 
 experiment:
   history_end_s: 6

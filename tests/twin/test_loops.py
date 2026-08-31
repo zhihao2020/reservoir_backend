@@ -143,7 +143,7 @@ def test_slow_loop_is_parameter_enkf_not_calibrate() -> None:
     assert "forecast_parameters" in src
     assert "window_observations" in src
     assert "classify_observations" in src
-    assert "replace_failed_members" in src
+    assert "replace_failed_member_bundle" in src
     assert "eta_threshold" in src
     assert "last_fast_error" in src
 
@@ -186,7 +186,7 @@ def test_fast_step_marks_saturations_held() -> None:
         def dpdp_context(self):
             return ctx
 
-        def transfer_operator(self):
+        def transfer_operator(self, theta=None):
             return ComponentTransfer(shape_factor=40.0, k_matrix_m2=1.0e-15)
 
     _Twin.grid = grid

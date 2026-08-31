@@ -1,0 +1,47 @@
+{
+  "gate": "lab_v1_offline",
+  "dev": true,
+  "case": "B",
+  "noise": false,
+  "cf_true": 1e-12,
+  "tmf_true": 2.0,
+  "cf_prior": 3e-13,
+  "tmf_prior": 1.0,
+  "cf_p05": 2.4909926877168315e-13,
+  "cf_p50": 5.840489026647394e-13,
+  "cf_p95": 7.898037030849654e-13,
+  "tmf_p05": 0.8423946189991478,
+  "tmf_p50": 1.038156390909726,
+  "tmf_p95": 1.3961295961731728,
+  "cf_mean": 5.541290650649235e-13,
+  "cf_std": 2.250014463361972e-13,
+  "ensemble_size": 8,
+  "n_forward": 33,
+  "assimilate_rmse": 7.1776496209992375,
+  "holdout_rmse_prior": 0.23843081146123415,
+  "holdout_rmse_posterior": 0.09420273973045198,
+  "holdout_rmse_ratio": 0.39509465724302234,
+  "misfit": [
+    10.08627947246569,
+    7.501583916822708,
+    7.06362288899169
+  ],
+  "notes": [
+    "ES-MDA Ne=8 Na=2 seed=3",
+    "alpha=[2.0, 2.0]",
+    "assimilation whitened RMSE=7.178",
+    "hold-out whitened RMSE=0.0942",
+    "failed members: [{'step': '0', 'member': '1', 'reason': 'TimeStepUnderflow: DPDP stepper took more than 40 steps'}]",
+    "theta P05=[-1.3959071506650014, -0.17311709579977386] P50=[-0.5420718570973115, 0.034390439151734606] P95=[-0.23599531456023803, 0.3324631002026295]",
+    "Cf P50=5.84e-13 Tmf P50=1.038"
+  ],
+  "gates": {
+    "cf_rel_error": 0.4159510973352606,
+    "tmf_rel_error": 0.480921804545137,
+    "cf_ok": false,
+    "tmf_ok": false,
+    "holdout_rmse_ratio": 0.39509465724302234,
+    "rmse_ok": true,
+    "pass": false
+  }
+}

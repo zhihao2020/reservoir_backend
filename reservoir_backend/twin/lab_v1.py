@@ -22,9 +22,13 @@ ROOT = Path(__file__).resolve().parents[2]
 LAB_V1 = ROOT / "examples" / "lab_v1"
 
 CF_TRUE_M2 = 1.0e-12
+TMF_TRUE = 2.0
 CF_PRIOR_FACTOR = 0.3
+TMF_PRIOR_FACTOR = 0.5
 NOISELESS_CF_TOL = 0.05
+NOISELESS_TMF_TOL = 0.10
 NOISY_CF_TOL = 0.15
+NOISY_TMF_TOL = 0.25
 HOLDOUT_RMSE_RATIO = 0.70
 SIGMA_P = 2.0e3
 SIGMA_S = 0.03
@@ -169,16 +173,21 @@ def generate_truth(
     twin: DigitalTwin,
     *,
     cf_true: float = CF_TRUE_M2,
+    tmf_true: float = TMF_TRUE,
     noise: bool = False,
     case: str = "B",
     seed: int = 3,
     outlier_frac: float = 0.05,
 ) -> dict[str, Any]:
-    """Run F(C_f^true), sample H, optionally add noise / outliers. Cases A/B/C."""
+    """Run F(θ_true), sample H, optionally add noise / outliers. Cases A/B/C."""
     case = str(case).strip().upper()
     if case not in {"A", "B", "C"}:
         raise ValueError("case must be A (P), B (P+S), or C (P+S+outliers)")
-    theta_true = twin.parameterization.encode(np.array([float(cf_true)], dtype=float))
+    n_th = int(twin.parameterization.n_params)
+    if n_th >= 2:
+        theta_true = twin.parameterization.encode(np.array([float(cf_true), float(tmf_true)], dtype=float))
+    else:
+        theta_true = twin.parameterization.encode(np.array([float(cf_true)], dtype=float))
     t_end = float(twin.experiment.history_end_s or 6.0)
     times = twin.experiment.all_times_s()
     times = np.asarray(times, dtype=float)
@@ -225,6 +234,7 @@ def generate_truth(
     twin.experiment.history_end_s = t_end
     return {
         "cf_true": float(cf_true),
+        "tmf_true": float(tmf_true),
         "theta_true": theta_true.tolist(),
         "case": case,
         "noise": bool(noise),
@@ -273,26 +283,41 @@ def write_truth_bundle(folder: Path, twin: DigitalTwin, truth: dict[str, Any]) -
 
 
 def cf_from_theta(twin: DigitalTwin, theta: NDArray[np.float64]) -> float:
-    return float(twin.parameterization.decode(np.asarray(theta, dtype=float).ravel())[0])
+    return float(physical_from_theta(twin, theta)["cf_m2"])
+
+
+def physical_from_theta(twin: DigitalTwin, theta: NDArray[np.float64]) -> dict[str, float]:
+    from reservoir_backend.twin.offline import physical_from_theta as _phys
+
+    return _phys(twin.parameterization, theta)
 
 
 def offline_gates(report: dict[str, Any]) -> dict[str, Any]:
-    """Hard development gates. Noiseless |Cf P50-true|/true < 5%; noisy 15% + RMSE ratio."""
+    """Noiseless: Cf <5%, Tmf <10%, holdout_ratio <1. Noisy: 15%/25%/0.7."""
     cf_true = float(report["cf_true"])
     cf_p50 = float(report["cf_p50"])
-    rel = abs(cf_p50 - cf_true) / max(abs(cf_true), 1.0e-30)
+    cf_rel = abs(cf_p50 - cf_true) / max(abs(cf_true), 1.0e-30)
+    tmf_true = float(report.get("tmf_true", 1.0))
+    tmf_p50 = float(report.get("tmf_p50", tmf_true))
+    tmf_rel = abs(tmf_p50 - tmf_true) / max(abs(tmf_true), 1.0e-30)
     noisy = bool(report.get("noise", False))
-    tol = NOISY_CF_TOL if noisy else NOISELESS_CF_TOL
-    cf_ok = rel < tol
     ratio = float(report.get("holdout_rmse_ratio", 1.0))
-    rmse_ok = (not noisy) or ratio < HOLDOUT_RMSE_RATIO
+    if not noisy:
+        cf_ok = cf_rel < NOISELESS_CF_TOL
+        tmf_ok = tmf_rel < NOISELESS_TMF_TOL
+        rmse_ok = ratio < 1.0
+    else:
+        cf_ok = cf_rel < NOISY_CF_TOL
+        tmf_ok = tmf_rel < NOISY_TMF_TOL
+        rmse_ok = ratio < HOLDOUT_RMSE_RATIO
     return {
-        "cf_rel_error": rel,
-        "cf_tol": tol,
+        "cf_rel_error": cf_rel,
+        "tmf_rel_error": tmf_rel,
         "cf_ok": bool(cf_ok),
+        "tmf_ok": bool(tmf_ok),
         "holdout_rmse_ratio": ratio,
         "rmse_ok": bool(rmse_ok),
-        "pass": bool(cf_ok and rmse_ok),
+        "pass": bool(cf_ok and tmf_ok and rmse_ok),
     }
 
 

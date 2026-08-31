@@ -18,13 +18,38 @@ def test_case_abc_share_truth_and_spatial_holdout() -> None:
 def test_offline_gates_noiseless_threshold() -> None:
     from reservoir_backend.twin.lab_v1 import NOISELESS_CF_TOL, NOISY_CF_TOL, offline_gates
 
-    ok = offline_gates({"cf_true": 1.0e-12, "cf_p50": 1.02e-12, "noise": False, "holdout_rmse_ratio": 1.0})
+    ok = offline_gates(
+        {
+            "cf_true": 1.0e-12,
+            "cf_p50": 1.02e-12,
+            "tmf_true": 2.0,
+            "tmf_p50": 2.05,
+            "noise": False,
+            "holdout_rmse_ratio": 0.9,
+        }
+    )
     assert ok["pass"] is True
     assert NOISELESS_CF_TOL == 0.05
-    bad = offline_gates({"cf_true": 1.0e-12, "cf_p50": 1.2e-12, "noise": False, "holdout_rmse_ratio": 0.5})
+    bad = offline_gates(
+        {
+            "cf_true": 1.0e-12,
+            "cf_p50": 1.2e-12,
+            "tmf_true": 2.0,
+            "tmf_p50": 2.0,
+            "noise": False,
+            "holdout_rmse_ratio": 0.5,
+        }
+    )
     assert bad["pass"] is False
     noisy = offline_gates(
-        {"cf_true": 1.0e-12, "cf_p50": 1.10e-12, "noise": True, "holdout_rmse_ratio": 0.5}
+        {
+            "cf_true": 1.0e-12,
+            "cf_p50": 1.10e-12,
+            "tmf_true": 2.0,
+            "tmf_p50": 2.2,
+            "noise": True,
+            "holdout_rmse_ratio": 0.5,
+        }
     )
     assert noisy["cf_ok"] is True
     assert NOISY_CF_TOL == 0.15

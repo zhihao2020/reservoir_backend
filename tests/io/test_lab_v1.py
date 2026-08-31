@@ -10,7 +10,7 @@ def test_load_lab_v1_dev_face_ports_and_sensors() -> None:
     twin = load_case("examples/lab_v1/case_dev.yaml")
     assert twin.uses_dpdp()
     assert twin.inverse.algorithm == "esmda"
-    assert twin.parameterization.n_params == 1
+    assert twin.parameterization.n_params == 2
     assert twin.inverse.ensemble_size == 8
     assert twin.grid.n_cells == 4 * 4 * 2
     assert twin.ports[0].cell_ids.size == twin.grid.ny * twin.grid.nz
@@ -34,6 +34,7 @@ def test_load_lab_v1_product_spec_is_30_cubed() -> None:
     assert twin.ports[0].cell_ids.size == 900
     assert twin.inverse.ensemble_size == 12
     assert twin.inverse.algorithm == "esmda"
+    assert twin.parameterization.n_params == 2
 
 
 def test_new_sensor_csv_requires_sigma(tmp_path: Path) -> None:

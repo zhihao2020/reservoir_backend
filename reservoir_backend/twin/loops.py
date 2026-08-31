@@ -21,7 +21,7 @@ from reservoir_backend.physics.rock import LOGK_MAX, LOGK_MIN
 from reservoir_backend.solver.frozen_pressure import FrozenPressureContext, step_frozen_pressure
 from reservoir_backend.solver.impes import Trajectory
 from reservoir_backend.exceptions import AssimilationError
-from reservoir_backend.inverse.ensemble import replace_failed_members
+from reservoir_backend.inverse.ensemble import replace_failed_member_bundle
 from reservoir_backend.observation.qc import ObservationStatus, classify_observations
 from reservoir_backend.twin.offline import (
     DigitalTwin,
@@ -110,7 +110,7 @@ class TwinLoops:
             self.twin.grid,
             ctx,
             rock,
-            self.twin.transfer_operator(),
+            self.twin.transfer_operator(self.last_theta),
             dual.fracture.pressure,
             dual.matrix.pressure,
             np.asarray(self.twin._lam_f, dtype=float),
@@ -226,7 +226,9 @@ class TwinLoops:
         t_forecast = time.perf_counter() - t_fc0
         failed_mask = np.array([not np.all(np.isfinite(predicted[:, j])) for j in range(members.shape[1])])
         if np.any(failed_mask):
-            members = replace_failed_members(members, failed_mask, rng, pstd)
+            members, checkpoints, self.flash_caches = replace_failed_member_bundle(
+                members, failed_mask, rng, pstd, dual_states=checkpoints, flash_caches=self.flash_caches
+            )
             members = _clip_members(self.twin, members)
             predicted, failed, n_fwd2, _ = _forward_ensemble(
                 self.twin, members, series, t, dual_states=checkpoints

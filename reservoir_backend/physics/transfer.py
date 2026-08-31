@@ -34,12 +34,15 @@ class WarrenRootTransfer:
 
     shape_factor: float
     k_matrix_m2: float
+    transfer_multiplier: float = 1.0
 
     def __post_init__(self) -> None:
         if float(self.shape_factor) < 0.0:
             raise ValueError("shape_factor must be >= 0")
         if float(self.k_matrix_m2) <= 0.0:
             raise ValueError("k_matrix_m2 must be positive")
+        if float(self.transfer_multiplier) <= 0.0:
+            raise ValueError("transfer_multiplier must be positive")
 
     def compute_transfer(
         self,
@@ -51,21 +54,34 @@ class WarrenRootTransfer:
         pm = np.asarray(p_matrix, dtype=float)
         pf = np.asarray(p_fracture, dtype=float)
         vol = np.asarray(cell_volume, dtype=float)
-        return float(self.shape_factor) * float(self.k_matrix_m2) * vol * (pm - pf)
+        return (
+            float(self.shape_factor)
+            * float(self.k_matrix_m2)
+            * float(self.transfer_multiplier)
+            * vol
+            * (pm - pf)
+        )
 
 
 @dataclass(frozen=True)
 class ComponentTransfer:
-    """Multiphase component transfer. Shape factor and k_m are V1-fixed."""
+    """Multiphase component transfer.
+
+    ``shape_factor`` and ``k_matrix_m2`` build \(T_{mf}^{ref}\).
+    ``transfer_multiplier`` is \(\beta_{mf}\) applied once: \(T_{mf}=\beta T^{ref}\).
+    """
 
     shape_factor: float
     k_matrix_m2: float
+    transfer_multiplier: float = 1.0
 
     def __post_init__(self) -> None:
         if float(self.shape_factor) < 0.0:
             raise ValueError("shape_factor must be >= 0")
         if float(self.k_matrix_m2) <= 0.0:
             raise ValueError("k_matrix_m2 must be positive")
+        if float(self.transfer_multiplier) <= 0.0:
+            raise ValueError("transfer_multiplier must be positive")
 
     def compute(
         self,
@@ -85,7 +101,7 @@ class ComponentTransfer:
         else:
             km_arr = np.asarray(k_matrix, dtype=float)
             km = km_arr if km_arr.shape == vol.shape else float(np.ravel(km_arr)[0])
-        cond = float(self.shape_factor) * km * vol
+        cond = float(self.shape_factor) * km * vol * float(self.transfer_multiplier)
         from_m = dphi >= 0.0
         lam_l = np.where(from_m, props_matrix.lam_l, props_fracture.lam_l)
         lam_v = np.where(from_m, props_matrix.lam_v, props_fracture.lam_v)

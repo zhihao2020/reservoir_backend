@@ -1,0 +1,17 @@
+{
+  "git_sha": "6dc5cd89e965077cd2ffda4c44dcaf577f582042",
+  "twin": "make_lab_v1_face_twin 3x2x1 face xmin/xmax",
+  "parameterization": "log_conductivity",
+  "n_params": 1,
+  "cf_true": 1e-12,
+  "cf_prior": 3e-13,
+  "cf_rel_error_prior": 0.7,
+  "cf_rel_error_post": 0.7738408721306147,
+  "holdout_prior": null,
+  "holdout_post": null,
+  "holdout_ratio": null,
+  "notes": [
+    "pytest tests/inverse/test_lab_v1_recovery.py::test_lab_v1_face_esmda_recovers_cf_and_holdout",
+    "posterior did not improve on prior; T_mf was not in theta"
+  ]
+}

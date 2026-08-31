@@ -649,25 +649,27 @@ def make_scalar_cf_twin(
 
 def make_lab_v1_face_twin(
     *,
-    n: tuple[int, int, int] = (3, 2, 1),
+    n: tuple[int, int, int] = (4, 2, 1),
     size_m: tuple[float, float, float] = (0.30, 0.20, 0.10),
     k_matrix: float = 1.0e-15,
     cf_true: float = 1.0e-12,
+    tmf_true: float = 2.0,
     phi: float = 0.08,
     phi_fracture: float = 0.02,
-    q_inj: float = 2.0e-4,
+    q_inj: float = 1.0e-4,
     p_prod: float = 1.18e7,
     t_end: float = 6.0,
-    n_times: int = 2,
+    n_times: int = 3,
     noise_p: float = 0.0,
     noise_s: float = 0.0,
     seed: int = 3,
     ensemble_size: int = 8,
-    assimilation_steps: int = 2,
+    assimilation_steps: int = 5,
     with_saturation: bool = True,
 ) -> SyntheticCase:
     """Tiny face-inject / face-produce DPDP twin. Same contract as lab_v1, not 30³."""
     from reservoir_backend.comp.fluid import fluid_from_name
+    from reservoir_backend.inverse.log_cf_tmf import LogCfTmfParameterization
     from reservoir_backend.ports.flow import make_face_port
 
     nx, ny, nz = n
@@ -681,20 +683,27 @@ def make_lab_v1_face_twin(
     )
     mask = np.ones(grid.n_cells, dtype=bool)
     cond = FractureConductivityModel(n_cells=grid.n_cells, fracture_mask=mask, k_matrix_m2=float(k_matrix))
-    param = LogConductivityParameterization(
-        n_zones=1,
+    param = LogCfTmfParameterization(
         phi=phi,
         phi_fracture=phi_fracture,
+        c_ref_m2=1.0e-12,
         conductivity=cond,
-        prior_mean=0.0,
-        prior_std=0.75,
+        prior_mean=np.array([0.0, 0.0]),
+        prior_std=np.array([0.8, 0.8]),
+        log_min=-2.5,
+        log_max=2.5,
     )
-    theta_true = param.encode(np.array([float(cf_true)], dtype=float))
-    param.prior_mean = float(np.log(0.3)) + float(theta_true[0])
+    theta_true = param.encode(np.array([float(cf_true), float(tmf_true)], dtype=float))
+    param.prior_mean = param.encode(np.array([0.3 * float(cf_true), 0.5 * float(tmf_true)], dtype=float))
     k_true = param.expand(theta_true)
     inj = make_face_port(grid, "INJ", "injector", "rate", "xmin")
     prod = make_face_port(grid, "PROD", "producer", "pressure", "xmax")
-    times = np.linspace(0.0, float(t_end), int(n_times) + 1)[1:]
+    early = min(0.5, 0.08 * float(t_end))
+    times = np.unique(
+        np.concatenate(
+            (np.array([early], dtype=float), np.linspace(0.0, float(t_end), int(n_times) + 1)[1:])
+        )
+    )
     controls = [
         ControlSeries("INJ", "rate", times, np.full(times.size, q_inj)),
         ControlSeries("INJ", "composition", times, np.full(times.size, 0.95)),
@@ -702,20 +711,27 @@ def make_lab_v1_face_twin(
     ]
     y0 = size_m[1] * 0.50
     zmid = size_m[2] * 0.50
-    sig_p = max(float(noise_p), 2.0e4)
+    # 5% C_f moves fracture ΔP by ~80 Pa at q_inj=1e-4; a 2 kPa floor buries it.
+    # Matrix P stays at 2 kPa so T_mf is not over-weighted relative to C_f.
+    sig_p_frac = max(float(noise_p), 8.0e1)
+    sig_p_mat = max(float(noise_p), 2.0e3)
     sig_s = max(float(noise_s), 0.03)
+    # Fracture ΔP sees C_f; matrix P/S lag sees T_mf. Early time is required.
     sensors = [
-        Sensor("P_in", "pressure", size_m[0] * 0.25, y0, zmid, probe_diameter_m=0.006, sigma=sig_p, medium="bulk"),
-        Sensor("P_mid", "pressure", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=sig_p, medium="bulk"),
-        Sensor("P_out", "pressure", size_m[0] * 0.75, y0, zmid, probe_diameter_m=0.006, sigma=sig_p, medium="bulk"),
+        Sensor("P_f_in", "pressure", size_m[0] * 0.20, y0, zmid, probe_diameter_m=0.006, sigma=sig_p_frac, medium="fracture"),
+        Sensor("P_f_mid", "pressure", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=sig_p_frac, medium="fracture"),
+        Sensor("P_f_out", "pressure", size_m[0] * 0.80, y0, zmid, probe_diameter_m=0.006, sigma=sig_p_frac, medium="fracture"),
+        Sensor("P_m_mid", "pressure", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=sig_p_mat, medium="matrix"),
     ]
     if with_saturation:
+        # EXAMPLE fluid has no water; Sw is identically 0. Observe Sg.
         sensors += [
-            Sensor("S_in", "sw", size_m[0] * 0.25, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="bulk"),
-            Sensor("S_mid", "sw", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="bulk"),
-            Sensor("S_out", "sw", size_m[0] * 0.75, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="bulk"),
+            Sensor("S_f_mid", "sg", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="fracture"),
+            Sensor("S_m_mid", "sg", size_m[0] * 0.50, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="matrix"),
+            Sensor("S_bulk_in", "sg", size_m[0] * 0.25, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="bulk"),
+            Sensor("S_bulk_out", "sg", size_m[0] * 0.75, y0, zmid, probe_diameter_m=0.006, sigma=sig_s, medium="bulk"),
         ]
-    hold = {"P_out", "S_out"}
+    hold = {"P_f_out", "S_bulk_out"}
     experiment = Experiment(
         size_m=size_m,
         sensors=sensors,
@@ -727,10 +743,10 @@ def make_lab_v1_face_twin(
     physics = PhysicsSpec(
         sw_init=0.0,
         p_init=1.20e7,
-        dt_init=0.5,
+        dt_init=0.25,
         dt_min=1.0e-6,
         dt_max=2.0,
-        max_steps=40,
+        max_steps=120,
         implicit_transport=True,
         fully_implicit=False,
         model="compositional_dpdp",
@@ -746,12 +762,14 @@ def make_lab_v1_face_twin(
         physics,
         param,
         inverse=InverseSpec(
-            prior_mean=float(param.prior_mean),
-            prior_std=float(param.prior_std),
+            prior_mean=np.asarray(param.prior_mean, dtype=float),
+            prior_std=np.asarray(param.prior_std, dtype=float),
             algorithm="esmda",
             ensemble_size=int(ensemble_size),
             assimilation_steps=int(assimilation_steps),
             seed=int(seed),
+            outlier_nsigma=40.0,
+            n_workers=min(8, int(ensemble_size)),
         ),
     )
     traj = twin.simulate(parameters=theta_true, t_end=t_end, report_times=times)

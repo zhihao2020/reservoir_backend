@@ -1,6 +1,6 @@
 # 项目状态
 
-主线：30 cm 页岩油实验数字孪生。V1 产品 Case 是 `examples/lab_v1/`（30³ 组分 DPDP + 面注采 + log \(C_f\) + ES-MDA + Parameter EnKF）。饱和度由上游给出 \(S,\sigma\)；原始电/磁/声反演不在核心范围。`examples/lab/lab_cf.yaml` 是粗网格开发夹具；`lab_apply.yaml` 是遗留两区水驱演示。
+主线：30 cm 页岩油实验数字孪生。V1 产品 Case 是 `examples/lab_v1/`（30³ 组分 DPDP + 面注采 + \(\theta=(\log C_f,\log\beta_{mf})\) + ES-MDA + Parameter EnKF）。饱和度由上游给出 \(S,\sigma\)；原始电/磁/声反演不在核心范围。`examples/lab/lab_cf.yaml` 是粗网格开发夹具；`lab_apply.yaml` 是遗留两区水驱演示。
 
 | 状态 | 含义 |
 |------|------|
@@ -56,6 +56,7 @@
 | LM 后验小 ensemble Ne=8 | MVP | `inverse.post_ensemble` | `k_mean.npy` / `k_std.npy`；`tests/inverse/test_post_ensemble.py` |
 | Forecast 时间外推尺子 | MVP | `synthetic.make_forecast_split_case` | `tests/inverse/test_forecast.py` |
 | Scalar \(C_f\) log 参数化 | 已验证 | `LogConductivityParameterization` | `tests/inverse/test_log_conductivity.py` |
+| 联合 \(\log C_f,\log\beta_{mf}\) | MVP | `LogCfTmfParameterization` + 分层 ES-MDA（`tmf,tmf,cf,tmf,cf`） | `tests/inverse/test_log_cf_tmf.py`、`test_hierarchical_esmda.py`。无噪声 Case B（tiny）：\(C_f\) P50 误差 **2.6%**、\(T_{mf}\) **6.5%**、holdout 比 **0.047**（`results/lab_v1/offline_tiny_B14`）。裂缝压力 \(\sigma=80\,\mathrm{Pa}\)、基质 \(2\,\mathrm{kPa}\)；Cf 相只用裂缝压力 |
 | ES-MDA（log \(C_f\)） | 已验证 | `inverse.esmda`、`twin.history_match` | `tests/inverse/test_esmda.py`、`test_esmda_cf.py`。线性高斯收回；合成无噪声 \(C_f\) 向真值靠近；后验 P05/P50/P95 |
 | Parameter EnKF（在线一步） | MVP | `inverse.parameter_enkf` | `tests/inverse/test_parameter_enkf.py`。α=1，不改状态场 |
 | DualContinuumState / transfer / ForwardModel adapter | MVP | `domain.state`、`physics.transfer`、`solver.forward_adapter` | `tests/domain/test_dual_state.py`、`tests/solver/test_forward_adapter.py` |

@@ -16,7 +16,7 @@ d^{sim}=H(x,m),\quad
 d^{obs}\rightarrow m^{posterior}
 \]
 
-- \(m\)：静态参数。V1 产品默认标量 \(\log(C_f/C_{\mathrm{ref}})\)（`examples/lab_v1/`）。两区 log \(K\) 仅遗留水驱演示。粗网格 6³ / 逐格 / zonal \(C_f\) 不是默认。
+- \(m\)：静态参数。V1 产品默认 \(\theta=(\log(C_f/C_{\mathrm{ref}}),\log\beta_{mf})\)（`examples/lab_v1/`），\(T_{mf}=\beta_{mf}T_{mf}^{ref}\)。两区 log \(K\) 仅遗留水驱演示。粗网格 6³ / 逐格 / zonal \(C_f\) 不是默认。
 - 饱和度观测由上游传感反演给出 \(S_\alpha,\sigma,x,y,z,t\)。电阻率 / 电磁 / 声学原始反演不在 reservoir-core 范围。
 - \(u(t)\)：控制。定流量注入、定压采出、注入组成等。同一端口同一时刻，压力和流量不能同时当严格 BC 又当反演数据。
 - \(x_t=(p,S_w[,S_g])\)：动态状态。\(S_o=1-S_w-S_g\)。饱和度不是物性场。

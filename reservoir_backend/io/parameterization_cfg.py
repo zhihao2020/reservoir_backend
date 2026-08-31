@@ -10,6 +10,7 @@ import numpy as np
 
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
+from reservoir_backend.inverse.log_cf_tmf import LogCfTmfParameterization
 from reservoir_backend.inverse.parameterization import (
     ContrastParameterization,
     RegionParameterization,
@@ -104,6 +105,22 @@ def parameterization_from_cfg(grid: CartesianGrid, cfg: dict[str, Any], cfg_dir:
             prior_mean=float(pm),
             prior_std=float(ps),
         )
+    if kind in {"log_cf_tmf", "cf_tmf", "joint_cf_tmf"}:
+        km = float(inv.get("k_matrix_m2", (cfg.get("rock") or {}).get("k_matrix_m2", 1.0e-15)))
+        mask = np.ones(grid.n_cells, dtype=bool)
+        cond = FractureConductivityModel(n_cells=grid.n_cells, fracture_mask=mask, k_matrix_m2=km)
+        pm = inv.get("prior_mean", [0.0, 0.0])
+        ps = inv.get("prior_std", [0.8, 0.5])
+        phi_f = float(inv.get("phi_fracture", (cfg.get("physics") or {}).get("phi_fracture", 0.02)))
+        return LogCfTmfParameterization(
+            phi=phi,
+            phi_fracture=phi_f,
+            c_ref_m2=float(inv.get("cf_ref_m2", 1.0e-13)),
+            tmf_multiplier_ref=float(inv.get("tmf_multiplier_ref", 1.0)),
+            conductivity=cond,
+            prior_mean=pm,
+            prior_std=ps,
+        )
     raise ValueError(
-        f"unknown inverse.parameterization {kind!r}; use region, contrast, or log_conductivity"
+        f"unknown inverse.parameterization {kind!r}; use region, contrast, log_conductivity, or log_cf_tmf"
     )

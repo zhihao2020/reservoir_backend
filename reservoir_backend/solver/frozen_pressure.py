@@ -243,7 +243,7 @@ def step_frozen_pressure(
     km = np.asarray(dual_rock.matrix.permeability, dtype=float).ravel()
     dphi = pm - pf
     lam_up = np.where(dphi >= 0.0, lm, lf)
-    tau = float(transfer.shape_factor) * km * vol * lam_up
+    tau = float(transfer.shape_factor) * km * vol * lam_up * float(getattr(transfer, "transfer_multiplier", 1.0))
     rows.extend(idx.tolist())
     cols.extend(idx.tolist())
     data.extend(tau.tolist())
