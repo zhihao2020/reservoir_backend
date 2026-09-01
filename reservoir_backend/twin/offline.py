@@ -256,6 +256,9 @@ class Posterior:
     history: Trajectory
     notes: list[str]
     n_forward: int = 0
+    n_failed_forward: int = 0
+    fail_rate: float = 0.0
+    repeated_fail: bool = False
     misfit: list[float] = field(default_factory=list)
     ensemble: PosteriorEnsemble | None = None
 

@@ -667,7 +667,7 @@ def make_lab_v1_face_twin(
     assimilation_steps: int = 5,
     with_saturation: bool = True,
 ) -> SyntheticCase:
-    """Tiny face-inject / face-produce DPDP twin. Same contract as lab_v1, not 30³."""
+    """M1a diagnostic fixture: 0.30×0.20×0.10 m, 4×2×1. Not a coarsened 30 cm product."""
     from reservoir_backend.comp.fluid import fluid_from_name
     from reservoir_backend.inverse.log_cf_tmf import LogCfTmfParameterization
     from reservoir_backend.ports.flow import make_face_port

@@ -1,0 +1,7 @@
+time_s,port,kind,value
+0.0,INJ,rate,0.0003
+0.0,INJ,composition,0.95
+0.0,PROD,pressure,11800000.0
+60.0,INJ,rate,0.0003
+60.0,INJ,composition,0.95
+60.0,PROD,pressure,11800000.0

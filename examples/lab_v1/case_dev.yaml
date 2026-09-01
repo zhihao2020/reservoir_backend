@@ -1,5 +1,8 @@
-# Coarse twin of case.yaml for tests, generate_truth --dev, and CI.
-# Same physics, face BCs, and sensor contract; 4×4×2 cells.
+# M1b fixture: 30 cm cube, 4×4×2. Same physics/face BCs as case.yaml.
+# Not a coarsening of 30³. Tiny face twin (0.30×0.20×0.10, 4×2×1) is a
+# separate diagnostic fixture (M1a), not this product-geometry case.
+# Sensor contract: fracture-P (30 Pa, algorithmic identifiability only;
+# matrix-P (2 kPa), Sg. M1c must restore instrument R=2 kPa.
 geometry:
   size_m: [0.30, 0.30, 0.30]
 
@@ -20,9 +23,9 @@ physics:
   gravity: false
   p_init: 1.2e7
   dt_init: 0.5
-  dt_max: 2.0
+  dt_max: 5.0
   dt_min: 1.0e-6
-  max_steps: 40
+  max_steps: 400
   shape_factor: 40.0
   phi_fracture: 0.02
   k_matrix_m2: 1.0e-15
@@ -52,8 +55,9 @@ inverse:
   parameterization: log_cf_tmf
   algorithm: esmda
   ensemble_size: 8
-  assimilation_steps: 2
+  assimilation_steps: 5
   seed: 3
+  outlier_nsigma: 120.0
   cf_ref_m2: 1.0e-12
   tmf_multiplier_ref: 1.0
   prior_mean: [0.0, 0.0]
@@ -67,5 +71,5 @@ online:
   slow_interval_s: 2.0
 
 experiment:
-  history_end_s: 6
-  controls: controls.csv
+  history_end_s: 60
+  controls: controls_dev.csv

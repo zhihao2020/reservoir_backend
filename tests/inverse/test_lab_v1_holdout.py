@@ -9,7 +9,7 @@ def test_case_abc_share_truth_and_spatial_holdout() -> None:
     assert zones == {"inlet", "middle", "outlet"}
     # Case A keeps only pressure channels; B keeps P+S. No forward here.
     n_p = sum(1 for s in twin.experiment.sensors if s.kind == "pressure")
-    n_s = sum(1 for s in twin.experiment.sensors if s.kind == "saturation")
+    n_s = sum(1 for s in twin.experiment.sensors if s.kind in {"saturation", "gas_saturation", "oil_saturation"})
     assert n_p >= 3 and n_s >= 3
     assert held
     assert not held >= {s.name for s in twin.experiment.sensors}

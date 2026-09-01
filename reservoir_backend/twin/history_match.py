@@ -347,6 +347,13 @@ class HistoryMatchWorkflow:
         notes.append(f"alpha={alphas.tolist()}")
         notes.append(f"assimilation whitened RMSE={assim_rmse:.4g}")
         notes.append(f"hold-out whitened RMSE={hold_rmse:.4g}")
+        n_failed_forward = len(failed_all)
+        fail_rate = float(n_failed_forward) / float(max(n_forward, 1))
+        member_steps: dict[str, set[str]] = {}
+        for row in failed_all:
+            member_steps.setdefault(str(row.get("member")), set()).add(str(row.get("step")))
+        repeated_fail = any(len(steps) > 1 for steps in member_steps.values())
+        notes.append(f"fail_rate={fail_rate:.4g} n_failed_forward={n_failed_forward} repeated_fail={repeated_fail}")
         if failed_all:
             notes.append(f"failed members: {failed_all}")
         q = np.quantile(members, [0.05, 0.50, 0.95], axis=1)
@@ -377,6 +384,9 @@ class HistoryMatchWorkflow:
             history=hist,
             notes=notes,
             n_forward=n_forward,
+            n_failed_forward=n_failed_forward,
+            fail_rate=fail_rate,
+            repeated_fail=repeated_fail,
             misfit=misfit,
             ensemble=ensemble,
         )

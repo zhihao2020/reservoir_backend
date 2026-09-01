@@ -469,6 +469,7 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
         alpha=None if alpha is None else list(alpha),
         clip_innovation=bool(inv.get("clip_innovation", False) or inv.get("robust_observations", False)),
         n_workers=None if inv.get("n_workers") is None else int(inv.get("n_workers")),
+        outlier_nsigma=float(inv.get("outlier_nsigma", 8.0)),
     )
 
 

@@ -31,7 +31,11 @@ NOISY_CF_TOL = 0.15
 NOISY_TMF_TOL = 0.25
 HOLDOUT_RMSE_RATIO = 0.70
 SIGMA_P = 2.0e3
+SIGMA_P_FRACTURE_M1B = 30.0
 SIGMA_S = 0.03
+D_CF_MIN = 2.0
+FAIL_RATE_MAX = 0.05
+SAT_KINDS = frozenset({"saturation", "gas_saturation", "oil_saturation"})
 
 
 def case_path(*, dev: bool = False) -> Path:
@@ -85,40 +89,115 @@ def product_sensor_rows() -> list[dict[str, Any]]:
     return rows
 
 
-def dev_sensor_rows() -> list[dict[str, Any]]:
-    """Coarse-grid layout: 6 pressure + 9 saturation, still 3 x-zones."""
+def dev_sensor_rows(*, sigma_p_fracture: float = SIGMA_P_FRACTURE_M1B) -> list[dict[str, Any]]:
+    """M1b 30 cm / 4×4×2 contract: fracture-P, matrix-P, Sg. Three x-zones.
+
+    ``sigma_p_fracture=80`` is algorithmic identifiability (M1b), not the
+    instrument contract. M1c must call this with ``SIGMA_P`` (2 kPa).
+    """
+    y0, z0 = 0.15, 0.15
     rows: list[dict[str, Any]] = []
-    n = 1
-    for x in (0.05, 0.15, 0.25):
-        for y in (0.10, 0.20):
+    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
+        rows.append(
+            {
+                "sensor_id": f"P_f_{tag}",
+                "kind": "pressure",
+                "x_m": x,
+                "y_m": y0,
+                "z_m": z0,
+                "continuum": "fracture",
+                "sigma": float(sigma_p_fracture),
+            }
+        )
+    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
+        rows.append(
+            {
+                "sensor_id": f"P_m_{tag}",
+                "kind": "pressure",
+                "x_m": x,
+                "y_m": y0,
+                "z_m": z0,
+                "continuum": "matrix",
+                "sigma": SIGMA_P,
+            }
+        )
+    rows.append({"sensor_id": "S_f_mid", "kind": "sg", "x_m": 0.15, "y_m": y0, "z_m": z0, "continuum": "fracture", "sigma": SIGMA_S})
+    rows.append({"sensor_id": "S_m_mid", "kind": "sg", "x_m": 0.15, "y_m": y0, "z_m": z0, "continuum": "matrix", "sigma": SIGMA_S})
+    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
+        rows.append(
+            {
+                "sensor_id": f"S_bulk_{tag}",
+                "kind": "sg",
+                "x_m": x,
+                "y_m": y0,
+                "z_m": z0,
+                "continuum": "bulk",
+                "sigma": SIGMA_S,
+            }
+        )
+    return rows
+
+
+def m1c_sensor_rows() -> list[dict[str, Any]]:
+    """Instrument-R layout: 9 fracture-P at 2 kPa plus matrix-P and Sg."""
+    z0 = 0.15
+    rows: list[dict[str, Any]] = []
+    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
+        for i, y in enumerate((0.075, 0.15, 0.225)):
             rows.append(
                 {
-                    "sensor_id": f"P{n:03d}",
+                    "sensor_id": f"P_f_{tag}{i}",
                     "kind": "pressure",
                     "x_m": x,
                     "y_m": y,
-                    "z_m": 0.15,
-                    "continuum": "bulk",
+                    "z_m": z0,
+                    "continuum": "fracture",
                     "sigma": SIGMA_P,
                 }
             )
-            n += 1
-    n = 1
-    for x in (0.05, 0.15, 0.25):
-        for y in (0.075, 0.15, 0.225):
-            rows.append(
-                {
-                    "sensor_id": f"S{n:03d}",
-                    "kind": "sw",
-                    "x_m": x,
-                    "y_m": y,
-                    "z_m": 0.15,
-                    "continuum": "bulk",
-                    "sigma": SIGMA_S,
-                }
-            )
-            n += 1
+        rows.append(
+            {
+                "sensor_id": f"P_m_{tag}",
+                "kind": "pressure",
+                "x_m": x,
+                "y_m": 0.15,
+                "z_m": z0,
+                "continuum": "matrix",
+                "sigma": SIGMA_P,
+            }
+        )
+    rows.append({"sensor_id": "S_f_mid", "kind": "sg", "x_m": 0.15, "y_m": 0.15, "z_m": z0, "continuum": "fracture", "sigma": SIGMA_S})
+    rows.append({"sensor_id": "S_m_mid", "kind": "sg", "x_m": 0.15, "y_m": 0.15, "z_m": z0, "continuum": "matrix", "sigma": SIGMA_S})
+    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
+        rows.append(
+            {
+                "sensor_id": f"S_bulk_{tag}",
+                "kind": "sg",
+                "x_m": x,
+                "y_m": 0.15,
+                "z_m": z0,
+                "continuum": "bulk",
+                "sigma": SIGMA_S,
+            }
+        )
     return rows
+
+
+def sensors_from_rows(rows: Iterable[dict[str, Any]]) -> list[Sensor]:
+    out: list[Sensor] = []
+    for r in rows:
+        out.append(
+            Sensor(
+                name=str(r["sensor_id"]),
+                kind=str(r["kind"]),
+                x=float(r["x_m"]),
+                y=float(r["y_m"]),
+                z=float(r["z_m"]),
+                sigma=float(r["sigma"]),
+                medium=str(r["continuum"]),
+            )
+        )
+    return out
 
 
 def write_sensors_csv(path: Path, rows: Iterable[dict[str, Any]]) -> None:
@@ -163,6 +242,21 @@ def spatial_holdout(sensors: list[Sensor], *, frac: float = 0.20, seed: int = 3)
     return held
 
 
+def set_inject_rate(twin: DigitalTwin, q_inj: float) -> None:
+    for c in twin.experiment.controls:
+        if c.port_name == "INJ" and c.kind == "rate":
+            c.values[:] = float(q_inj)
+
+
+def history_report_times(t_end: float, n_times: int = 5) -> NDArray[np.float64]:
+    """Early sample plus ``n_times`` points in (0, t_end]. First obs at t=3 s buries C_f."""
+    t_end = float(t_end)
+    n_times = max(int(n_times), 1)
+    early = min(0.5, 0.08 * t_end)
+    rest = np.linspace(0.0, t_end, n_times + 1)[1:]
+    return np.unique(np.concatenate((np.array([early], dtype=float), rest)))
+
+
 def _sample_sensor(twin: DigitalTwin, sensor: Sensor, traj, t: float) -> float:
     st = traj.state_at(t)
     rates, bhp = traj.rates_and_bhp_at(t)
@@ -178,6 +272,7 @@ def generate_truth(
     case: str = "B",
     seed: int = 3,
     outlier_frac: float = 0.05,
+    n_times: int = 5,
 ) -> dict[str, Any]:
     """Run F(θ_true), sample H, optionally add noise / outliers. Cases A/B/C."""
     case = str(case).strip().upper()
@@ -189,11 +284,7 @@ def generate_truth(
     else:
         theta_true = twin.parameterization.encode(np.array([float(cf_true)], dtype=float))
     t_end = float(twin.experiment.history_end_s or 6.0)
-    times = twin.experiment.all_times_s()
-    times = np.asarray(times, dtype=float)
-    times = times[(times > 0.0) & (times <= t_end + 1.0e-12)]
-    if times.size == 0:
-        times = np.linspace(max(t_end / 2.0, 1.0e-3), t_end, 2)
+    times = history_report_times(t_end, n_times=int(n_times))
     traj = twin.simulate(parameters=theta_true, t_end=t_end, report_times=times)
     last = traj.states[-1]
     held = spatial_holdout(list(twin.experiment.sensors), seed=seed)
@@ -293,7 +384,10 @@ def physical_from_theta(twin: DigitalTwin, theta: NDArray[np.float64]) -> dict[s
 
 
 def offline_gates(report: dict[str, Any]) -> dict[str, Any]:
-    """Noiseless: Cf <5%, Tmf <10%, holdout_ratio <1. Noisy: 15%/25%/0.7."""
+    """Noiseless: Cf <5%, Tmf <10%, holdout_ratio <1. Noisy: 15%/25%/0.7.
+
+    Optional M1 stability / detectability: ``fail_rate`` < 5% and ``d_cf`` ≥ 2.
+    """
     cf_true = float(report["cf_true"])
     cf_p50 = float(report["cf_p50"])
     cf_rel = abs(cf_p50 - cf_true) / max(abs(cf_true), 1.0e-30)
@@ -310,6 +404,12 @@ def offline_gates(report: dict[str, Any]) -> dict[str, Any]:
         cf_ok = cf_rel < NOISY_CF_TOL
         tmf_ok = tmf_rel < NOISY_TMF_TOL
         rmse_ok = ratio < HOLDOUT_RMSE_RATIO
+    fail_ok = True
+    if "fail_rate" in report:
+        fail_ok = float(report["fail_rate"]) < FAIL_RATE_MAX and not bool(report.get("repeated_fail", False))
+    detect_ok = True
+    if "d_cf" in report and report["d_cf"] is not None:
+        detect_ok = float(report["d_cf"]) >= D_CF_MIN
     return {
         "cf_rel_error": cf_rel,
         "tmf_rel_error": tmf_rel,
@@ -317,8 +417,60 @@ def offline_gates(report: dict[str, Any]) -> dict[str, Any]:
         "tmf_ok": bool(tmf_ok),
         "holdout_rmse_ratio": ratio,
         "rmse_ok": bool(rmse_ok),
-        "pass": bool(cf_ok and tmf_ok and rmse_ok),
+        "fail_ok": bool(fail_ok),
+        "detect_ok": bool(detect_ok),
+        "pass": bool(cf_ok and tmf_ok and rmse_ok and fail_ok and detect_ok),
     }
+
+
+def cf_detectability(
+    twin: DigitalTwin,
+    theta: NDArray[np.float64],
+    series: list[ObservationSeries] | None = None,
+    *,
+    rel: float = 0.05,
+) -> float:
+    """Whitened SNR of a ``rel`` perturbation in C_f: sqrt(dy^T R^{-1} dy)."""
+    from reservoir_backend.twin.offline import stack_observations
+
+    series = series if series is not None else [o for o in twin.experiment.observations if not o.holdout]
+    if not series:
+        series = list(twin.experiment.observations)
+    if not series:
+        return 0.0
+    d = stack_observations(series)
+    t_end = float(twin.experiment.history_end_s or float(np.max(d.times)))
+    theta0 = np.asarray(theta, dtype=float).ravel()
+    phys = physical_from_theta(twin, theta0)
+    cf = float(phys["cf_m2"])
+    n_th = int(twin.parameterization.n_params)
+    if n_th >= 2:
+        tmf = float(phys["tmf_multiplier"])
+        theta_hi = twin.parameterization.encode(np.array([cf * (1.0 + float(rel)), tmf], dtype=float))
+    else:
+        theta_hi = twin.parameterization.encode(np.array([cf * (1.0 + float(rel))], dtype=float))
+    y0 = np.asarray(twin._forward_vector(theta0, series, t_end=t_end), dtype=float)
+    y1 = np.asarray(twin._forward_vector(theta_hi, series, t_end=t_end), dtype=float)
+    dy = (y1 - y0) / np.maximum(d.sigma, 1.0e-12)
+    return float(np.sqrt(np.sum(dy * dy)))
+
+
+def ensemble_pressure_std(ensemble) -> NDArray[np.float64] | None:
+    """Fracture-pressure std across member DualState, or None if not available."""
+    duals = getattr(ensemble, "dual_states", None) if ensemble is not None else None
+    if not duals:
+        return None
+    rows = []
+    for d in duals:
+        if d is None:
+            continue
+        frac = getattr(d, "fracture", None)
+        p = getattr(frac, "pressure", None) if frac is not None else getattr(d, "pressure", None)
+        if p is not None:
+            rows.append(np.asarray(p, dtype=float).ravel())
+    if len(rows) < 2:
+        return None
+    return np.std(np.stack(rows, axis=0), axis=0, ddof=1)
 
 
 def sensor_information(

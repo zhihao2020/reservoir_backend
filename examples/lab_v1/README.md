@@ -3,12 +3,16 @@
 This is the **unique V1 product case**. `examples/lab/lab_cf.yaml` is a coarse
 development fixture. `lab_apply.yaml` is a leftover two-region waterflood demo.
 
+`make_lab_v1_face_twin()` (0.30×0.20×0.10 m, 4×2×1) is a **scientific
+diagnostic fixture (M1a)**, not a coarsened 30 cm product model. M1b is
+`case_dev.yaml` (0.30³ m, 4×4×2). Do not treat tiny recovery as product M1.
+
 ## What V1 does
 
 Inputs: \(Q_{inj}(t)\), \(P_{prod}(t)\), \(P_{obs}\), \(S_{obs}(\sigma,x,y,z,t)\).
 
-Outputs: reconstructed \(p\), \(S_w,S_o,S_g\), \(z_i\), and a scalar \(C_f\)
-posterior (`m = log(C_f / C_ref)`).
+Outputs: reconstructed \(p\), \(S_w,S_o,S_g\), \(z_i\), and
+\(\theta=(\log C_f,\log\beta_{mf})\) with \(T_{mf}=\beta_{mf}T_{mf}^{ref}\).
 
 Saturation is already inverted upstream. Raw Archie / EM / acoustic inversion,
 PINN, SRV, DFM/EDFM, AMR, thermal, zonal \(C_f\), per-cell \(K\), and fracture
@@ -18,11 +22,11 @@ half-length are out of scope.
 
 | File | Role |
 |------|------|
-| `case.yaml` | 30×30×30 product spec. Do **not** run ES-MDA on this in CI. |
-| `case_dev.yaml` | 4×4×2 twin of the same physics for tests and scripts `--dev`. |
+| `case.yaml` | 30×30×30 product spec. Frozen until M1c. Do **not** run ES-MDA on this in CI. |
+| `case_dev.yaml` | M1b: 30 cm cube, 4×4×2, fracture-P / matrix-P / \(S_g\), Na=5. |
 | `controls.csv` | Face inject rate + produce pressure. |
-| `sensors.csv` | 18 pressure + 75 bulk saturation, each with \(\sigma\). |
-| `sensors_dev.csv` | Sparse sensors for `case_dev`. |
+| `sensors.csv` | Product 30³ contract (bulk, 2 kPa, \(S_w\)). Not the M1b fixture. |
+| `sensors_dev.csv` | M1b sensors: fracture-P 30 Pa (algorithmic), matrix-P 2 kPa, \(S_g\). |
 | `pvt.yaml` | Published C1–nC10 EXAMPLE card. |
 | `pvt_lumped.yaml` | 4 pseudo-component characterization template. |
 | `truth/` | Written by `scripts/lab_v1_generate_truth.py`. |

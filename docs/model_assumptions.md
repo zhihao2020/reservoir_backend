@@ -73,7 +73,7 @@ V1 明确不做：Archie / EM / acoustic inversion、PINN、SRV、DFM/EDFM、AMR
 ## 反演假设
 
 - 控制量与观测分离：一口端口同一时刻不能既定流量又定压并两边都当数据
-- 实验室过渡路径：2-region log K，不是粗网格 / 逐格 K。V1 目标是标量 \(C_f\)（`LogConductivityParameterization`）
+- 实验室过渡路径：2-region log K，不是粗网格 / 逐格 K。V1 目标是 \(\theta=(\log C_f,\log\beta_{mf})\)。`make_lab_v1_face_twin` 是 M1a 诊断夹具（0.30×0.20×0.10），不是 30 cm 产品的网格粗化；M1b 是 `examples/lab_v1/case_dev.yaml`
 - 层状用 `region_axis: z` 和 `n_regions`。给了 `region_map` 就用图。标量 \(C_f\) 用 `parameterization: log_conductivity`
 - 已知高渗体（层、通道）用对比度 \(\theta=(\log k_{\mathrm{lo}},\log(k_{\mathrm{hi}}/k_{\mathrm{lo}}))\)，\(k_{\mathrm{hi}}\ge k_{\mathrm{lo}}\)。符号是构造，数值才反演
 - 正演默认隐式输运（两相和三相）。YAML `physics.transport: explicit` 可关。不是为了把场贴成 IMEX

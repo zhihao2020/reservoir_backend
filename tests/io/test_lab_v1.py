@@ -19,12 +19,19 @@ def test_load_lab_v1_dev_face_ports_and_sensors() -> None:
     assert twin.ports[0].control == "rate"
     assert twin.ports[1].control == "pressure"
     kinds = {s.kind for s in twin.experiment.sensors}
+    media = {s.medium for s in twin.experiment.sensors}
     assert "pressure" in kinds
-    assert "saturation" in kinds
+    assert "gas_saturation" in kinds
+    assert "saturation" not in kinds
+    assert "fracture" in media and "matrix" in media and "bulk" in media
     for s in twin.experiment.sensors:
         assert s.sigma > 0.0
-        if s.kind != "pressure":
-            assert s.medium == "bulk"
+        if s.kind == "pressure" and s.medium == "fracture":
+            assert s.sigma < 200.0
+        if s.kind == "pressure" and s.medium == "matrix":
+            assert s.sigma >= 1.0e3
+    assert twin.inverse.assimilation_steps == 5
+    assert twin.inverse.outlier_nsigma == 120.0
 
 
 def test_load_lab_v1_product_spec_is_30_cubed() -> None:

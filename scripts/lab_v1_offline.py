@@ -19,7 +19,9 @@ from reservoir_backend.twin.lab_v1 import (
     CF_TRUE_M2,
     TMF_PRIOR_FACTOR,
     TMF_TRUE,
+    cf_detectability,
     cf_from_theta,
+    ensemble_pressure_std,
     generate_truth,
     load_lab_v1,
     offline_gates,
@@ -42,17 +44,24 @@ def run_offline(
     case: str = "B",
     noise: bool = False,
     cf_true: float = CF_TRUE_M2,
+    tmf_true: float = TMF_TRUE,
     ensemble_size: int | None = None,
+    seed: int | None = None,
     out: Path | None = None,
     tiny: bool = False,
+    skip_detectability: bool = False,
+    q_inj: float | None = None,
+    sigma_p_fracture: float | None = None,
 ) -> dict:
     if tiny:
         from reservoir_backend.synthetic import make_lab_v1_face_twin
 
         syn = make_lab_v1_face_twin(
             cf_true=cf_true,
+            tmf_true=float(tmf_true),
             ensemble_size=int(ensemble_size or 8),
             assimilation_steps=5,
+            seed=int(seed if seed is not None else 3),
             with_saturation=str(case).upper() != "A",
             noise_p=2.0e3 if noise else 0.0,
             noise_s=0.03 if noise else 0.0,
@@ -68,7 +77,20 @@ def run_offline(
         prior_tmf = float(prior_phys["tmf_multiplier"])
     else:
         twin = load_lab_v1(dev=dev)
-        truth = generate_truth(twin, cf_true=cf_true, tmf_true=TMF_TRUE, noise=noise, case=case)
+        if sigma_p_fracture is not None:
+            from dataclasses import replace
+
+            twin.experiment.sensors = [
+                replace(sen, sigma=float(sigma_p_fracture))
+                if sen.kind == "pressure" and sen.medium == "fracture"
+                else sen
+                for sen in twin.experiment.sensors
+            ]
+        if q_inj is not None:
+            from reservoir_backend.twin.lab_v1 import set_inject_rate
+
+            set_inject_rate(twin, float(q_inj))
+        truth = generate_truth(twin, cf_true=cf_true, tmf_true=float(tmf_true), noise=noise, case=case)
     if not tiny:
         prior_cf = float(cf_true) * float(CF_PRIOR_FACTOR)
         prior_tmf = float(TMF_TRUE) * float(TMF_PRIOR_FACTOR)
@@ -82,6 +104,10 @@ def run_offline(
         twin.inverse.prior_mean = np.asarray(twin.parameterization.prior_mean, dtype=float)
     if ensemble_size is not None:
         twin.inverse.ensemble_size = int(ensemble_size)
+    if seed is not None:
+        twin.inverse.seed = int(seed)
+    if twin.inverse.n_workers is None:
+        twin.inverse.n_workers = min(8, int(twin.inverse.ensemble_size))
     post = HistoryMatchWorkflow().run(twin)
     phys_members = [
         physical_from_theta(twin, post.ensemble.theta_members[j]) for j in range(post.ensemble.theta_members.shape[0])
@@ -100,6 +126,14 @@ def run_offline(
     hold_post = float(post.holdout_rmse)
     ratio = hold_post / max(hold_prior, 1.0e-12) if np.isfinite(hold_prior) else float("nan")
     last = post.history.states[-1]
+    d_cf = None
+    if not skip_detectability:
+        assim_series = [o for o in twin.experiment.observations if not o.holdout] or list(twin.experiment.observations)
+        theta_true = np.asarray(
+            truth.get("theta_true", twin.parameterization.encode(np.array([cf_true, tmf_true], dtype=float))),
+            dtype=float,
+        ).ravel()
+        d_cf = cf_detectability(twin, theta_true, assim_series)
     report = {
         "gate": "lab_v1_offline",
         "dev": bool(dev),
@@ -119,12 +153,17 @@ def run_offline(
         "cf_std": float(np.std(cf_members, ddof=1)) if cf_members.size > 1 else 0.0,
         "ensemble_size": int(post.ensemble.theta_members.shape[0]),
         "n_forward": int(post.n_forward),
+        "n_failed_forward": int(getattr(post, "n_failed_forward", 0)),
+        "fail_rate": float(getattr(post, "fail_rate", 0.0)),
+        "repeated_fail": bool(getattr(post, "repeated_fail", False)),
         "assimilate_rmse": float(post.assimilate_rmse),
         "holdout_rmse_prior": hold_prior,
         "holdout_rmse_posterior": hold_post,
         "holdout_rmse_ratio": ratio,
+        "d_cf": d_cf,
         "misfit": [float(x) for x in post.misfit],
         "notes": list(post.notes),
+        "field_uq": "parameter ensemble; fracture-pressure std from member DualState when available",
     }
     report["gates"] = offline_gates(report)
     dest = Path(out or (ROOT / "results" / "lab_v1" / "offline"))
@@ -146,12 +185,15 @@ def run_offline(
     np.save(dest / "cf_ensemble.npy", cf_members)
     np.save(dest / "tmf_ensemble.npy", tmf_members)
     np.savez(dest / "pressure_mean.npz", pressure=last.pressure)
-    np.savez(dest / "pressure_std.npz", pressure=np.zeros_like(last.pressure))
+    p_std = ensemble_pressure_std(post.ensemble)
+    if p_std is None:
+        p_std = np.full_like(last.pressure, np.nan)
+    np.savez(dest / "pressure_std.npz", pressure=p_std)
     np.savez(dest / "sw_mean.npz", sw=last.sw)
-    np.savez(dest / "sw_std.npz", sw=np.zeros_like(last.sw))
+    np.savez(dest / "sw_std.npz", sw=np.full_like(last.sw, np.nan))
     sg = last.sg if last.sg is not None else np.zeros_like(last.sw)
     np.savez(dest / "sg_mean.npz", sg=sg)
-    np.savez(dest / "sg_std.npz", sg=np.zeros_like(sg))
+    np.savez(dest / "sg_std.npz", sg=np.full_like(sg, np.nan))
     (dest / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     with (dest / "residuals.csv").open("w", encoding="utf-8") as fh:
         fh.write("assimilate_rmse,holdout_rmse\n")
@@ -167,8 +209,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--case", choices=["A", "B", "C"], default="B")
     p.add_argument("--noise", action="store_true")
     p.add_argument("--cf-true", type=float, default=CF_TRUE_M2)
+    p.add_argument("--tmf-true", type=float, default=TMF_TRUE)
     p.add_argument("--ne", type=int, default=None)
+    p.add_argument("--seed", type=int, default=None)
     p.add_argument("--tiny", action="store_true", help="3×2×1 face-port twin (CI / recovery gate)")
+    p.add_argument("--skip-detect", action="store_true")
+    p.add_argument("--q-inj", type=float, default=None)
+    p.add_argument("--sigma-p-fracture", type=float, default=None)
     p.add_argument("--out", type=Path, default=None)
     args = p.parse_args(argv)
     if args.product:
@@ -178,9 +225,14 @@ def main(argv: list[str] | None = None) -> int:
         case=str(args.case),
         noise=bool(args.noise),
         cf_true=float(args.cf_true),
+        tmf_true=float(args.tmf_true),
         ensemble_size=args.ne,
+        seed=args.seed,
         out=args.out,
         tiny=bool(args.tiny),
+        skip_detectability=bool(args.skip_detect),
+        q_inj=args.q_inj,
+        sigma_p_fracture=args.sigma_p_fracture,
     )
     print(json.dumps(report, indent=2))
     return 0 if report["gates"]["pass"] else 1
