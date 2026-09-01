@@ -1,5 +1,5 @@
 from reservoir_backend.io.case import load_case
-from reservoir_backend.twin.lab_v1 import generate_truth, spatial_holdout, zone_of_x
+from reservoir_backend.twin.lab_v1 import spatial_holdout, zone_of_x
 
 
 def test_case_abc_share_truth_and_spatial_holdout() -> None:

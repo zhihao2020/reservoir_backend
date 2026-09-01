@@ -27,6 +27,7 @@ half-length are out of scope.
 | `controls.csv` | Face inject rate + produce pressure. |
 | `sensors.csv` | Product 30³ contract (bulk, 2 kPa, \(S_w\)). Not the M1b fixture. |
 | `sensors_dev.csv` | M1b sensors: fracture-P 30 Pa (algorithmic), matrix-P 2 kPa, \(S_g\). |
+| `experiment_design.yaml` | M1c lab envelope for `scripts/lab_v1_experiment_design.py`. |
 | `pvt.yaml` | Published C1–nC10 EXAMPLE card. |
 | `pvt_lumped.yaml` | 4 pseudo-component characterization template. |
 | `truth/` | Written by `scripts/lab_v1_generate_truth.py`. |
@@ -55,3 +56,41 @@ Product 30³ forward (not ensemble):
 ```bash
 python scripts/lab_v1_gate.py
 ```
+
+## M1c experiment-design gate
+
+Do **not** retune ES-MDA. The gate is joint \(H+R+u(t)\) under a laboratory
+envelope, not “the solver ran”. Each candidate is a handful of deterministic
+forwards.
+
+```bash
+python scripts/lab_v1_experiment_design.py --yaml examples/lab_v1/experiment_design.yaml
+```
+
+Exit code 1 with `n_identifiable=0` is the intended scientific result.
+
+H must be labeled: `bulk_gauges` (real default), `tapped_channel` (assumption),
+`dp_transducer` (write the bench spec; never invent 30 Pa). Two independent
+2 kPa absolute gauges give \(\sigma_{\Delta P}\approx 2.83\,\mathrm{kPa}\);
+subtracting them does not improve SNR. \(R\) is a covariance (bias +
+\(\tau=5\,\mathrm{s}\) temporal correlation), not \(\mathrm{diag}(\sigma^2)\).
+
+| design | H | \(D_{C_f}\) | \(D_{T_{mf}}\) | cond | ΔPmax | PV | feasible | \(D_{C_f}>2\) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| constant | bulk | 0.019 | 0.92 | 1555 | 2.1 kPa | 0.037 | yes | no |
+| constant_tapped | tapped | 0.075 | 0.03 | 13320 | 2.1 kPa | 0.037 | yes | no |
+| long_constant | bulk | bound \(<1\) | — | — | ~2.1 kPa | \(<3\) | yes (bound) | no |
+| pulse_1 | bulk | bound \(\ll 2\) | — | — | ~2.1 kPa | low | yes (bound) | no |
+| pulse_rest | bulk | 0.021 | 7.68 | 35259 | 2.1 kPa | 0.015 | yes | no |
+| pulse_rest_tapped | tapped | 0.095 | 0.05 | 400 | 2.1 kPa | 0.015 | yes | no |
+| pulse_rest_dp | DP 200 Pa | **0.14** | 7.81 | 819 | 2.1 kPa | 0.015 | yes | no |
+| multistep | bulk | bound \(\ll 2\) | — | — | ~2.1 kPa | low | yes (bound) | no |
+| legacy_m1b_rate | tapped | 0.075 | 0.03 | 10946 | 2.1 kPa | **6.7** | **no** | no |
+
+At \(q_{\max}=100\,\mathrm{mL/min}\) the sample \(\Delta P\approx 2.1\,\mathrm{kPa}\),
+so a 5% \(C_f\) change is ~100 Pa against a 2 kPa absolute gauge. Steady \(C_f\)
+is one \(\Delta P\), not a longer time series of the same drop. Pulse helps
+\(T_{mf}\), not \(C_f\). **Accepted conclusion:** 2 kPa instrument + 30 cm
+apparatus cannot support 5% \(C_f\) inversion. Change the instrument, the
+excitation hardware, or the \(C_f\) tolerance — not ES-MDA. M2 and 30³ stay
+frozen. T2 / seed coverage wait for a real observable experiment.

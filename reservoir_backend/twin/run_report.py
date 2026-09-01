@@ -84,8 +84,6 @@ def observation_residuals(
     series: list | None = None,
 ) -> list[dict[str, Any]]:
     """Whitened residuals per assimilating observation point."""
-    from reservoir_backend.domain.types import ObservationSeries
-
     if series is None:
         series = twin.experiment.assimilate_observations()
     if not series:

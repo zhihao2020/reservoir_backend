@@ -17,7 +17,6 @@ from reservoir_backend.domain.types import ObservationSeries
 from reservoir_backend.exceptions import AssimilationError, PhysicsConvergenceError, TimeStepUnderflow
 from reservoir_backend.inverse.ensemble import (
     replace_failed_member_bundle,
-    replace_failed_members,
     sample_log_prior,
 )
 from reservoir_backend.inverse.esmda import esmda_update, inflation_schedule

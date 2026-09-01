@@ -1,7 +1,5 @@
 """Corner-point COORD/ZCORN: volumes + two-point T; Cartesian recovery."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import yaml

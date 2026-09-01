@@ -14,7 +14,6 @@ from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.inverse.lm import identifiability, run_lm
 from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble, sample_posterior_ensemble
 from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
-from reservoir_backend.inverse.log_cf_tmf import LogCfTmfParameterization
 from reservoir_backend.inverse.parameterization import (
     ContrastParameterization,
     RegionParameterization,
@@ -625,7 +624,6 @@ class DigitalTwin:
             for i, t in enumerate(series.times_s):
                 if not mask[i]:
                     continue
-                idx = int(np.argmin(np.abs(traj.times_s - t)))
                 rates, bhp = traj.rates_and_bhp_at(float(t))
                 pred.append(self.operator.sample(sensor, traj.state_at(float(t)), port_rates=rates, port_bhp=bhp))
                 j = int(np.argmin(np.abs(ref.times_s - t)))

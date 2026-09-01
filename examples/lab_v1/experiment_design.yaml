@@ -1,0 +1,106 @@
+# M1c laboratory envelope + staged designs.
+# Fill instrument / envelope from the bench; these are assumed until then.
+# “The solver ran” is not feasibility. Do not invent a 30 Pa differential spec.
+#
+# H must be stated, not silently copied from DPDP continua:
+#   bulk_gauges     — absolute gauges see a bulk/mixture pressure (real default)
+#   tapped_channel  — probes are plumbed into the fracture channel (P_f); an assumption
+#   dp_transducer   — plus a real ΔP instrument; write its spec, never 30 Pa
+
+instrument:
+  h: bulk_gauges
+  pressure_sigma_pa: 2000
+  saturation_sigma: 0.03
+  rho_bias: 0.30
+  tau_s: 5.0
+  # dp_sigma_pa: only if a differential-pressure transducer exists on the bench.
+
+envelope:
+  q_max_m3_s: 1.67e-6   # 100 mL/min
+  p_min_pa: 5.0e6
+  p_max_pa: 2.5e7
+  dp_safe_pa: 5.0e6
+  pv_max: 3.0
+  t_max_s: 1800
+
+# Single-design form (also accepted):
+# controls:
+#   stages:
+#     - duration_s: 10
+#       q_inj: 1.67e-6
+#     - duration_s: 20
+#       q_inj: 0.0
+
+h: bulk_gauges
+
+designs:
+  - name: constant
+    h: bulk_gauges
+    stages:
+      - {duration_s: 60, q_inj: 1.67e-6}
+    note: "H=bulk gauges (real default). 60 s at q_max=100 mL/min. 2 kPa abs."
+
+  - name: constant_tapped
+    h: tapped_channel
+    stages:
+      - {duration_s: 60, q_inj: 1.67e-6}
+    note: "ASSUMPTION: probes tap the fracture channel. Same u(t)."
+
+  - name: long_constant
+    h: bulk_gauges
+    evaluate: false
+    stages:
+      - {duration_s: 1800, q_inj: 1.67e-6}
+    note: "t_max constant q_max. Not forwarded: steady Cf is one ΔP; bound D_Cf<2."
+
+  - name: pulse_1
+    h: bulk_gauges
+    evaluate: false
+    stages:
+      - {duration_s: 10, q_inj: 1.67e-6}
+      - {duration_s: 50, q_inj: 0.0}
+    note: "short pulse then rest. Same q_max ΔP ceiling."
+
+  - name: pulse_rest
+    h: bulk_gauges
+    stages:
+      - {duration_s: 10, q_inj: 1.67e-6}
+      - {duration_s: 20, q_inj: 0.0}
+      - {duration_s: 20, q_inj: 3.34e-7}
+      - {duration_s: 10, q_inj: 1.67e-6}
+    note: "pulse / rest / moderate / pulse. H=bulk gauges."
+
+  - name: pulse_rest_tapped
+    h: tapped_channel
+    stages:
+      - {duration_s: 10, q_inj: 1.67e-6}
+      - {duration_s: 20, q_inj: 0.0}
+      - {duration_s: 20, q_inj: 3.34e-7}
+      - {duration_s: 10, q_inj: 1.67e-6}
+    note: "same u(t); ASSUMPTION tapped fracture channel."
+
+  - name: pulse_rest_dp
+    h: dp_transducer
+    dp_sigma_pa: 200.0
+    stages:
+      - {duration_s: 10, q_inj: 1.67e-6}
+      - {duration_s: 20, q_inj: 0.0}
+      - {duration_s: 20, q_inj: 3.34e-7}
+      - {duration_s: 10, q_inj: 1.67e-6}
+    note: "same u(t); bulk gauges + hypothetical 200 Pa DP transducer (must match the bench)."
+
+  - name: multistep
+    h: bulk_gauges
+    evaluate: false
+    stages:
+      - {duration_s: 15, q_inj: 4.175e-7}
+      - {duration_s: 15, q_inj: 8.35e-7}
+      - {duration_s: 15, q_inj: 1.67e-6}
+      - {duration_s: 15, q_inj: 8.35e-7}
+    note: "four rate steps at or below q_max. Same ΔP ceiling."
+
+  - name: legacy_m1b_rate
+    h: tapped_channel
+    stages:
+      - {duration_s: 60, q_inj: 3.0e-4}
+    note: "M1b q=3e-4 for 60 s. Expected infeasible (PV and q_max)."

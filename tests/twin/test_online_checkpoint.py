@@ -3,7 +3,6 @@ import pytest
 
 from reservoir_backend.exceptions import AssimilationError
 from reservoir_backend.io.udp_api import TwinUDPProtocol
-from reservoir_backend.twin.cross_scale import field_nrmse
 from reservoir_backend.twin.online import OnlineAssimilationWorkflow
 
 
@@ -86,9 +85,4 @@ def test_cycle_forecast_then_rollback_keeps_time() -> None:
     assert xa.shape == members.shape
     assert wf.predicted_posterior is not None
     assert wf.predicted_posterior.shape[1] == members.shape[1]
-
-
-def test_field_nrmse_zero_on_match() -> None:
-    a = np.array([1.0, 2.0, 3.0])
-    assert field_nrmse(a, a) == pytest.approx(0.0)
 

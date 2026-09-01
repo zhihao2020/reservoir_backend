@@ -1,4 +1,4 @@
-from reservoir_backend.twin.lab_v1 import D_CF_MIN, cf_detectability, offline_gates
+from reservoir_backend.twin.lab_v1 import D_CF_MIN, offline_gates
 
 
 def test_detectability_gate_in_offline_gates() -> None:

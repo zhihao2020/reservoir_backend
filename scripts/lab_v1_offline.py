@@ -20,7 +20,6 @@ from reservoir_backend.twin.lab_v1 import (
     TMF_PRIOR_FACTOR,
     TMF_TRUE,
     cf_detectability,
-    cf_from_theta,
     ensemble_pressure_std,
     generate_truth,
     load_lab_v1,

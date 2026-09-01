@@ -9,7 +9,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -31,11 +31,9 @@ NOISY_CF_TOL = 0.15
 NOISY_TMF_TOL = 0.25
 HOLDOUT_RMSE_RATIO = 0.70
 SIGMA_P = 2.0e3
-SIGMA_P_FRACTURE_M1B = 30.0
 SIGMA_S = 0.03
 D_CF_MIN = 2.0
 FAIL_RATE_MAX = 0.05
-SAT_KINDS = frozenset({"saturation", "gas_saturation", "oil_saturation"})
 
 
 def case_path(*, dev: bool = False) -> Path:
@@ -49,166 +47,6 @@ def zone_of_x(x: float) -> str:
     if float(x) < 0.20:
         return "middle"
     return "outlet"
-
-
-def product_sensor_rows() -> list[dict[str, Any]]:
-    """18 pressure + 75 bulk saturation sensors on the 30 cm cube."""
-    rows: list[dict[str, Any]] = []
-    n = 1
-    for x in (0.05, 0.15, 0.25):
-        for y in (0.075, 0.15, 0.225):
-            for z in (0.10, 0.20):
-                rows.append(
-                    {
-                        "sensor_id": f"P{n:03d}",
-                        "kind": "pressure",
-                        "x_m": x,
-                        "y_m": y,
-                        "z_m": z,
-                        "continuum": "bulk",
-                        "sigma": SIGMA_P,
-                    }
-                )
-                n += 1
-    n = 1
-    for x in (0.05, 0.10, 0.15, 0.20, 0.25):
-        for y in (0.05, 0.10, 0.15, 0.20, 0.25):
-            for z in (0.075, 0.15, 0.225):
-                rows.append(
-                    {
-                        "sensor_id": f"S{n:03d}",
-                        "kind": "sw",
-                        "x_m": x,
-                        "y_m": y,
-                        "z_m": z,
-                        "continuum": "bulk",
-                        "sigma": SIGMA_S,
-                    }
-                )
-                n += 1
-    return rows
-
-
-def dev_sensor_rows(*, sigma_p_fracture: float = SIGMA_P_FRACTURE_M1B) -> list[dict[str, Any]]:
-    """M1b 30 cm / 4×4×2 contract: fracture-P, matrix-P, Sg. Three x-zones.
-
-    ``sigma_p_fracture=80`` is algorithmic identifiability (M1b), not the
-    instrument contract. M1c must call this with ``SIGMA_P`` (2 kPa).
-    """
-    y0, z0 = 0.15, 0.15
-    rows: list[dict[str, Any]] = []
-    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
-        rows.append(
-            {
-                "sensor_id": f"P_f_{tag}",
-                "kind": "pressure",
-                "x_m": x,
-                "y_m": y0,
-                "z_m": z0,
-                "continuum": "fracture",
-                "sigma": float(sigma_p_fracture),
-            }
-        )
-    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
-        rows.append(
-            {
-                "sensor_id": f"P_m_{tag}",
-                "kind": "pressure",
-                "x_m": x,
-                "y_m": y0,
-                "z_m": z0,
-                "continuum": "matrix",
-                "sigma": SIGMA_P,
-            }
-        )
-    rows.append({"sensor_id": "S_f_mid", "kind": "sg", "x_m": 0.15, "y_m": y0, "z_m": z0, "continuum": "fracture", "sigma": SIGMA_S})
-    rows.append({"sensor_id": "S_m_mid", "kind": "sg", "x_m": 0.15, "y_m": y0, "z_m": z0, "continuum": "matrix", "sigma": SIGMA_S})
-    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
-        rows.append(
-            {
-                "sensor_id": f"S_bulk_{tag}",
-                "kind": "sg",
-                "x_m": x,
-                "y_m": y0,
-                "z_m": z0,
-                "continuum": "bulk",
-                "sigma": SIGMA_S,
-            }
-        )
-    return rows
-
-
-def m1c_sensor_rows() -> list[dict[str, Any]]:
-    """Instrument-R layout: 9 fracture-P at 2 kPa plus matrix-P and Sg."""
-    z0 = 0.15
-    rows: list[dict[str, Any]] = []
-    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
-        for i, y in enumerate((0.075, 0.15, 0.225)):
-            rows.append(
-                {
-                    "sensor_id": f"P_f_{tag}{i}",
-                    "kind": "pressure",
-                    "x_m": x,
-                    "y_m": y,
-                    "z_m": z0,
-                    "continuum": "fracture",
-                    "sigma": SIGMA_P,
-                }
-            )
-        rows.append(
-            {
-                "sensor_id": f"P_m_{tag}",
-                "kind": "pressure",
-                "x_m": x,
-                "y_m": 0.15,
-                "z_m": z0,
-                "continuum": "matrix",
-                "sigma": SIGMA_P,
-            }
-        )
-    rows.append({"sensor_id": "S_f_mid", "kind": "sg", "x_m": 0.15, "y_m": 0.15, "z_m": z0, "continuum": "fracture", "sigma": SIGMA_S})
-    rows.append({"sensor_id": "S_m_mid", "kind": "sg", "x_m": 0.15, "y_m": 0.15, "z_m": z0, "continuum": "matrix", "sigma": SIGMA_S})
-    for tag, x in (("in", 0.05), ("mid", 0.15), ("out", 0.25)):
-        rows.append(
-            {
-                "sensor_id": f"S_bulk_{tag}",
-                "kind": "sg",
-                "x_m": x,
-                "y_m": 0.15,
-                "z_m": z0,
-                "continuum": "bulk",
-                "sigma": SIGMA_S,
-            }
-        )
-    return rows
-
-
-def sensors_from_rows(rows: Iterable[dict[str, Any]]) -> list[Sensor]:
-    out: list[Sensor] = []
-    for r in rows:
-        out.append(
-            Sensor(
-                name=str(r["sensor_id"]),
-                kind=str(r["kind"]),
-                x=float(r["x_m"]),
-                y=float(r["y_m"]),
-                z=float(r["z_m"]),
-                sigma=float(r["sigma"]),
-                medium=str(r["continuum"]),
-            )
-        )
-    return out
-
-
-def write_sensors_csv(path: Path, rows: Iterable[dict[str, Any]]) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["sensor_id", "kind", "x_m", "y_m", "z_m", "continuum", "sigma"]
-    with path.open("w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=fieldnames)
-        w.writeheader()
-        for row in rows:
-            w.writerow({k: row[k] for k in fieldnames})
 
 
 def write_controls_csv(path: Path, *, t_end: float, q_inj: float, p_prod: float) -> None:
@@ -373,10 +211,6 @@ def write_truth_bundle(folder: Path, twin: DigitalTwin, truth: dict[str, Any]) -
     )
 
 
-def cf_from_theta(twin: DigitalTwin, theta: NDArray[np.float64]) -> float:
-    return float(physical_from_theta(twin, theta)["cf_m2"])
-
-
 def physical_from_theta(twin: DigitalTwin, theta: NDArray[np.float64]) -> dict[str, float]:
     from reservoir_backend.twin.offline import physical_from_theta as _phys
 
@@ -451,8 +285,10 @@ def cf_detectability(
         theta_hi = twin.parameterization.encode(np.array([cf * (1.0 + float(rel))], dtype=float))
     y0 = np.asarray(twin._forward_vector(theta0, series, t_end=t_end), dtype=float)
     y1 = np.asarray(twin._forward_vector(theta_hi, series, t_end=t_end), dtype=float)
-    dy = (y1 - y0) / np.maximum(d.sigma, 1.0e-12)
-    return float(np.sqrt(np.sum(dy * dy)))
+    from reservoir_backend.inverse.observation_r import mahalanobis_d, observation_covariance
+
+    r = observation_covariance(list(d.names), d.times, d.sigma, list(d.kinds), rho_bias=0.0, tau_s=None)
+    return mahalanobis_d(y1 - y0, r)
 
 
 def ensemble_pressure_std(ensemble) -> NDArray[np.float64] | None:

@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 
 from reservoir_backend.eos.threads import cap_flash_threads
 from reservoir_backend.io.case import load_case
-from reservoir_backend.twin.lab_v1 import case_path
+from reservoir_backend.twin.lab_v1 import CF_TRUE_M2, TMF_TRUE, case_path
 
 
 def _git_sha() -> str:
@@ -46,8 +46,8 @@ def run_lab_gate(*, dev: bool = True, t_end: float | None = None, threads: int =
     cap_flash_threads(int(threads))
     os.environ["RESERVOIR_FLASH"] = os.environ.get("RESERVOIR_FLASH", "fast")
     twin = load_case(case_path(dev=dev))
-    cf = 1.0e-12
-    theta = twin.parameterization.encode(np.array([cf], dtype=float))
+    phys = np.array([CF_TRUE_M2, TMF_TRUE], dtype=float)[: int(twin.parameterization.n_params)]
+    theta = twin.parameterization.encode(phys)
     t_end = float(twin.physics.dt_init if t_end is None else t_end)
     tracemalloc.start()
     t0 = time.perf_counter()
