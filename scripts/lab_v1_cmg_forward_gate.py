@@ -31,6 +31,8 @@ def main(argv=None) -> int:
     p.add_argument("--export", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "export")
     p.add_argument("--out", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_forward_gate")
     p.add_argument("--wiring", action="store_true", help="spec vs case_dev only; not M2a PASS")
+    p.add_argument("--cf-m2", type=float, default=None, help="theta_true C_f override")
+    p.add_argument("--tmf", type=float, default=None, help="theta_true beta_mf override")
     args = p.parse_args(argv)
     spec = load_alignment_spec()
     twin = load_lab_v1(dev=True)
@@ -50,7 +52,7 @@ def main(argv=None) -> int:
         return 2
 
     truth = load_hidden_truth(hidden)
-    theta = theta_true_from_spec(twin, spec)
+    theta = theta_true_from_spec(twin, spec, cf_m2=args.cf_m2, tmf_multiplier=args.tmf)
     ours = forward_at_theta(twin, theta, truth.times_s)
     report = forward_equivalence_report(ours, truth)
     dest = Path(args.out)

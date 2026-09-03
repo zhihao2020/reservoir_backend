@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -42,6 +42,10 @@ PROVISIONAL_RMSE_SG = 0.05
 # When GEM (Pmax−Pmin) is ASCII print noise (~0.1 kPa), NRMSE explodes.
 # Floor at instrument σ_P = 2 kPa (M1c). Raw plan formula stays unfloored.
 PRESSURE_SPAN_FLOOR_PA = 2.0e3
+# GEM *PERF *WI at C_f = 1e-12 m² in the alignment deck (not recomputed).
+WI_MD_M_AT_CF_REF = 304.08
+# Minimal H that still feeds hierarchical ES-MDA: fracture P (C_f), matrix P / S_g (β).
+SPARSE_M2D_SENSORS = ("P_f_in", "P_f_out", "P_m_mid", "S_f_mid", "S_bulk_mid")
 
 
 @dataclass
@@ -372,6 +376,45 @@ def pack_visual_fields(traj, times: NDArray[np.float64]) -> dict[str, NDArray[np
     return out
 
 
+def _take_time_axis(arr: NDArray[np.float64] | None, mask: NDArray[np.bool_]) -> NDArray[np.float64] | None:
+    if arr is None:
+        return None
+    a = np.asarray(arr)
+    if a.ndim < 1 or a.shape[0] != mask.size:
+        return a
+    return a[mask]
+
+
+def slice_hidden_truth(truth: HiddenTruth, mask: NDArray[np.bool_]) -> HiddenTruth:
+    m = np.asarray(mask, dtype=bool).ravel()
+    return HiddenTruth(
+        times_s=np.asarray(truth.times_s, dtype=float)[m],
+        pressure=np.asarray(truth.pressure)[m],
+        sg=_take_time_axis(truth.sg, m),
+        so=_take_time_axis(truth.so, m),
+        sw=_take_time_axis(truth.sw, m),
+        z=_take_time_axis(truth.z, m),
+        pressure_fracture=_take_time_axis(truth.pressure_fracture, m),
+        pressure_matrix=_take_time_axis(truth.pressure_matrix, m),
+        p_inj=_take_time_axis(truth.p_inj, m),
+        q_prod=_take_time_axis(truth.q_prod, m),
+        meta=dict(truth.meta),
+    )
+
+
+def slice_packed_fields(
+    fields: Mapping[str, NDArray[np.float64]],
+    mask: NDArray[np.bool_],
+) -> dict[str, NDArray[np.float64]]:
+    m = np.asarray(mask, dtype=bool).ravel()
+    out: dict[str, NDArray[np.float64]] = {}
+    for key, val in fields.items():
+        taken = _take_time_axis(np.asarray(val), m)
+        if taken is not None:
+            out[key] = taken
+    return out
+
+
 def compare_fields(
     ours: Mapping[str, NDArray[np.float64]],
     truth: HiddenTruth,
@@ -383,6 +426,8 @@ def compare_fields(
             ours["pressure"], truth.pressure, span_floor=PRESSURE_SPAN_FLOOR_PA
         ),
     }
+    if truth.pressure_matrix is not None and "pressure_matrix" in ours:
+        rec["pressure_matrix_field_rmse"] = rmse(ours["pressure_matrix"], truth.pressure_matrix)
     if truth.sg is not None and "sg" in ours:
         rec["sg_field_rmse"] = rmse(ours["sg"], truth.sg)
     if truth.so is not None and "so" in ours:
@@ -412,14 +457,128 @@ def forward_at_theta(
     return pack_visual_fields(traj, t)
 
 
-def theta_true_from_spec(twin: DigitalTwin, spec: dict[str, Any] | None = None) -> NDArray[np.float64]:
+def theta_true_from_spec(
+    twin: DigitalTwin,
+    spec: dict[str, Any] | None = None,
+    *,
+    cf_m2: float | None = None,
+    tmf_multiplier: float | None = None,
+) -> NDArray[np.float64]:
     spec = spec if spec is not None else load_alignment_spec()
     th = spec["theta_true"]
-    cf = float(th.get("cf_m2", CF_TRUE_M2))
-    tmf = float(th.get("tmf_multiplier", TMF_TRUE))
+    cf = float(th.get("cf_m2", CF_TRUE_M2) if cf_m2 is None else cf_m2)
+    tmf = float(th.get("tmf_multiplier", TMF_TRUE) if tmf_multiplier is None else tmf_multiplier)
     n = int(twin.parameterization.n_params)
     phys = np.array([cf, tmf], dtype=float)[:n]
     return twin.parameterization.encode(phys)
+
+
+def fracture_face_wi_md_m(cf_m2: float, spec: dict[str, Any] | None = None) -> float:
+    """GEM *PERF *WI in md·m, scaled from the alignment deck's 304.08."""
+    spec = spec if spec is not None else load_alignment_spec()
+    cf0 = float(spec["rock"]["cf_m2"])
+    return WI_MD_M_AT_CF_REF * (float(cf_m2) / cf0)
+
+
+def robustness_cases(spec: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """M2d T1–T4 physical truths. Prior stays (C_f^ref, β=1); invert is not told θ*."""
+    spec = spec if spec is not None else load_alignment_spec()
+    cf0 = float(spec["rock"]["cf_m2"])
+    cf_md0 = float(spec["rock"]["cf_md"])
+    sigma = float(spec["rock"]["shape_factor_m2"])
+    rows: list[dict[str, Any]] = []
+    for raw in spec["robustness_truths"]:
+        cf_factor = float(raw["cf_factor"])
+        tmf = float(raw["tmf"])
+        cf_m2 = cf0 * cf_factor
+        rows.append(
+            {
+                "name": str(raw["name"]),
+                "cf_factor": cf_factor,
+                "tmf": tmf,
+                "cf_m2": cf_m2,
+                "cf_md": cf_md0 * cf_factor,
+                "sigmamf": sigma * tmf,
+                "wi_md_m": fracture_face_wi_md_m(cf_m2, spec),
+            }
+        )
+    return rows
+
+
+def robustness_case(name: str, spec: dict[str, Any] | None = None) -> dict[str, Any]:
+    for row in robustness_cases(spec):
+        if row["name"] == str(name):
+            return row
+    known = [r["name"] for r in robustness_cases(spec)]
+    raise KeyError(f"unknown robustness truth {name!r}; have {known}")
+
+
+def _fmt_deck_number(value: float) -> str:
+    if abs(float(value) - round(float(value))) < 1.0e-9:
+        return str(int(round(float(value))))
+    return f"{float(value):.6g}"
+
+
+def patch_gem_deck(
+    src: str | Path,
+    dest: str | Path,
+    *,
+    cf_md: float,
+    sigmamf: float,
+    wi_md_m: float,
+) -> str:
+    """Copy the alignment deck with a different (C_f, β_mf). Does not edit the template."""
+    text = Path(src).read_text(encoding="utf-8")
+    cf_s = _fmt_deck_number(cf_md)
+    sig_s = _fmt_deck_number(sigmamf)
+    wi_s = f"{float(wi_md_m):.2f}"
+    for axis in ("PERMI", "PERMJ", "PERMK"):
+        text, n = re.subn(rf"(\*{axis} \*FRACTURE \*CON )\S+", rf"\g<1>{cf_s}", text, count=1)
+        if n != 1:
+            raise ValueError(f"deck missing *{axis} *FRACTURE *CON")
+    text, n = re.subn(r"(\*SIGMAMF \*CON )\S+", rf"\g<1>{sig_s}", text, count=1)
+    if n != 1:
+        raise ValueError("deck missing *SIGMAMF *CON")
+    text, n = re.subn(r"(?m)^(\s+\d+\s+\d+\s+\d+\s+)[0-9.]+(\s*)$", rf"\g<1>{wi_s}\2", text)
+    if n != 16:
+        raise ValueError(f"deck WI rows patched {n}, expected 16")
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    return text
+
+
+def perturb_observation_series(
+    series: list[ObservationSeries],
+    *,
+    seed: int,
+    skip_t0: bool = True,
+) -> list[ObservationSeries]:
+    """Add N(0, σ) to packed gauges. t=0 stays the known IC when skip_t0 is set."""
+    rng = np.random.default_rng(int(seed))
+    out: list[ObservationSeries] = []
+    for obs in series:
+        vals = np.asarray(obs.values, dtype=float).copy()
+        sig = np.broadcast_to(np.asarray(obs.sigma, dtype=float), vals.shape).copy()
+        noise = rng.normal(0.0, sig)
+        if skip_t0:
+            noise[np.asarray(obs.times_s, dtype=float) <= 1.0e-9] = 0.0
+        out.append(replace(obs, values=vals + noise))
+    return out
+
+
+def filter_sparse_sensors(
+    series: list[ObservationSeries],
+    keep: tuple[str, ...] | None = None,
+) -> list[ObservationSeries]:
+    names = set(SPARSE_M2D_SENSORS if keep is None else keep)
+    out = [s for s in series if s.sensor_name in names]
+    if not out:
+        raise ValueError("sparse sensor filter removed every channel")
+    if not any(s.holdout for s in out):
+        last = out[-1]
+        out[-1] = replace(last, holdout=True)
+    return out
 
 
 def forward_equivalence_report(
@@ -454,6 +613,46 @@ def reconstruction_report(
     post_m = compare_fields(posterior, truth)
     p_prior = float(prior_m["pressure_field_nrmse"])
     p_post = float(post_m["pressure_field_nrmse"])
+    imp_p = improvement(p_prior, p_post)
+    sg_prior = prior_m.get("sg_field_rmse")
+    sg_post = post_m.get("sg_field_rmse")
+    imp_sg = None if sg_prior is None or sg_post is None else improvement(float(sg_prior), float(sg_post))
+    times = np.asarray(truth.times_s, dtype=float).ravel()
+    dyn = times > 1.0e-9
+    dyn_metrics: dict[str, Any] | None = None
+    if np.any(dyn) and dyn.size == times.size:
+        prior_dyn = compare_fields(slice_packed_fields(prior, dyn), slice_hidden_truth(truth, dyn))
+        post_dyn = compare_fields(slice_packed_fields(posterior, dyn), slice_hidden_truth(truth, dyn))
+        sg_pd = prior_dyn.get("sg_field_rmse")
+        sg_qd = post_dyn.get("sg_field_rmse")
+        dyn_metrics = {
+            "prior": prior_dyn,
+            "posterior": post_dyn,
+            "improvement_pressure": improvement(
+                float(prior_dyn["pressure_field_nrmse"]), float(post_dyn["pressure_field_nrmse"])
+            ),
+            "improvement_sg": None
+            if sg_pd is None or sg_qd is None
+            else improvement(float(sg_pd), float(sg_qd)),
+        }
+    per_time: list[dict[str, float]] = []
+    for i, t in enumerate(times):
+        row: dict[str, float] = {
+            "t_s": float(t),
+            "pressure_rmse_prior": rmse(np.asarray(prior["pressure"])[i], truth.pressure[i]),
+            "pressure_rmse_post": rmse(np.asarray(posterior["pressure"])[i], truth.pressure[i]),
+        }
+        if truth.sg is not None and "sg" in prior and "sg" in posterior:
+            row["sg_rmse_prior"] = rmse(np.asarray(prior["sg"])[i], truth.sg[i])
+            row["sg_rmse_post"] = rmse(np.asarray(posterior["sg"])[i], truth.sg[i])
+        if truth.pressure_matrix is not None and "pressure_matrix" in prior and "pressure_matrix" in posterior:
+            row["pressure_matrix_rmse_prior"] = rmse(
+                np.asarray(prior["pressure_matrix"])[i], truth.pressure_matrix[i]
+            )
+            row["pressure_matrix_rmse_post"] = rmse(
+                np.asarray(posterior["pressure_matrix"])[i], truth.pressure_matrix[i]
+            )
+        per_time.append(row)
     cf_true = float(phys_true["cf_m2"])
     tmf_true = float(phys_true["tmf_multiplier"])
     param = {
@@ -463,12 +662,29 @@ def reconstruction_report(
     if holdout_rmse is not None:
         post_m = dict(post_m)
         post_m["holdout_sensor_rmse"] = float(holdout_rmse)
+        post_m["holdout_sensor_rmse_is_whitened"] = True
+    if dyn_metrics is not None:
+        gate3_imp_p = float(dyn_metrics["improvement_pressure"])
+        gate3_imp_sg = dyn_metrics["improvement_sg"] if dyn_metrics["improvement_sg"] is not None else imp_sg
+    else:
+        gate3_imp_p = imp_p
+        gate3_imp_sg = imp_sg
+    gate3_pass = bool(gate3_imp_p > 0.0) and (gate3_imp_sg is None or float(gate3_imp_sg) > 0.0)
     return {
         "gate": "m2c_hidden_field_reconstruction",
         "kpi_order": list(KPI_ORDER),
         "prior": prior_m,
         "posterior": post_m,
-        "improvement_pressure": improvement(p_prior, p_post),
+        "improvement_pressure": imp_p,
+        "improvement_sg": imp_sg,
+        "dynamic": dyn_metrics,
+        "per_time": per_time,
+        "gate3": {
+            "improvement_pressure": gate3_imp_p,
+            "improvement_sg": gate3_imp_sg,
+            "pass": gate3_pass,
+            "note": "t=0 is IC; Gate 3 uses t>0 when those snapshots exist",
+        },
         "parameters": param,
         "phys_prior": phys_prior,
         "phys_post": phys_post,

@@ -74,8 +74,21 @@ RMSE\(_P\) 294→**23 Pa**, NRMSE_σ 0.147→**0.011** (PASS), raw NRMSE 0.075
 (PASS vs 0.10). RMSE\(_{S_g}\)=**0.026** (PASS vs 0.05). `*SLIMTUBE` was
 tried and reverted — it is a 1-D tube, not a 4×2 face.
 
-M2a forward equivalence **PASS**. Do not start M2b until `export/` is packed
-from `results/lab_v1/cmg_gem_run/hidden`.
+M2a forward equivalence **PASS**. Packed gauges live in `export/`. Integrated
+M2b/M2c numbers are frozen in `m2_gate.json`.
+
+First invert scored GEM's 0.5 s map with the t=0 initial condition
+(left-endpoint lookup of 0.4999999968 s). Fracture RMSE was then ~89 kPa and
+Improvement\(_P\)≈0. The stepper now snaps Δt to report times and takes the
+nearest stored state. Re-run: whitened misfit 15.7→1.03, Improvement\(_P\)=0.31,
+Gate 3 **PASS**. Do not retune ES-MDA Na/Ne/seed to chase Sg (init-flash
+\(d_{S_g}≈0.006\) already limits that KPI).
+
+M2d (`spec.yaml` `robustness_truths`): T1–T4 scale \(C_f\) by 0.5/2 and
+\(\beta_{mf}\) to 0.5/2. GEM `*PERMI *FRACTURE`, `*SIGMAMF`, and `*PERF *WI`
+are patched from the alignment deck; `case_dev.yaml` is not. T1–T4 M2a
+**PASS** (RMSE\(_P\) 25–53 Pa). Invert + T2 \(N(0,\sigma)\) gauges + 5-channel
+H: 6/6 Gate 3 **PASS**, `hidden_used=false`. Frozen in `m2d_gate.json`.
 
 ## Commands
 
@@ -84,6 +97,7 @@ python scripts/lab_v1_cmg_forward_gate.py --wiring
 python scripts/lab_v1_cmg_forward_gate.py --export examples/lab_v1/cmg_gem/export
 python scripts/lab_v1_cmg_invert.py --export examples/lab_v1/cmg_gem/export
 python scripts/lab_v1_cmg_invert.py --export examples/lab_v1/cmg_gem/export --score
+python scripts/lab_v1_cmg_m2d.py --truths T1 T2 T3 T4 --noise --sparse --workers 8
 ```
 
 `--wiring` checks spec ↔ `case_dev.yaml` and the no-hidden-truth contract. It is not M2a PASS.

@@ -24,7 +24,7 @@ from reservoir_backend.exceptions import TimeStepUnderflow
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.rock import Rock
 from reservoir_backend.ports.flow import FlowPort
-from reservoir_backend.solver.fi import dt_from_newton_iters
+from reservoir_backend.solver.fi import clip_dt_to_report_times, dt_from_newton_iters, index_nearest_time
 from reservoir_backend.solver.impes import MassBalance, StepReport, Trajectory
 
 
@@ -339,7 +339,10 @@ def simulate_comp(
         if n_acc >= int(max_steps):
             raise TimeStepUnderflow(f"compositional stepper took more than {max_steps} steps")
         dt = min(dt, t_end - t, float(dt_max))
+        dt = clip_dt_to_report_times(t, dt, report_times, t_end)
         if dt < float(dt_min):
+            if (t_end - t) <= float(dt_min):
+                break
             raise TimeStepUnderflow(f"failed to accept a step at t={t}")
         nxt = solve_comp_step(grid, rock, spec, ports, cmap, moles, p, dt, t)
         if nxt is None:
@@ -384,8 +387,7 @@ def simulate_comp(
         out_b = []
         arr_t = np.asarray(times, dtype=float)
         for tt in need:
-            idx = int(np.searchsorted(arr_t, float(tt), side="right") - 1)
-            idx = int(np.clip(idx, 0, arr_t.size - 1))
+            idx = index_nearest_time(arr_t, float(tt))
             out_t.append(arr_t[idx])
             out_s.append(states[idx])
             out_r.append(rates_hist[idx])

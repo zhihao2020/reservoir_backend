@@ -145,7 +145,9 @@ def test_hidden_loader_and_forward_gate_metrics(tmp_path: Path) -> None:
         phys_true={"cf_m2": 1.0e-12, "tmf_multiplier": 2.0},
     )
     assert score["improvement_pressure"] > 0.0
+    assert score["gate3"]["pass"] is True
     assert "cf_rel_error" in score["parameters"]
+    assert score["per_time"]
 
 
 def test_export_blocked_without_observations(tmp_path: Path) -> None:
@@ -158,6 +160,61 @@ def test_compare_fields_shape_mismatch_raises() -> None:
     truth = HiddenTruth(times_s=np.array([1.0]), pressure=np.ones((1, 4)))
     with pytest.raises(ValueError, match="field size"):
         compare_fields({"pressure": np.ones((1, 3))}, truth)
+
+
+def test_robustness_truths_are_the_m2d_four() -> None:
+    from reservoir_backend.twin.cmg_benchmark import fracture_face_wi_md_m, robustness_cases
+
+    rows = {r["name"]: r for r in robustness_cases()}
+    assert set(rows) == {"T1", "T2", "T3", "T4"}
+    assert rows["T1"]["cf_m2"] == pytest.approx(5.0e-13)
+    assert rows["T1"]["tmf"] == pytest.approx(0.5)
+    assert rows["T1"]["sigmamf"] == pytest.approx(20.0)
+    assert rows["T4"]["cf_m2"] == pytest.approx(2.0e-12)
+    assert rows["T4"]["tmf"] == pytest.approx(2.0)
+    assert rows["T4"]["sigmamf"] == pytest.approx(80.0)
+    assert fracture_face_wi_md_m(1.0e-12) == pytest.approx(304.08, rel=1e-4)
+    assert rows["T1"]["wi_md_m"] == pytest.approx(0.5 * 304.08, rel=1e-4)
+
+
+def test_patch_gem_deck_rewrites_cf_beta_and_wi(tmp_path: Path) -> None:
+    from reservoir_backend.twin.cmg_benchmark import patch_gem_deck, robustness_case
+
+    src = Path(__file__).resolve().parents[2] / "examples" / "lab_v1" / "cmg_gem" / "lab_v1_dev.dat"
+    t1 = robustness_case("T1")
+    dest = tmp_path / "t1.dat"
+    text = patch_gem_deck(src, dest, cf_md=t1["cf_md"], sigmamf=t1["sigmamf"], wi_md_m=t1["wi_md_m"])
+    assert "*PERMI *FRACTURE *CON 506.625" in text
+    assert "*SIGMAMF *CON 20" in text
+    assert "  1 1 1 152.04" in text
+    assert "  1 1 1 304.08" not in text
+    assert "*PERMI *MATRIX *CON 1.01325" in text
+
+
+def test_noise_and_sparse_h_do_not_open_hidden() -> None:
+    from reservoir_backend.twin.cmg_benchmark import (
+        SPARSE_M2D_SENSORS,
+        filter_sparse_sensors,
+        perturb_observation_series,
+    )
+    from reservoir_backend.domain.types import ObservationSeries
+
+    times = np.array([0.0, 0.5, 60.0])
+    series = [
+        ObservationSeries("P_f_in", "pressure", times, np.array([1.2e7, 1.1802e7, 1.1801e7]), np.full(3, 30.0), False),
+        ObservationSeries("P_f_out", "pressure", times, np.array([1.2e7, 1.1800e7, 1.1800e7]), np.full(3, 30.0), True),
+        ObservationSeries("P_m_mid", "pressure", times, np.array([1.2e7, 1.196e7, 1.1802e7]), np.full(3, 2000.0), False),
+        ObservationSeries("S_f_mid", "gas_saturation", times, np.array([0.36, 0.37, 0.38]), np.full(3, 0.03), False),
+        ObservationSeries("S_bulk_mid", "gas_saturation", times, np.array([0.36, 0.37, 0.38]), np.full(3, 0.03), False),
+        ObservationSeries("S_bulk_in", "gas_saturation", times, np.array([0.36, 0.40, 0.45]), np.full(3, 0.03), False),
+    ]
+    noisy = perturb_observation_series(series, seed=3)
+    assert noisy[0].values[0] == pytest.approx(series[0].values[0])
+    assert float(np.max(np.abs(noisy[0].values[1:] - series[0].values[1:]))) > 1.0
+    sparse = filter_sparse_sensors(series)
+    names = {s.sensor_name for s in sparse}
+    assert names == set(SPARSE_M2D_SENSORS)
+    assert any(s.holdout for s in sparse)
 
 
 def test_spec_points_at_case_dev() -> None:

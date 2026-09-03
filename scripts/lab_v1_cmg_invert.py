@@ -37,6 +37,8 @@ def main(argv=None) -> int:
     p.add_argument("--out", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_invert")
     p.add_argument("--score", action="store_true", help="open hidden/ after invert; never during ES-MDA")
     p.add_argument("--workers", type=int, default=None, help="ensemble forwards in parallel")
+    p.add_argument("--cf-m2", type=float, default=None, help="scoring truth C_f; default spec theta_true")
+    p.add_argument("--tmf", type=float, default=None, help="scoring truth beta_mf; default spec theta_true")
     args = p.parse_args(argv)
     export = Path(args.export)
     if not (export / "observations.csv").is_file():
@@ -57,7 +59,11 @@ def main(argv=None) -> int:
         "cf_p50": phys_post["cf_m2"],
         "tmf_p50": phys_post["tmf_multiplier"],
         "holdout_rmse": post.holdout_rmse,
+        "holdout_rmse_is_whitened": True,
+        "assimilate_rmse": post.assimilate_rmse,
+        "misfit": [float(x) for x in post.misfit],
         "hidden_used": False,
+        "n_forward": post.n_forward,
     }
     (dest / "invert.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     np.save(dest / "theta.npy", np.asarray(post.theta, dtype=float))
@@ -72,7 +78,7 @@ def main(argv=None) -> int:
         return 2
 
     truth = load_hidden_truth(hidden)
-    theta_true = theta_true_from_spec(twin, spec)
+    theta_true = theta_true_from_spec(twin, spec, cf_m2=args.cf_m2, tmf_multiplier=args.tmf)
     prior_theta = np.asarray(twin.parameterization.prior_mean, dtype=float).ravel()
     # Fresh twin so scoring does not mutate invert observations.
     score_twin = load_lab_v1(dev=True)
@@ -89,10 +95,35 @@ def main(argv=None) -> int:
         holdout_rmse=post.holdout_rmse,
     )
     (dest / "reconstruction.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    np.savez(dest / "fields.npz", prior_p=prior_fields["pressure"], post_p=post_fields["pressure"], cmg_p=truth.pressure)
+    packed = {
+        "times_s": truth.times_s,
+        "prior_p": prior_fields["pressure"],
+        "post_p": post_fields["pressure"],
+        "cmg_p": truth.pressure,
+    }
+    if "sg" in prior_fields and "sg" in post_fields and truth.sg is not None:
+        packed["prior_sg"] = prior_fields["sg"]
+        packed["post_sg"] = post_fields["sg"]
+        packed["cmg_sg"] = truth.sg
+    if "pressure_matrix" in prior_fields and "pressure_matrix" in post_fields and truth.pressure_matrix is not None:
+        packed["prior_pm"] = prior_fields["pressure_matrix"]
+        packed["post_pm"] = post_fields["pressure_matrix"]
+        packed["cmg_pm"] = truth.pressure_matrix
+    np.savez(dest / "fields.npz", **packed)
     write_grid_csv(score_twin, dest / "grid.csv")
     write_comparison_plot(truth, prior_fields, post_fields, dest / "pressure_compare.png")
-    print(json.dumps({"improvement_pressure": report["improvement_pressure"], "parameters": report["parameters"]}, indent=2), flush=True)
+    print(
+        json.dumps(
+            {
+                "improvement_pressure": report["improvement_pressure"],
+                "improvement_sg": report.get("improvement_sg"),
+                "gate3": report.get("gate3"),
+                "parameters": report["parameters"],
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
     return 0
 
 

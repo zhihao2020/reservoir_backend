@@ -39,6 +39,48 @@ def _two_cell():
     return grid, spec, dual, state
 
 
+def test_report_time_just_below_dt_init_is_not_initial_state() -> None:
+    """GEM prints Time=0.5 as 0.4999999968 d-scaled. Left-endpoint lookup returned t=0."""
+    grid, spec, dual, state = _two_cell()
+    transfer = ComponentTransfer(shape_factor=40.0, k_matrix_m2=1.0e-15)
+    t_rep = 0.4999999968
+    p0 = state.fracture.pressure.copy()
+    traj, _ = simulate_dual_comp(
+        grid,
+        dual,
+        spec,
+        transfer,
+        [],
+        [],
+        state,
+        t_end=2.0,
+        dt_init=0.5,
+        dt_max=2.0,
+        max_steps=20,
+        report_times=np.array([0.0, t_rep, 2.0]),
+    )
+    st_mid = traj.state_at(t_rep)
+    assert not np.allclose(st_mid.pressure, p0)
+    assert abs(float(st_mid.time_s) - t_rep) < 1.0e-9
+    # Invert t_end=60 vs GEM 59.999999616 must not underflow on the leftover.
+    traj2, _ = simulate_dual_comp(
+        grid,
+        dual,
+        spec,
+        transfer,
+        [],
+        [],
+        state,
+        t_end=2.0,
+        dt_init=0.5,
+        dt_min=1.0e-6,
+        dt_max=2.0,
+        max_steps=20,
+        report_times=np.array([0.0, 1.999999616]),
+    )
+    assert traj2.states[-1].time_s < 2.0 + 1.0e-12
+
+
 def test_d1_newton_three_fluxes_and_conservation() -> None:
     grid, spec, dual, state = _two_cell()
     transfer = ComponentTransfer(shape_factor=40.0, k_matrix_m2=1.0e-15)

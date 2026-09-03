@@ -1,459 +1,672 @@
-## 下一阶段应该定义成：M2 = CMG Cross-Simulator Validation
+可以。根据我刚核对的最新 `main`，HEAD 已经是 `d4b5e15`，**最小 CMG-GEM 数字孪生 MVP 的代码链路基本已经具备了**。
 
-不是原来那个 Parameter EnKF M2。online 可以往后排。
+但要区分两句话：
 
-整个验证流程应该固定成：
+> **“MVP 能实现”——可以。**
+> **“MVP 已经用一次完整 CMG→反演→重建结果验收通过”——目前 GitHub 还没有这个证据。**
+
+现在差的主要不是架构，而是**把已经写好的 M2b/M2c 链路完整跑一次并固化结果**。
+
+最新提交已经明确加入了 GEM 多时刻场解析、稀疏测点打包、controls 打包、并行 ensemble forward，而且规定反演过程绝不能读取 CMG hidden 3D field。
+
+---
+
+# 一、现在这个最小 MVP 到底是什么
+
+我建议把 MVP 定义得非常简单：
 
 $$
 \boxed{
-\text{CMG-GEM Truth}
+CMG\text{-}GEM
 \rightarrow
-\text{Sparse Observations}
+虚拟测点
 \rightarrow
-\text{ES-MDA Inversion}
+ES\text{-}MDA
 \rightarrow
-\text{Our Forward Reconstruction}
+\hat C_f,\hat\beta_{mf}
 \rightarrow
-\text{Full-field Comparison with CMG}
+我们的DPDP正演
+\rightarrow
+与CMG三维场比较
 }
 $$
 
-具体逻辑是：
+也就是说，暂时完全不需要：
 
-```text
-                    CMG-GEM
-                       │
-              ┌────────┴────────┐
-              │                 │
-              ▼                 ▼
-       注采/测点数据          CMG全场真值
-       Qinj, Pprod            Pf/Pm?
-       Pobs, Sobs             P, So, Sg, zi...
-              │                 │
-              ▼                 │
-    reservoir_backend           │
-          ES-MDA                │
-              │                 │
-              ▼                 │
-       Cf, beta_mf              │
-       posterior                │
-              │                 │
-              ▼                 │
-     compositional DPDP         │
-        forward model           │
-              │                 │
-              ▼                 ▼
-         重建全场 ─────────► 全场比较
-```
+* 30³；
+* UDP；
+* Parameter EnKF；
+* 实际仪器；
+* 济阳真实 PVT；
+* 在线 1 Hz；
+* 更复杂的参数反演。
 
-这里最重要的原则是：
+只证明一件事：
 
-> **反演时绝对不能把 CMG 全场喂给我们的模型。**
+> **在只拿到 CMG 模拟出来的注采数据和有限压力/饱和度测点的情况下，我们的软件能否通过反演，重建出接近 CMG-GEM 的储层动态场。**
 
-只能使用未来真实设备会提供的东西，例如：
-
-$$
-Q_{inj}(t),\quad P_{prod}(t),\quad
-P(x_i,t),\quad S(x_i,t)
-$$
-
-然后 CMG 的完整三维场只在最后作为 hidden truth 做评分。
-
-否则就失去数字孪生验证意义了。
+这就是一个非常完整、非常有意义的最小 MVP。
 
 ---
 
-# 第一阶段先别做复杂 CMG Case
+# 二、而且第一关 M2a 已经真的通过了
 
-我建议第一刀做一个**完全对齐的 CMG-GEM reference case**。
+现在不是“我们的组分模型还不知道能不能对上 CMG”。
 
-不是一开始就用很复杂的济阳真实模型。
+这个问题已经初步解决。
 
-先做：
-
-$$
-30\text{ cm}\times30\text{ cm}\times30\text{ cm}
-$$
-
-同样：
+当前 CMG reference case 是：
 
 $$
-4\times4\times2
+0.30\times0.30\times0.30\ {\rm m}
 $$
 
-或者一个稍细但仍很快的网格。
+网格：
 
-然后让 CMG 和我们的软件尽可能保持同样：
+$$
+4\times4\times2=32\ cells
+$$
 
-* geometry；
-* grid；
-* porosity；
+双方已经对齐：
+
+* Peng–Robinson EOS；
+* C1 / nC10；
+* \(T_c,P_c,\omega,M_w\)；
+* \(k_{ij}=0.049\)；
+* 初始组分；
+* 注入组分；
+* 温度；
 * matrix permeability；
-* fracture permeability / conductivity；
-* matrix-fracture transfer；
-* temperature；
-* EOS components；
-* \(k_{ij}\)；
-* injection composition；
-* initial composition；
-* initial pressure；
-* injection rate；
-* production BHP；
-* relperm；
-* capillary；
-* gravity；
-* boundary conditions。
+* fracture conductivity；
+* porosity；
+* Kazemi matrix-fracture transfer；
+* linear gas/oil relperm；
+* gravity=false；
+* capillary=none；
+* 面注入；
+* 面生产；
+* WI；
+* surface gas rate conversion。
 
-第一阶段的目标不是“模拟真实复杂性”。
+这些参数都已经集中写进 `cmg_gem/spec.yaml`。
 
-而是：
+当前 M2a 得到：
 
 $$
-\boxed{\text{先消灭 simulator-definition mismatch}}
+RMSE_P\approx23\ Pa
 $$
 
-否则最后出现场差异，你不知道究竟是：
-
 $$
-\text{numerics}
+NRMSE_P\approx0.075
 $$
 
-还是：
+以及：
 
 $$
-EOS
+RMSE_{S_g}\approx0.026
 $$
 
-还是：
+均通过 provisional gate：
 
 $$
-T_{mf}
+NRMSE_P<0.10
 $$
 
-还是：
-
 $$
-\text{well/face BC}
+RMSE_{S_g}<0.05
 $$
 
-造成的。
+README 已明确把 M2a 标记为 **PASS**。
+
+这一步很关键，因为它说明：
+
+$$
+\boxed{
+F_{\rm ours}(\theta_{true})
+\approx
+F_{\rm GEM}(\theta_{true})
+}
+$$
+
+至少在当前最小 4×4×2 Case 上是成立的。
+
+所以现在可以进入真正的反演验证了。
 
 ---
 
-# 第二步：CMG 必须导出两套数据
+# 三、现在完整工作流是什么
 
-这个非常重要。
+整个流程可以分成 5 层。
 
-## A. Observation Dataset
+## 1. CMG-GEM 生成“真实世界”
 
-这是给反演器看的。
+CMG 现在相当于我们的**虚拟实验装置**。
 
-例如：
-
-```text
-controls.csv
-observations.csv
-```
-
-包括：
+给 CMG 一个已知真值：
 
 $$
-Q_{inj}(t)
+\theta_{true}
+=
+\begin{bmatrix}
+\log C_f\\
+\log\beta_{mf}
+\end{bmatrix}
+$$
+
+当前 Case B：
+
+$$
+C_f^{true}=10^{-12}\ {\rm m^2}
 $$
 
 $$
-P_{prod}(t)
+\beta_{mf}^{true}=2
 $$
 
-以及有限测点：
+spec 中就是这个配置。
+
+然后 GEM 求解整个组分 DPDP：
+
+$$
+F_{\rm GEM}(\theta_{true},u)
+$$
+
+其中：
+
+$$
+u(t)=
+\{Q_{inj}(t),P_{prod}(t),z_{inj}(t)\}
+$$
+
+输出完整状态：
+
+$$
+X_{\rm GEM}(t)
+$$
+
+包括至少：
+
+$$
+P_f,\quad P_m,\quad S_g,\quad S_o
+$$
+
+当前最新 deck 已经设置多个报告时刻，包括：
+
+$$
+0.5,\quad15,\quad30,\quad60\ s
+$$
+
+最新提交就是专门加入多时刻 GEM maps 解析。
+
+---
+
+# 四、从 CMG 全场中“抽取仪器测点”
+
+这是数字孪生最核心的一步之一。
+
+我们不能把：
+
+$$
+X_{\rm GEM}(x,y,z,t)
+$$
+
+全部交给反演器。
+
+必须模拟真实实验：
+
+$$
+d=H(X_{\rm GEM})
+$$
+
+这里 \(H\) 就是 observation operator。
+
+例如在：
+
+$$
+(x_i,y_i,z_i)
+$$
+
+取：
 
 $$
 P_i(t)
 $$
 
+或者：
+
 $$
 S_{g,i}(t)
 $$
 
-未来如果有水：
-
-$$
-S_{w,i}(t)
-$$
-
-数据结构应该类似：
+所以从：
 
 ```text
-time_s,sensor_id,kind,value,sigma
-0.5,P001,pressure,...
-0.5,S001,sg,...
-10.0,P001,pressure,...
-...
+CMG完整32格场
 ```
 
-这些就是“虚拟实验设备”。
+只抽：
+
+```text
+少量压力测点
+少量饱和度测点
+注入流量
+生产压力
+```
+
+当前 `lab_v1_cmg_pack_obs.py` 已经实现：
+
+$$
+H(F_{\rm CMG})
+\rightarrow observations.csv
+$$
+
+并同时写：
+
+```text
+controls.csv
+```
+
+而完整场被单独放到：
+
+```text
+export/hidden/
+```
+
+只用于最后打分。
+
+这一设计是对的。
 
 ---
 
-## B. Hidden Truth Dataset
+# 五、反演器真正看到什么
 
-这个只能最后评分使用。
-
-例如：
-
-```text
-cmg_truth/
-    grid.csv
-    pressure_t000.npy
-    sg_t000.npy
-    so_t000.npy
-    z_c1_t000.npy
-    z_c10_t000.npy
-    ...
-```
-
-或者统一：
-
-```text
-truth.h5
-```
-
-内部存：
+反演阶段只能看到：
 
 $$
-p(x,y,z,t)
-$$
-
-$$
-S_o(x,y,z,t)
-$$
-
-$$
-S_g(x,y,z,t)
-$$
-
-以及组分：
-
-$$
-z_i(x,y,z,t)
-$$
-
-如果 CMG 双重介质输出能分别拿到 matrix/fracture 状态，还可以进一步保存：
-
-$$
-P_f,\quad P_m
-$$
-
-$$
-S_{g,f},\quad S_{g,m}
-$$
-
-但第一阶段不一定强求。
-
----
-
-# 第三步：先做“正演对正演”验证
-
-这里我非常建议不要一上来就反演。
-
-先知道真实参数：
-
-$$
-C_f^{CMG},\quad\beta_{mf}^{CMG}
-$$
-
-直接喂给我们的模型：
-
-$$
-F_{ours}(\theta_{true})
-$$
-
-然后和：
-
-$$
-F_{CMG}(\theta_{true})
-$$
-
-比较。
-
-这一层叫：
-
-$$
-\boxed{\text{Forward Equivalence Gate}}
-$$
-
-因为如果真实参数都知道，两个 forward simulator 的场已经差很多，那么后面反演得再漂亮也没有意义。
-
-应该先比较：
-
-### 压力场
-
-$$
-NRMSE_P(t)
-=
-\frac{
-\sqrt{\frac1N\sum_i(P_i^{ours}-P_i^{CMG})^2}
-}{
-P_{\max}^{CMG}-P_{\min}^{CMG}
+\boxed{
+Q_{inj},P_{prod},P_{obs},S_{obs}
 }
 $$
 
-### 饱和度场
+看不到：
 
 $$
-RMSE_{S_g}(t)
-=
-\sqrt{
-\frac1N
-\sum_i
-(S_{g,i}^{ours}-S_{g,i}^{CMG})^2
-}
+P(x,y,z),S(x,y,z)
 $$
 
-### 组分场
+完整 CMG 场。
 
-$$
-RMSE_{z_k}(t)
-$$
+代码甚至专门做了硬限制：
 
-### 总质量/组分物质守恒
+```python
+if hidden_dir is not None:
+    raise ValueError(
+        "inversion must not receive CMG hidden truth"
+    )
+```
+
+`attach_cmg_observations()` 和 `invert_from_cmg_observations()` 都禁止把 hidden truth 传进反演器。
+
+测试也专门验证：
+
+> invert refuses hidden truth
 
 以及：
 
+> attach observations does not open hidden
+
+所以现在已经真正避免了：
+
 $$
-P_{inj}(t),\quad
-Q_{prod}(t)
+\boxed{\text{inverse crime}}
 $$
 
-等动态曲线。
+这比之前：
 
-这一步先回答：
+$$
+F_{ours}
+\rightarrow
+Inverse_{ours}
+\rightarrow
+F_{ours}
+$$
 
-> **我们的组分 DPDP 正演本身像不像 GEM？**
+科学性强很多。
 
 ---
 
-# 第四步才是真正的数字孪生测试
+# 六、反演的参数是什么
 
-然后把真实参数藏起来。
+现在不是逐格反演渗透率。
 
-假设 CMG truth 是：
-
-$$
-C_f^{true}=C_f^*
-$$
+只有两个核心参数：
 
 $$
-\beta_{mf}^{true}=\beta^*
+\boxed{
+\theta=
+\begin{bmatrix}
+\log(C_f/C_{f,ref})\\
+\log\beta_{mf}
+\end{bmatrix}
+}
 $$
 
-但是我们的系统只知道 prior：
+其中：
+
+### \(C_f\)
+
+裂缝有效导流能力。
+
+它主要控制裂缝网络里的 transmissibility：
 
 $$
-C_f^{prior}
-\neq C_f^*
-$$
-
-$$
-\beta_{mf}^{prior}
-\neq\beta^*
-$$
-
-只输入 CMG 产生的测点数据：
-
-$$
-d_{CMG}
-=
-[P_{obs},S_{obs}]
-$$
-
-然后：
-
-$$
-p(\theta|d_{CMG})
-\xleftarrow{\text{ES-MDA}}
-p(\theta)
-$$
-
-得到：
-
-$$
-\hat C_f,\quad\hat\beta_{mf}
-$$
-
-再跑：
-
-$$
-F_{ours}(\hat\theta)
-$$
-
-最后和 CMG 全场比较。
-
-这才是最终验收。
-
----
-
-# 而且最终不能只看参数误差
-
-这一点特别重要。
-
-你的软件目的并不是“猜出 CMG 输入卡里的 \(C_f\)”。
-
-真正目标是：
-
-$$
-\boxed{\text{恢复储层动态场}}
+T_f
+\propto
+C_f
+\frac{A}{L}
 $$
 
 所以：
 
 $$
-C_f^{ours}
-\neq C_f^{CMG}
+C_f\uparrow
+\Rightarrow
+裂缝流动能力\uparrow
+\Rightarrow
+压力梯度改变
 $$
-
-并不一定意味着失败。
-
-因为两个 simulator 的离散方式、transfer definition、EOS implementation 都可能不同。
-
-只要：
-
-$$
-F_{ours}(\hat\theta)
-\approx
-F_{CMG}(\theta^*)
-$$
-
-其实数字孪生就是成功的。
-
-因此最终 KPI 应该把**场误差放在参数误差之前**。
-
-我建议主指标排成：
-
-| 优先级 | 指标                                  |
-| --- | ----------------------------------- |
-| 1   | pressure field NRMSE                |
-| 2   | \(S_g/S_o/S_w\) field RMSE          |
-| 3   | production/injection dynamic curves |
-| 4   | holdout sensor error                |
-| 5   | component field error               |
-| 6   | \(C_f,\beta_{mf}\) parameter error  |
-
-这非常关键。
 
 ---
 
-# 还应该比较三个场，而不是两个
+### \(\beta_{mf}\)
 
-最后应该同时保存：
-
-### CMG truth
+基质—裂缝交换倍率：
 
 $$
-X_{CMG}
+T_{mf}
+=
+\beta_{mf}T_{mf}^{ref}
 $$
 
-### 我们的 prior forward
+当前 CMG 对应的是 Kazemi transfer。
+
+基本结构可以理解为：
+
+$$
+q_{mf}
+\sim
+\beta_{mf}
+\sigma
+k_m
+V
+\lambda
+(P_m-P_f)
+$$
+
+其中：
+
+* \(\sigma\)：shape factor；
+* \(k_m\)：matrix permeability；
+* \(V\)：cell volume；
+* \(\lambda\)：phase mobility；
+* \(P_m-P_f\)：matrix-fracture pressure difference。
+
+当前：
+
+$$
+\sigma=40\ m^{-2}
+$$
+
+$$
+\beta_{mf}=2
+$$
+
+所以 GEM 中：
+
+$$
+*SIGMAMF=80
+$$
+
+这也是当前 alignment contract 明确规定的。
+
+---
+
+# 七、我们的正演器原理是什么
+
+这部分非常重要。
+
+现在的软件不是插值器，也不是神经网络直接预测场。
+
+它仍然是：
+
+$$
+\boxed{\text{physics-based compositional reservoir simulator}}
+$$
+
+核心是对每个 control volume 做**组分质量守恒**。
+
+对于组分 \(i\)，可以抽象成：
+
+$$
+\frac{\partial}{\partial t}
+\left[
+\phi
+\sum_\alpha
+\rho_\alpha S_\alpha x_{i,\alpha}
+\right]
++
+\nabla\cdot
+\left[
+\sum_\alpha
+\rho_\alpha x_{i,\alpha}\mathbf u_\alpha
+\right]
+=
+q_i+q_{i,mf}
+$$
+
+其中：
+
+$$
+\alpha\in\{o,g\}
+$$
+
+如果以后有水，还可以再加 water phase。
+
+相速度遵循 Darcy：
+
+$$
+\mathbf u_\alpha
+=
+-
+\frac{k k_{r\alpha}}{\mu_\alpha}
+\left(
+\nabla p_\alpha-\rho_\alpha g\nabla z
+\right)
+$$
+
+当前 benchmark：
+
+$$
+g=0,\qquad P_c=0
+$$
+
+所以进一步简化。
+
+---
+
+# 八、组分怎么变成油气两相
+
+这里就是 PR EOS。
+
+每个 cell、每个 Newton/time step 都会根据：
+
+$$
+p,T,z_i
+$$
+
+执行 flash：
+
+$$
+(p,T,z)
+\xrightarrow{PR}
+\begin{cases}
+\beta_g\\
+x_i\\
+y_i\\
+\rho_o,\rho_g\\
+S_o,S_g
+\end{cases}
+$$
+
+因此它不是：
+
+> 先算压力，然后经验公式算 Sg。
+
+而是组分守恒、相平衡和流动彼此耦合。
+
+当前 CMG 与我们的 EOS 卡也已经尽可能对齐，初始化时：
+
+$$
+S_g^{ours}=0.356
+$$
+
+$$
+S_g^{GEM}=0.362
+$$
+
+差：
+
+$$
+\Delta S_g\approx0.006
+$$
+
+这已经足够小。
+
+---
+
+# 九、ES-MDA 是怎么反演的
+
+现在 CMG 给出：
+
+$$
+d_{obs}
+$$
+
+我们先生成参数 ensemble：
+
+$$
+\theta_j^{(0)}
+\sim
+N(\theta_0,C_\theta)
+$$
+
+当前：
+
+$$
+N_e=8
+$$
+
+并且：
+
+$$
+N_a=5
+$$
+
+配置就在 `case_dev.yaml`。
+
+对于每一个 ensemble member：
+
+$$
+\theta_j
+$$
+
+都跑一次我们的物理正演：
+
+$$
+X_j=F_{ours}(\theta_j)
+$$
+
+然后通过同一个 observation operator：
+
+$$
+y_j=H(X_j)
+$$
+
+所以形成：
+
+$$
+C_{\theta y}
+$$
+
+和：
+
+$$
+C_{yy}
+$$
+
+ES-MDA 更新可以写成：
+
+$$
+\theta_j^{a}
+=
+\theta_j^{f}
++
+C_{\theta y}
+\left(
+C_{yy}+\alpha R
+\right)^{-1}
+\left(
+d_{obs}+\epsilon_j-y_j
+\right)
+$$
+
+然后重复若干 assimilation steps。
+
+本质就是：
+
+> **哪个参数变化能够让模拟测点朝 CMG 测点方向移动，就把 ensemble 往那个方向更新。**
+
+所以不是直接通过公式：
+
+$$
+P\rightarrow C_f
+$$
+
+而是：
+
+$$
+C_f,\beta_{mf}
+\rightarrow
+完整物理模型
+\rightarrow
+P,S
+$$
+
+然后利用 ensemble statistics 反过来推断参数。
+
+---
+
+# 十、反演以后干什么
+
+这才是你真正关心的部分。
+
+得到：
+
+$$
+\hat\theta
+=
+(\hat C_f,\hat\beta_{mf})
+$$
+
+之后，再跑一次：
+
+$$
+X_{post}
+=
+F_{ours}(\hat\theta)
+$$
+
+同时保留原来的 prior：
 
 $$
 X_{prior}
@@ -461,201 +674,418 @@ X_{prior}
 F_{ours}(\theta_{prior})
 $$
 
-### 我们的 posterior forward
+于是现在有三套场：
+
+$$
+X_{CMG}
+$$
+
+$$
+X_{prior}
+$$
 
 $$
 X_{post}
-=
-F_{ours}(\theta_{post})
 $$
 
-然后画：
+然后比较：
 
 ```text
-CMG Truth       Prior             Posterior
-------------------------------------------------
-Pressure
+        CMG truth      Prior ours      Posterior ours
 
-Sg
+P          场               场               场
 
-So
+Sg         场               场               场
 
-Component C1
+So         场               场               场
 ```
 
-以及：
-
-```text
-Prior error     Posterior error
-```
-
-这样一眼就能看出来：
-
-> 反演到底有没有把我们的模拟器从错误状态拉近 CMG。
-
-最终最有价值的指标其实是：
-
-$$
-\text{Improvement}_P
-=
-1-
-\frac{RMSE(P_{post},P_{CMG})}
-{RMSE(P_{prior},P_{CMG})}
-$$
-
-例如：
-
-$$
-RMSE_{prior}=0.20
-$$
-
-$$
-RMSE_{post}=0.05
-$$
-
-则：
-
-$$
-Improvement=75\%
-$$
-
-这比只写：
-
-> Cf error = 4.2%
-
-有说服力得多。
+当前 `lab_v1_cmg_invert.py --score` 已经实现这条路径。它会先完成反演，然后**才**加载 hidden truth，再计算 prior/post fields。
 
 ---
 
-# 我建议现在直接重排里程碑
+# 十一、最终评价的核心也已经设计对了
 
-目前：
+现在仓库已经明确：
 
-$$
-M1a/M1b
-$$
+> **场误差优先于参数误差。**
 
-已经足够证明 inverse machinery 能工作。
+KPI 顺序是：
 
-现在下一步变成：
+1. pressure field NRMSE；
+2. \(S_g/S_o/S_w\) field RMSE；
+3. injection / production curves；
+4. holdout sensor error；
+5. component field RMSE；
+6. \(C_f\) error；
+7. \(T_{mf}\) error。
 
-### M2a — CMG forward equivalence
+这是正确的。
 
-已知参数：
-
-$$
-CMG \leftrightarrow reservoir\_backend
-$$
-
-比较：
+因为真正的数字孪生目标是：
 
 $$
-P,S,z_i
+\boxed{
+F_{ours}(\hat\theta)
+\approx
+F_{CMG}(\theta_{true})
+}
 $$
 
-全场。
-
-必须先过。
-
-### M2b — CMG sparse-observation inversion
-
-CMG 提供：
+而不一定强求：
 
 $$
-Q,P_{prod},P_{obs},S_{obs}
+\hat C_f=C_f^{CMG}
 $$
 
-我们的软件反演：
+两个 simulator 的等效参数可能存在少量系统偏差。
+
+---
+
+# 十二、最值得看的指标其实是“反演改善率”
+
+当前代码已经实现：
+
+$$
+Improvement_P
+=
+1-
+\frac{
+E_P^{post}
+}{
+E_P^{prior}
+}
+$$
+
+其中：
+
+$$
+E_P^{prior}
+=
+NRMSE(P_{prior},P_{CMG})
+$$
+
+$$
+E_P^{post}
+=
+NRMSE(P_{post},P_{CMG})
+$$
+
+比如：
+
+$$
+E_P^{prior}=0.20
+$$
+
+反演后：
+
+$$
+E_P^{post}=0.05
+$$
+
+那么：
+
+$$
+Improvement_P
+=
+1-\frac{0.05}{0.20}
+=
+75\%
+$$
+
+这个指标已经写进 `reconstruction_report()`。
+
+它直接回答：
+
+> ES-MDA 是否真正把我们的模型拉向 CMG？
+
+---
+
+# 十三、最新代码实际上已经走到哪里
+
+现在可以这样看：
+
+| 阶段                             | 当前                 |
+| ------------------------------ | ------------------ |
+| CMG 4×4×2 GEM deck             | 已有                 |
+| CMG / ours 参数合同对齐              | 已有                 |
+| PR EOS 对齐                      | 已有                 |
+| DPDP transfer 对齐               | 已有                 |
+| face injection / production 对齐 | 已有                 |
+| M2a forward equivalence        | **PASS**           |
+| GEM 多时间点解析                     | **已有**             |
+| CMG hidden truth 数据结构          | **已有**             |
+| CMG → sparse virtual sensors   | **已有**             |
+| controls.csv                   | **已有**             |
+| hidden / invert 数据隔离           | **已有且有测试**         |
+| ES-MDA from CMG observations   | **代码已有**           |
+| posterior forward              | **代码已有**           |
+| prior/post/CMG field scoring   | **代码已有**           |
+| pressure comparison figure     | **代码已有**           |
+| 实际 M2b 数值结果                    | **尚无 GitHub 提交证据** |
+| 实际 M2c reconstruction PASS     | **尚无 GitHub 提交证据** |
+| 30³ CMG benchmark              | 未做                 |
+| M2d 四真值                        | 未做                 |
+
+所以准确地说：
+
+$$
+\boxed{\text{MVP infrastructure = READY}}
+$$
+
+但：
+
+$$
+\boxed{\text{MVP integrated acceptance = 还差最后一次完整运行}}
+$$
+
+---
+
+# 十四、为什么我说“只差最后一刀”
+
+因为现在仓库里的：
+
+```text
+examples/lab_v1/cmg_gem/export/
+```
+
+主线上仍然只有 `README.md`，没有真正提交：
+
+```text
+observations.csv
+controls.csv
+hidden/pressure.npy
+hidden/sg.npy
+...
+```
+
+而 `STATUS.md` 也仍然记录：
+
+> M2a PASS，未 pack export，未做 M2b。
+
+虽然最新 `d4b5e15` 已经把 M2b 所需代码补上了，但**没有看到一次实际 inversion 的 `invert.json` / `reconstruction.json` 成绩被提交**。
+
+所以这不是再开发几周的问题。
+
+而是：
+
+> **现在应该停止继续扩功能，把现有链路真正跑通。**
+
+---
+
+# 十五、下一步就做这 5 条命令
+
+当前最小 MVP 的执行顺序其实已经非常明确：
+
+```bash
+python scripts/lab_v1_cmg_run_gem.py
+```
+
+得到：
+
+$$
+F_{CMG}
+$$
+
+然后：
+
+```bash
+python scripts/lab_v1_cmg_pack_obs.py \
+    --hidden results/lab_v1/cmg_gem_run/hidden
+```
+
+得到：
+
+```text
+observations.csv
+controls.csv
+hidden/
+```
+
+然后先确认 M2a：
+
+```bash
+python scripts/lab_v1_cmg_forward_gate.py \
+    --export examples/lab_v1/cmg_gem/export
+```
+
+再真正跑反演：
+
+```bash
+python scripts/lab_v1_cmg_invert.py \
+    --export examples/lab_v1/cmg_gem/export \
+    --workers 4
+```
+
+最后：
+
+```bash
+python scripts/lab_v1_cmg_invert.py \
+    --export examples/lab_v1/cmg_gem/export \
+    --score \
+    --workers 4
+```
+
+它应该最终产生：
+
+```text
+invert.json
+theta.npy
+
+reconstruction.json
+fields.npz
+grid.csv
+pressure_compare.png
+```
+
+代码已经这样写好了。
+
+---
+
+# 十六、我建议最小 MVP 暂时只设三个验收条件
+
+先不要又做复杂的门闩体系。
+
+### Gate 1：外部 simulator 正演一致
+
+已经 PASS：
+
+$$
+NRMSE_P<0.10
+$$
+
+$$
+RMSE_{S_g}<0.05
+$$
+
+---
+
+### Gate 2：反演确实使用有限观测
+
+要求：
+
+$$
+hidden\_used=false
+$$
+
+这个当前代码已经强制实现。
+
+---
+
+### Gate 3：posterior 比 prior 更接近 CMG
+
+最低要求：
+
+$$
+E_P^{post}<E_P^{prior}
+$$
+
+并且：
+
+$$
+E_{S_g}^{post}<E_{S_g}^{prior}
+$$
+
+等价于：
+
+$$
+Improvement_P>0
+$$
+
+最好：
+
+$$
+Improvement_{S_g}>0
+$$
+
+**只要这三条成立，我就认为你已经有一个真正可以展示的最小 MVP。**
+
+因为它已经证明：
+
+$$
+\boxed{
+CMG产生未知储层
+\rightarrow
+只给少量测点
+\rightarrow
+我们的反演识别等效储层参数
+\rightarrow
+我们的正演恢复未观测三维场
+}
+$$
+
+---
+
+# 十七、这其实已经是真正的“数字孪生”原型了
+
+它跟普通 history matching 的区别在于：
+
+你不是只问：
+
+> \(C_f\) 猜得准不准？
+
+而是在问：
+
+$$
+\boxed{
+\text{通过有限观测，能否重构系统内部没有直接测量的动态状态？}
+}
+$$
+
+输入：
+
+$$
+Q_{inj},P_{prod},P_{sensor},S_{sensor}
+$$
+
+内部反演：
 
 $$
 C_f,\beta_{mf}
 $$
 
-### M2c — CMG hidden-field reconstruction
-
-跑 posterior forward：
+再由物理模型恢复：
 
 $$
-F_{ours}(\hat\theta)
+P(x,y,z,t)
 $$
 
-与 CMG hidden truth 全场比较。
-
-### M2d — Robustness
-
-改变 CMG truth：
-
 $$
-(C_f,\beta_{mf})
+S_g(x,y,z,t)
 $$
 
-做 4 个或更多 Case。
+$$
+S_o(x,y,z,t)
+$$
 
-再改变 observation 数量、噪声。
-
-### M3
-
-这时候才进入：
-
-* online Parameter EnKF；
-* UDP；
-* 30³ 性能优化；
-* 实际实验数据。
+这就是目前这个软件最清晰的核心工作原理。
 
 ---
 
-## 当前仓库还有一个文档方向需要马上纠正
+## 所以现在我建议不要再写新架构
 
-`docs/lab_product.qmd` 现在仍写：
+**下一步只做 M2b + M2c 的第一次真实 integrated run。**
 
-> “不是 CMG 逐格贴场”
-
-并且里面还是旧的 2-region log K 产品叙事。
-
-而最新 `STATUS.md` 已经把产品主线定义成：
+如果这一次得到例如：
 
 $$
-30^3\ compositional\ DPDP
-+
-\theta=(\log C_f,\log\beta_{mf})
-+
-ES\text{-}MDA
+P_{prior}\rightarrow P_{post}
 $$
 
-所以这份文档已经明显落后于实际架构。
+明显靠近 CMG，
 
-下一阶段最好直接把产品验收定义改成：
-
-$$
-\boxed{
-\text{CMG-GEM cross-simulator field reconstruction benchmark}
-}
-$$
-
-而不是以前的自洽 synthetic：
+同时：
 
 $$
-F_{ours}(\theta_{true})
-\rightarrow
-F_{ours}(\hat\theta)
+S_{g,prior}\rightarrow S_{g,post}
 $$
 
-因为那个其实存在明显的 inverse crime。
-
-CMG benchmark 则是：
+也明显靠近 CMG，那么我会认为：
 
 $$
-\boxed{
-F_{CMG}(\theta_{true})
-\rightarrow
-H
-\rightarrow
-Inverse_{ours}
-\rightarrow
-F_{ours}(\hat\theta)
-}
+\boxed{\text{最小科学 MVP 已成立}}
 $$
 
-这才是真正独立的验证。
+之后才值得做 **10³/30³、四真值 robustness、真实 PVT、online、UDP**。
 
-**所以我认为下一刀就应该暂停 M2 online，把开发目标改成 `CMG-GEM benchmark pipeline`。先完成一个最小 4×4×2 或 10×10×10 CMG Case 的“正演对齐 → CMG 测点反演 → posterior 全场对比”。这个闭环一旦跑通，整个软件的科学可信度会比现在高一个层级。**
+现在已经不是“还缺什么算法”的阶段了，最新 GitHub **已经基本把最小 MVP 的骨架搭完，当前最重要的工作就是把这条 CMG→稀疏观测→ES-MDA→posterior field→CMG hidden truth 的闭环实际跑出结果。**

@@ -5,12 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from reservoir_backend.solver.fi import (
     cell_cnv_ok,
+    clip_dt_to_report_times,
     clip_saturation_increment,
     dt_from_newton_iters,
     global_mass_balance_ok,
+    index_nearest_time,
     scale_newton_update,
 )
 
@@ -37,6 +40,14 @@ def test_cnv_and_mass_balance_helpers() -> None:
     res_bad = res_ok.copy()
     res_bad[0] = 10.0
     assert not cell_cnv_ok(res_bad, scale, tol=1.0e-3)
+
+
+def test_index_nearest_time_does_not_drop_gem_half_second() -> None:
+    times = np.array([0.0, 0.5, 15.0])
+    assert index_nearest_time(times, 0.4999999968) == 1
+    assert index_nearest_time(times, 0.0) == 0
+    dt = clip_dt_to_report_times(0.0, 0.5, np.array([0.0, 0.4999999968, 15.0]), 60.0)
+    assert dt == pytest.approx(0.4999999968)
 
 
 def test_dt_from_newton_iters_grows_when_easy() -> None:

@@ -134,6 +134,32 @@ def global_mass_balance_ok(
     return True
 
 
+def index_nearest_time(times: NDArray[np.float64] | list[float], t: float) -> int:
+    """Nearest stored step to a report/probe time. Left-endpoint misses GEM 0.5-ε."""
+    arr = np.asarray(times, dtype=float).ravel()
+    if arr.size == 0:
+        raise ValueError("empty times")
+    return int(np.argmin(np.abs(arr - float(t))))
+
+
+def clip_dt_to_report_times(
+    t: float,
+    dt: float,
+    report_times: NDArray[np.float64] | None,
+    t_end: float,
+) -> float:
+    """Do not step over the next report time (IMPES already snaps this way)."""
+    remaining = float(t_end) - float(t)
+    dt = min(float(dt), remaining)
+    if report_times is None or remaining <= 0.0:
+        return dt
+    later = np.unique(np.asarray(report_times, dtype=float).ravel())
+    later = later[later > float(t) + 1.0e-15]
+    if later.size:
+        dt = min(dt, float(later[0]) - float(t))
+    return dt
+
+
 def dt_from_newton_iters(
     dt: float,
     newton_iters: int,

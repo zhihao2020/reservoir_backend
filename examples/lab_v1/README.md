@@ -104,6 +104,7 @@ Online Parameter EnKF is paused. Product acceptance is now
 
 `CMG-GEM → sparse gauges → ES-MDA → F_ours(θ̂) → hidden full-field`.
 
-See `cmg_gem/README.md`. GEM 2024.20 ran the alignment deck. First M2a numbers:
-NRMSE_P = 0.39, RMSE_Sg = 0.63 — **FAIL**. Do not invert until forward fields match.
-Inversion never opens `hidden/`.
+See `cmg_gem/README.md`. GEM 2024.20 ran the alignment deck. M2a **PASS** (RMSE\(_P\)=23 Pa, NRMSE_σ=0.011, RMSE\(_{S_g}\)=0.026).
+M2b **PASS** (`hidden_used=false`). M2c Gate 3 **PASS** (Improvement\(_P\)=31%).
+M2d **PASS** (T1–T4 + T2 noise/sparse, 6/6 Gate 3). Numbers: `cmg_gem/m2_gate.json`,
+`cmg_gem/m2d_gate.json`. Inversion never opens `hidden/` during ES-MDA.

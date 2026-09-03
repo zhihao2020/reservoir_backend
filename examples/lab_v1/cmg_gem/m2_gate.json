@@ -1,0 +1,57 @@
+{
+  "case": "examples/lab_v1/cmg_gem",
+  "grid": [4, 4, 2],
+  "theta_true": {"cf_m2": 1e-12, "tmf_multiplier": 2.0},
+  "hidden_used_during_invert": false,
+  "m2a": {
+    "gate": "m2a_forward_equivalence",
+    "pass": true,
+    "rmse_p_pa": 22.5,
+    "nrmse_p_sigma": 0.011,
+    "rmse_sg": 0.026,
+    "note": "F_ours(theta_true) vs GEM at 60 s; NRMSE_sigma floors span at 2 kPa"
+  },
+  "m2b": {
+    "gate": "m2b_sparse_observation_inversion",
+    "pass": true,
+    "hidden_used": false,
+    "cf_p50": 1.084636678494222e-12,
+    "tmf_p50": 1.8583789478841721,
+    "cf_rel_error": 0.08463667849422198,
+    "tmf_rel_error": 0.07081052605791394,
+    "assimilate_rmse_whitened": 1.0947162047664822,
+    "holdout_rmse_whitened": 1.753382692487354,
+    "misfit": [15.6939, 14.7856, 15.0782, 1.1002, 1.1174, 1.0325],
+    "n_forward": 49,
+    "note": "ES-MDA Ne=8 Na=5 seed=3; observations.csv only"
+  },
+  "m2c": {
+    "gate": "m2c_hidden_field_reconstruction",
+    "pass": true,
+    "improvement_pressure": 0.30927705593130517,
+    "improvement_sg": 0.0025819566034031016,
+    "prior": {
+      "pressure_field_rmse_pa": 88.397,
+      "sg_field_rmse": 0.015739,
+      "pressure_matrix_field_rmse_pa": 8530.693
+    },
+    "posterior": {
+      "pressure_field_rmse_pa": 61.058,
+      "sg_field_rmse": 0.015698,
+      "pressure_matrix_field_rmse_pa": 2270.615
+    },
+    "per_time_pressure_rmse_pa": {
+      "t0": {"prior": 0.0, "post": 0.0},
+      "t0.5": {"prior": 192.2, "post": 125.1},
+      "t15": {"prior": 33.3, "post": 28.3},
+      "t30": {"prior": 22.8, "post": 32.0},
+      "t60": {"prior": 22.5, "post": 34.1}
+    },
+    "note": "field error outranks parameter error; t=0 is IC"
+  },
+  "gates": {
+    "m2a_forward": true,
+    "m2b_sparse_obs_no_hidden": true,
+    "m2c_posterior_closer_than_prior": true
+  }
+}

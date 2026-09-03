@@ -70,10 +70,10 @@ $$
 
 ## 下一步（按序）
 
-1. **M2a** Forward Equivalence：已知 $\theta$，比较 $F_{\mathrm{ours}}$ 与 $F_{\mathrm{GEM}}$ 全场。必须先过。本机若无 GEM，门闩停在 export，而不是假装 PASS。
-2. **M2b** GEM 稀疏测点 → ES-MDA（只读 `observations.csv` + `controls.csv`）。
-3. **M2c** posterior forward vs hidden GEM 场；主看 Improvement$_P$。
-4. **M2d** 多个 $(C_f,\beta_{mf})$ truth + 噪声 / 测点密度。
+1. **M2a** Forward Equivalence：**PASS**（RMSE\(_P\)=23 Pa）。
+2. **M2b** GEM 稀疏测点 → ES-MDA：**PASS**（`hidden_used=false`）。
+3. **M2c** posterior vs hidden GEM：**PASS**（Improvement\(_P\)=0.31）。证据 `examples/lab_v1/cmg_gem/m2_gate.json`。
+4. **M2d** 四个 GEM 真值 T1–T4 + T2 噪声 / 稀疏测点：**PASS**（6/6 Gate 3，Improvement$_P$ 54–83%）。证据 `examples/lab_v1/cmg_gem/m2d_gate.json`。
 5. **M3** 才解冻 online Parameter EnKF、UDP、30³ 性能、真实实验数据。
 
 ## 不做

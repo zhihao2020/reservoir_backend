@@ -25,7 +25,7 @@ from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.solver.dpdp_blocks import assemble_block_jacobian
 from reservoir_backend.solver.dpdp_context import DPDPModelContext
 from reservoir_backend.solver.dpdp_jacobian import fill_column_slice, residual_scales
-from reservoir_backend.solver.fi import dt_from_newton_iters
+from reservoir_backend.solver.fi import clip_dt_to_report_times, dt_from_newton_iters, index_nearest_time
 from reservoir_backend.solver.fi_comp import _control_map, _mass_pack
 from reservoir_backend.solver.impes import StepReport, Trajectory
 from reservoir_backend.solver.linear import solve_newton_system
@@ -657,7 +657,10 @@ def simulate_dual_comp(
         if n_acc >= int(max_steps):
             raise TimeStepUnderflow(f"DPDP stepper took more than {max_steps} steps")
         dt = min(dt, t_end - t, float(dt_max))
+        dt = clip_dt_to_report_times(t, dt, report_times, t_end)
         if dt < float(dt_min):
+            if (t_end - t) <= float(dt_min):
+                break
             raise TimeStepUnderflow(f"failed to accept a DPDP step at t={t}")
         try:
             nxt = solve_dual_comp_step(
@@ -781,8 +784,7 @@ def simulate_dual_comp(
         out_b = []
         arr_t = np.asarray(times, dtype=float)
         for tt in need:
-            idx = int(np.searchsorted(arr_t, float(tt), side="right") - 1)
-            idx = int(np.clip(idx, 0, arr_t.size - 1))
+            idx = index_nearest_time(arr_t, float(tt))
             out_t.append(arr_t[idx])
             out_s.append(states[idx])
             out_r.append(rates_hist[idx])
