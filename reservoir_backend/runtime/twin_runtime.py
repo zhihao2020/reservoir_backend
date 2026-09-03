@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 
 from reservoir_backend.domain.types import ControlSeries, ObservationSeries
-from reservoir_backend.observation.qc import ObservationStatus, classify_observations
+from reservoir_backend.observation.qc import classify_observations
 from reservoir_backend.runtime.command_queue import CommandQueue
 from reservoir_backend.runtime.field_store import FieldStore
 from reservoir_backend.twin.loops import TwinLoops

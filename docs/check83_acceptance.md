@@ -8,7 +8,7 @@
 Experiment YAML → invert (LM) → post_ensemble (Ne=8, optional) → forecast → run_report + check83
 ```
 
-正演始终是产品求解器 \(F\)。V1 尺子是自洽 synthetic truth，不对照 CMG/IMEX。runtime 不 import `references/**`。
+正演始终是产品求解器 \(F\)。M1 尺子是自洽 synthetic；**M2 产品尺子是 CMG-GEM 交叉验证**（`examples/lab_v1/cmg_gem/`）。runtime 不 import `references/**`。
 
 ## 十二问映射
 

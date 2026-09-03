@@ -29,6 +29,7 @@ class FlowPort:
     min_bhp_Pa: float | None = None  # rate-well floor (IMEX *MIN *BHP); producers only
     continuum_coupling: str = "fracture"  # fracture | matrix | split
     fracture_fraction: float = 1.0  # used when coupling is split; fraction of q on fracture
+    face: str | None = None  # xmin/xmax/... when the port is a cell-face, not a wellbore
 
     def __post_init__(self) -> None:
         role = str(self.role).strip().lower()
@@ -144,6 +145,7 @@ class FlowPort:
             control=control,
             cell_ids=grid.face_cells(face),
             sw_inj=sw_inj,
+            face=str(face).strip().lower(),
         )
 
 
@@ -224,6 +226,21 @@ def half_cell_wi(grid: CartesianGrid, cell: int, permeability: float) -> float:
     tx = perm * (dy * dz) / max(0.5 * dx, 1.0e-12)
     ty = perm * (dx * dz) / max(0.5 * dy, 1.0e-12)
     return tx + ty
+
+
+def face_half_cell_wi(grid: CartesianGrid, cell: int, permeability: float, face: str) -> float:
+    """One-face TPFA from the cell centre to ``xmin``/``xmax``/…. Units m³."""
+    i, j, k = grid.ijk(int(cell))
+    dx, dy, dz = float(grid.dx[i]), float(grid.dy[j]), float(grid.dz[k])
+    perm = float(permeability)
+    f = str(face).strip().lower()
+    if f in {"xmin", "xmax", "left", "right"}:
+        return perm * (dy * dz) / max(0.5 * dx, 1.0e-12)
+    if f in {"ymin", "ymax", "front", "back"}:
+        return perm * (dx * dz) / max(0.5 * dy, 1.0e-12)
+    if f in {"zmin", "zmax", "bottom", "top"}:
+        return perm * (dx * dy) / max(0.5 * dz, 1.0e-12)
+    return half_cell_wi(grid, cell, perm)
 
 
 def validate_port_controls(ports: list[FlowPort], control_kinds: dict[str, set[str]]) -> None:

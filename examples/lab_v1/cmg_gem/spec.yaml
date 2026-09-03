@@ -1,0 +1,77 @@
+# Alignment contract: GEM 4×4×2 ↔ examples/lab_v1/case_dev.yaml
+# Goal of M2a is to kill simulator-definition mismatch, not lab complexity.
+# Numbers are SI unless a GEM column is given. Not a Jiyang card.
+
+name: lab_v1_dev_gem
+our_case: examples/lab_v1/case_dev.yaml
+gem_deck: examples/lab_v1/cmg_gem/lab_v1_dev.dat
+
+geometry_m: [0.30, 0.30, 0.30]
+grid: [4, 4, 2]
+cell_order: k_j_i   # flat index = k*ny*nx + j*nx + i (same as CartesianGrid)
+
+rock:
+  phi_matrix: 0.08
+  phi_fracture: 0.02
+  k_matrix_m2: 1.0e-15
+  k_matrix_md: 1.01325          # 1e-15 / 9.869233e-16
+  cf_m2: 1.0e-12                # k_f^eff, DualRock.from_cf
+  cf_md: 1013.25
+  shape_factor_m2: 40.0         # Kazemi σ=12/L^2; GEM *SIGMAMF = σ * β_mf = 80
+  tmf_multiplier: 2.0           # β_mf truth (Case B). GEM *TRANSFER 0 (usual DP).
+
+fluid:
+  eos: peng_robinson
+  temperature_k: 350.0
+  names: [C1, nC10]
+  z_init: [0.55, 0.45]
+  z_inj: [0.95, 0.05]
+  tc_k: [190.564, 617.70]
+  pc_kpa: [4599.2, 2103.0]
+  pc_bar: [45.992, 21.03]       # GEM *PCRIT under INUNIT *SI (bar, not kPa)
+  # OPM 1D_COMP.DATA METHANE/DECANE. GEM *VCRIT SI is m3/kmol.
+  vcrit_m3_kmol: [0.09863, 0.60980]
+  # Katz–Firoozabadi 0.049 via *BIN. *PVC3 overwrites HC-HC when HCFLAG=1.
+  pvc3: 0.0
+  omega: [0.01142, 0.490]
+  mw_g_mol: [16.0425, 142.282]
+  kij: 0.049
+  # GEOS CubicEOSPhaseModel / GEM *OMEGA *OMEGB PR defaults.
+  omega_a: 0.457235530
+  omega_b: 0.077796074
+  gem_compname: [METHANE, DECANE]  # not C1/NC10: those are GEM library names
+  mu_liquid_cp: 0.30            # 3.0e-4 Pa·s; GEM *VISCOSITY nC10
+  mu_vapor_cp: 0.020            # 2.0e-5 Pa·s; GEM *VISCOSITY C1 (*VISCOR *MIX)
+  relperm: linear_sgt           # GEM *SGT 0-1; ours sorg=sgr=0, n=1
+
+physics:
+  capillary: none
+  gravity: false                 # GEM: *VARI + *DEPTH-TOP *KVAR 0 0 (no Δz)
+  p_init_kpa: 12000.0
+  p_prod_kpa: 11800.0
+  q_inj_m3_s: 3.0e-4            # GEM *STG surface gas; F_ours converts to mol/s
+  q_inj_m3_day: 25.92
+  t_end_s: 60.0
+  t_end_day: 6.944444444e-4
+  dt_init_s: 0.5
+
+ports:
+  injector: {face: xmin, control: rate}
+  producer: {face: xmax, control: bhp}
+
+theta_true:
+  cf_m2: 1.0e-12
+  tmf_multiplier: 2.0
+
+# M2d: do not run until M2a–M2c pass on a real GEM export.
+robustness_truths:
+  - {name: T1, cf_factor: 0.5, tmf: 0.5}
+  - {name: T2, cf_factor: 0.5, tmf: 2.0}
+  - {name: T3, cf_factor: 2.0, tmf: 0.5}
+  - {name: T4, cf_factor: 2.0, tmf: 2.0}
+
+# Invert sees only these files. Hidden truth is scoring-only.
+export:
+  observations: observations.csv
+  controls: controls.csv
+  hidden_dir: hidden

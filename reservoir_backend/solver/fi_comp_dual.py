@@ -547,7 +547,6 @@ def solve_dual_comp_step(
                 jac = jac + _well_source_fd(
                     grid, dual_rock, spec, trial, dt, ports, cmap, t1, props_f, props_m, n_scale, p_scale
                 )
-            jac_hold = jac
             jac_s_hold = jac.tocsr().multiply(row_s[:, None]).tocsc()
             jac_s = jac_s_hold
             phase_hold = phase_now

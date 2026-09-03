@@ -6,6 +6,8 @@ V1 assumes saturation observations are already provided by upstream sensing/inve
 
 The lab backend ingests \(Q_{inj}(t)\), \(P_{prod}(t)\), \(P_{obs}\), \(S_{obs}(\sigma,x,y,z,t)\) and reconstructs \(p\), \(S_w,S_o,S_g\), \(z_i\), while estimating \(\theta=(\log C_f,\log\beta_{mf})\) with \(T_{mf}=\beta_{mf}T_{mf}^{ref}\). \(k_m\) and shape factor stay in \(T_{mf}^{ref}\).
 
+M1 used self-consistent synthetic truth to prove the inverse machinery. **M2 product acceptance is a CMG-GEM cross-simulator field reconstruction** (`examples/lab_v1/cmg_gem/`). Inversion must not see the CMG 3-D field. Parameter EnKF / UDP wait for M3.
+
 V1 明确不做：Archie / EM / acoustic inversion、PINN、SRV、DFM/EDFM、AMR、thermal、zonal \(C_f\)、逐格 \(K\)、裂缝半长反演。产品 Case 是 `examples/lab_v1/`，不是 `lab_apply.yaml`。
 
 ## 当前相位

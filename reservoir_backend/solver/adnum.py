@@ -92,8 +92,6 @@ class CellAD:
 
     def __truediv__(self, other):
         if isinstance(other, CellAD):
-            den = np.maximum(np.abs(other.value), 1.0e-30) * np.sign(other.value + 1.0e-30)
-            # safer: use other.value directly with clip
             ov = other.value
             inv = 1.0 / np.where(np.abs(ov) < 1.0e-30, np.sign(ov) * 1.0e-30 + (ov == 0) * 1.0e-30, ov)
             val = self.value * inv

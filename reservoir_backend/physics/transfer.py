@@ -65,7 +65,7 @@ class WarrenRootTransfer:
 
 @dataclass(frozen=True)
 class ComponentTransfer:
-    """Multiphase component transfer.
+    r"""Multiphase component transfer.
 
     ``shape_factor`` and ``k_matrix_m2`` build \(T_{mf}^{ref}\).
     ``transfer_multiplier`` is \(\beta_{mf}\) applied once: \(T_{mf}=\beta T^{ref}\).
@@ -107,7 +107,6 @@ class ComponentTransfer:
         lam_v = np.where(from_m, props_matrix.lam_v, props_fracture.lam_v)
         q_l = cond * lam_l * dphi
         q_v = cond * lam_v * dphi
-        n_hc = props_matrix.x.shape[1]
         x_up = np.where(q_l[:, None] >= 0.0, props_matrix.x, props_fracture.x)
         y_up = np.where(q_v[:, None] >= 0.0, props_matrix.y, props_fracture.y)
         xi_l = np.where(q_l >= 0.0, props_matrix.xi_l, props_fracture.xi_l)

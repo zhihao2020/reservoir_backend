@@ -81,8 +81,6 @@ class LogConductivityParameterization:
 
     def dual_rock(self, theta: NDArray[np.float64]):
         """C_f → DualRock. Matrix rock is unchanged."""
-        from reservoir_backend.physics.dual_rock import DualRock
-
         if self.conductivity is None:
             raise ValueError("FractureConductivityModel is required to build DualRock")
         cf = self.decode(theta)

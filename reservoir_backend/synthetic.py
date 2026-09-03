@@ -290,7 +290,6 @@ def make_channel_waterflood(
 
 
 def evaluate_synthetic(case: SyntheticCase, posterior) -> dict[str, float]:
-    rock_true = Rock(case.k_true, np.full(case.grid.n_cells, case.twin.parameterization.phi))
     # prior mismatch vs posterior using the same observation stack
     assim = case.twin.experiment.assimilate_observations()
     d = stack_observations(assim)

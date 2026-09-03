@@ -12,8 +12,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 R_GAS = 8.314462618  # J / (mol K), CODATA
-_OMEGA_A = 0.4572355289213821
-_OMEGA_B = 0.07779607390388851
+# GEM *OMEGA/*OMEGB defaults (Peng–Robinson). GEOS CubicEOSPhaseModel.hpp
+# uses 0.457235529 / 0.077796074; copied here, not imported from references/.
+_OMEGA_A = 0.457235530
+_OMEGA_B = 0.077796074
 _SQRT2 = float(np.sqrt(2.0))
 
 

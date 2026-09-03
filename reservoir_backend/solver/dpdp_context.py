@@ -17,7 +17,7 @@ from reservoir_backend.solver.fi_comp import _neighbor_cells
 def cartesian_cell_colors(grid: CartesianGrid) -> NDArray[np.int64]:
     """Distance-2 coloring of the 7-point stencil: (i + 2j + 3k) mod 7."""
     n = grid.n_cells
-    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    nx, ny = grid.nx, grid.ny
     c = np.arange(n, dtype=np.int64)
     i = c % nx
     j = (c // nx) % ny

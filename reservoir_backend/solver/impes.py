@@ -19,7 +19,6 @@ from reservoir_backend.discretization.tpfa import (
     assemble_pressure,
     face_fluxes,
     geometric_transmissibility,
-    interior_transmissibility,
     phase_interior_fluxes,
     solve_pressure,
 )

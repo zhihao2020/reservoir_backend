@@ -1,7 +1,9 @@
-# V1 laboratory EOS card. Numbers are published C1–nC10 EXAMPLE
-# (Reid/Prausnitz/Poling + Katz–Firoozabadi kij). Not a Jiyang GEM card.
-# Swap this file when laboratory PVT exists; lump to 3–6 pseudo-components
-# before a 30³ FIM (see pvt_lumped.yaml).
+# V1 laboratory EOS card. Numbers are published C1–nC10 EXAMPLE.
+# Tc/Pc/ω/Mw: Reid, Prausnitz, Poling 5th ed. Appendix A.
+# kij: Katz & Firoozabadi, JPT 1978 (Whitson & Brulé SPE Monograph 20).
+# Vc: OPM opm-tests compositional/1D_COMP.DATA METHANE/DECANE (m3/kmol).
+# Not a Jiyang GEM card. Swap when laboratory PVT exists; lump to 3–6
+# pseudo-components before a 30³ FIM (see pvt_lumped.yaml).
 temperature_k: 350.0
 names: [C1, nC10]
 z_initial: [0.55, 0.45]
@@ -10,11 +12,19 @@ tc_k: [190.564, 617.70]
 pc_pa: [4.5992e6, 2.103e6]
 omega: [0.01142, 0.490]
 mw_kg_mol: [0.0160425, 0.142282]
+vcrit_m3_kmol: [0.09863, 0.60980]
 kij:
   - [0.0, 0.049]
   - [0.049, 0.0]
 mu_liquid: 3.0e-4
 mu_vapor: 2.0e-5
+# Match GEM *SGT linear 0–1 (no residual). CompSpec default Corey is example-only.
+sorg: 0.0
+sgr: 0.0
+n_oil: 1.0
+n_gas: 1.0
+kro0: 1.0
+krg0: 1.0
 
 # Laboratory measurements (fill when the experiment PVT arrives).
 measurements:

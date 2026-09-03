@@ -8,7 +8,6 @@ from numpy.typing import NDArray
 from reservoir_backend.comp.fluid import CompSpec
 from reservoir_backend.comp.flux import molar_divergence
 from reservoir_backend.comp.properties import PhaseProps, flash_state
-from reservoir_backend.discretization.tpfa import geometric_transmissibility
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.rock import Rock
 

@@ -125,7 +125,6 @@ def flash_tabulated_batch(
         )
 
     n = p.size
-    nc = 2
     arr = FlashArrays(
         vapor_frac=blend(tab.vapor_frac),
         x=blend2(tab.x),

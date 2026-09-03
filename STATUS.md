@@ -1,6 +1,6 @@
 # 项目状态
 
-主线：30 cm 页岩油实验数字孪生。V1 产品 Case 是 `examples/lab_v1/`（30³ 组分 DPDP + 面注采 + \(\theta=(\log C_f,\log\beta_{mf})\) + ES-MDA + Parameter EnKF）。饱和度由上游给出 \(S,\sigma\)；原始电/磁/声反演不在核心范围。`examples/lab/lab_cf.yaml` 是粗网格开发夹具；`lab_apply.yaml` 是遗留两区水驱演示。
+主线：30 cm 页岩油实验数字孪生。V1 产品 Case 是 `examples/lab_v1/`（30³ 组分 DPDP + 面注采 + \(\theta=(\log C_f,\log\beta_{mf})\) + ES-MDA）。**M2 是 CMG-GEM cross-simulator validation**，不是 Parameter EnKF；online / UDP / 30³ ensemble 冻结到 M3。饱和度由上游给出 \(S,\sigma\)。`examples/lab/lab_cf.yaml` 是粗网格开发夹具；`lab_apply.yaml` 是遗留两区水驱演示。
 
 | 状态 | 含义 |
 |------|------|
@@ -56,9 +56,10 @@
 | LM 后验小 ensemble Ne=8 | MVP | `inverse.post_ensemble` | `k_mean.npy` / `k_std.npy`；`tests/inverse/test_post_ensemble.py` |
 | Forecast 时间外推尺子 | MVP | `synthetic.make_forecast_split_case` | `tests/inverse/test_forecast.py` |
 | Scalar \(C_f\) log 参数化 | 已验证 | `LogConductivityParameterization` | `tests/inverse/test_log_conductivity.py` |
-| 联合 \(\log C_f,\log\beta_{mf}\) | MVP | `LogCfTmfParameterization` + 分层 ES-MDA | **M1a PASS**。**M1b 主 Case B PASS**（Cf 0.89% / Tmf 0.69%）；T2 与 seed 稳健性未过。**M1c 实验设计门闩**（`scripts/lab_v1_experiment_design.py` + `experiment_design.yaml`）：H∈{bulk, tapped, DP}，R 为协方差，u(t) 为 constant / long-constant / pulse-1 / pulse-rest / multistep。实验室可行方案 **0 个 \(D_{C_f,5\%}>2\)**。可行最好 \(D_{C_f}=0.14\)（脉冲+假设 200 Pa 差压表）。100 mL/min 下样品 \(\Delta P\approx2.1\,\mathrm{kPa}\)；稳态 \(C_f\) 是一次 ΔP，加长采样上界仍 \(<2\)。结论：现有 2 kPa 仪器 + 30 cm 装置撑不住 5% \(C_f\) 验收；不要再调 ES-MDA。M2 / 30³ 冻结。 |
+| 联合 \(\log C_f,\log\beta_{mf}\) | MVP | `LogCfTmfParameterization` + 分层 ES-MDA | **M1a PASS**。**M1b 主 Case B PASS**（Cf 0.89% / Tmf 0.69%）；T2 与 seed 稳健性未过。**M1c FAIL（已接受）**：实验室可行方案 0 个 \(D_{C_f,5\%}>2\)。不要再调 ES-MDA。 |
 | ES-MDA（log \(C_f\)） | 已验证 | `inverse.esmda`、`twin.history_match` | `tests/inverse/test_esmda.py`、`test_esmda_cf.py`。线性高斯收回；合成无噪声 \(C_f\) 向真值靠近；后验 P05/P50/P95 |
-| Parameter EnKF（在线一步） | MVP | `inverse.parameter_enkf` | `tests/inverse/test_parameter_enkf.py`。α=1，不改状态场 |
+| Parameter EnKF（在线一步） | MVP | `inverse.parameter_enkf` | `tests/inverse/test_parameter_enkf.py`。**M3 才解冻**；当前 M2 不是这条路 |
+| CMG-GEM 交叉验证流水线 | MVP | `twin.cmg_benchmark`、`examples/lab_v1/cmg_gem/` | **M2a 正演等价 PASS**（RMSE\(_P\)=23 Pa，NRMSE_σ=0.011，RMSE\(_{S_g}\)=0.026）。Init-flash \(d_{S_g}=0.006\)。未 pack `export/`，未做 M2b。`tests/twin/test_cmg_benchmark.py` |
 | DualContinuumState / transfer / ForwardModel adapter | MVP | `domain.state`、`physics.transfer`、`solver.forward_adapter` | `tests/domain/test_dual_state.py`、`tests/solver/test_forward_adapter.py` |
 | DPDP DualRock + 组分 transfer | 已验证 | `physics.dual_rock`、`physics.transfer.ComponentTransfer` | `tests/physics/test_dual_rock.py`、`test_component_transfer.py` |
 | DPDP compositional FIM D0–D4 | 已验证 | `comp.dual_residual`、`solver.fi_comp_dual` | `tests/comp/test_dual_d0.py`、`test_dual_d1234.py`：守恒相对误差 < 1e-4 |
@@ -90,7 +91,7 @@
 - 30 cm 立方，10 mm 网格，探头直径 6 mm（`H` 在插值场上做球平均）
 - V1 产品 Case：`examples/lab_v1/`（组分 DPDP + 面注采 + log \(C_f\) + ES-MDA）。`lab_cf.yaml` 仅粗网格夹具
 - 反演默认标量 log \(C_f\)（`ensemble_size=12`）。遗留水驱演示才是 2 region log K
-- 三维 p/S 是 F(m_post) 重建；产品尺子是自洽正演（F(m_true) → 反演 → 贴回 F），不是场 Dice 对 CMG
+- 三维 p/S 是 \(F(\hat\theta)\) 重建。M2 产品尺子是 CMG-GEM 交叉验证（稀疏测点反演 + hidden 全场评分），不再用自洽 synthetic 当最终验收
 - `reservoir harness` 已删除
 - 概念实验室 30 cm：`examples/lab/lab_concept.yaml` + `concept_probes.csv`（75 电阻率 + 16 新增 7.5 cm）。invert 对比 = \(F(m_{\mathrm{post}})\)/\(F(m_{\mathrm{true}})\) 场 nRMSE，不是 CMG。`tests/cases/test_lab_concept.py`。
-- 30 cm 产品开发计划（活文档）：`docs/lab_product.qmd`
+- 30 cm 产品开发计划（活文档）：`docs/lab_product.qmd`（CMG-GEM benchmark，不是 2-region log K）

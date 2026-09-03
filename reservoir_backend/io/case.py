@@ -70,7 +70,7 @@ def _read_observation_csv(
         raise ValueError(f"observation CSV is empty: {path}")
     grouped: dict[tuple[str, str], list[tuple[float, float, float, bool]]] = {}
     for row in rows:
-        sensor = str(row.get("sensor") or row.get("well") or "").strip()
+        sensor = str(row.get("sensor") or row.get("sensor_id") or row.get("well") or "").strip()
         if not sensor:
             continue
         kind = str(row.get("kind", "pressure") or "pressure")
@@ -233,6 +233,18 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                     kwargs["mu_liquid"] = float(extra["mu_liquid"])
                 if extra.get("mu_vapor") is not None and "mu_vapor" not in kwargs:
                     kwargs["mu_vapor"] = float(extra["mu_vapor"])
+                for src, dest in (
+                    ("sorg", "sorg"),
+                    ("sgr", "sgr"),
+                    ("kro0", "kro0"),
+                    ("krg0", "krg0"),
+                    ("n_oil", "no"),
+                    ("n_gas", "ng"),
+                    ("no", "no"),
+                    ("ng", "ng"),
+                ):
+                    if extra.get(src) is not None and dest not in kwargs:
+                        kwargs[dest] = float(extra[src])
             fluid = CompSpec(eos=eos, **kwargs)
         else:
             fluid = fluid_from_name(preset, **kwargs)

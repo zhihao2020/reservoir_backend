@@ -98,9 +98,9 @@ def _well_terms(
         frac = float(getattr(port, "fracture_fraction", 1.0))
         cells = np.asarray(port.cell_ids, dtype=np.int64)
         if coupling == "matrix":
-            rock, p, lam, vmix, diag, rhs, wgt = dual_rock.matrix, pm, lm, v_m, diag_m, rhs_m, 0.0
+            rock, _, lam, vmix, diag, rhs, wgt = dual_rock.matrix, pm, lm, v_m, diag_m, rhs_m, 0.0
         else:
-            rock, p, lam, vmix, diag, rhs, wgt = dual_rock.fracture, pf, lf, v_f, diag_f, rhs_f, 1.0 if coupling == "fracture" else frac
+            rock, _, lam, vmix, diag, rhs, wgt = dual_rock.fracture, pf, lf, v_f, diag_f, rhs_f, 1.0 if coupling == "fracture" else frac
         k = np.asarray(rock.permeability, dtype=float).ravel()
         wi = np.array([_wi(grid, float(k[int(c)]), port, int(c)) for c in cells], dtype=float)
         w = np.maximum(wi * lam[cells], 1.0e-30)

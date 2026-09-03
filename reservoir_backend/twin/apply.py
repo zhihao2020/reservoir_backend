@@ -5,7 +5,6 @@ This is the product path. It is not a CMG field matcher.
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import numpy as np
@@ -234,22 +233,10 @@ def accept_demo(twin: DigitalTwin, posterior, k_true: NDArray[np.float64]) -> di
     }
 
 
-def mark_holdout(twin: DigitalTwin, names: list[str]) -> None:
-    hold = set(names)
-    twin.experiment.observations = [
-        ObservationSeries(o.sensor_name, o.kind, o.times_s, o.values, o.sigma, o.sensor_name in hold)
-        for o in twin.experiment.observations
-    ]
-
-
 def write_observation_csv(path: Path, twin: DigitalTwin) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as fh:
-        w = csv.writer(fh)
-        w.writerow(["time_s", "sensor", "kind", "value", "sigma", "holdout"])
-        for o in twin.experiment.observations:
-            for i, t in enumerate(o.times_s):
-                w.writerow([f"{float(t):.6g}", o.sensor_name, o.kind, f"{float(o.values[i]):.8g}", f"{float(o.sigma[i]):.6g}", int(o.holdout)])
+    from reservoir_backend.twin.lab_v1 import write_observations_csv
+
+    write_observations_csv(path, list(twin.experiment.observations))
 
 
 def plot_posterior_fields(

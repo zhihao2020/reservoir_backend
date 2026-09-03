@@ -102,8 +102,6 @@ class LogCfTmfParameterization:
         return np.full(n, cf, dtype=float)
 
     def dual_rock(self, theta: NDArray[np.float64]):
-        from reservoir_backend.physics.dual_rock import DualRock
-
         if self.conductivity is None:
             raise ValueError("FractureConductivityModel is required to build DualRock")
         phys = self.decode_physical(theta)

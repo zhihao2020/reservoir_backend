@@ -22,12 +22,13 @@ half-length are out of scope.
 
 | File | Role |
 |------|------|
-| `case.yaml` | 30×30×30 product spec. Frozen until M1c. Do **not** run ES-MDA on this in CI. |
+| `case.yaml` | 30×30×30 product spec. Frozen until M3. Do **not** run ES-MDA on this in CI. |
 | `case_dev.yaml` | M1b: 30 cm cube, 4×4×2, fracture-P / matrix-P / \(S_g\), Na=5. |
 | `controls.csv` | Face inject rate + produce pressure. |
 | `sensors.csv` | Product 30³ contract (bulk, 2 kPa, \(S_w\)). Not the M1b fixture. |
 | `sensors_dev.csv` | M1b sensors: fracture-P 30 Pa (algorithmic), matrix-P 2 kPa, \(S_g\). |
 | `experiment_design.yaml` | M1c lab envelope for `scripts/lab_v1_experiment_design.py`. |
+| `cmg_gem/` | M2 CMG-GEM alignment deck + export contract. |
 | `pvt.yaml` | Published C1–nC10 EXAMPLE card. |
 | `pvt_lumped.yaml` | 4 pseudo-component characterization template. |
 | `truth/` | Written by `scripts/lab_v1_generate_truth.py`. |
@@ -47,6 +48,9 @@ python scripts/lab_v1_offline.py --dev
 python scripts/lab_v1_sensitivity.py --dev
 python scripts/lab_v1_online_replay.py --dev
 python scripts/lab_v1_gate.py --dev
+python scripts/lab_v1_cmg_forward_gate.py --wiring
+python scripts/lab_v1_cmg_forward_gate.py --export examples/lab_v1/cmg_gem/export
+python scripts/lab_v1_cmg_invert.py --export examples/lab_v1/cmg_gem/export
 reservoir validate examples/lab_v1/case_dev.yaml
 reservoir replay experiments/EXP001 --output results/replay
 ```
@@ -92,5 +96,14 @@ so a 5% \(C_f\) change is ~100 Pa against a 2 kPa absolute gauge. Steady \(C_f\)
 is one \(\Delta P\), not a longer time series of the same drop. Pulse helps
 \(T_{mf}\), not \(C_f\). **Accepted conclusion:** 2 kPa instrument + 30 cm
 apparatus cannot support 5% \(C_f\) inversion. Change the instrument, the
-excitation hardware, or the \(C_f\) tolerance — not ES-MDA. M2 and 30³ stay
-frozen. T2 / seed coverage wait for a real observable experiment.
+excitation hardware, or the \(C_f\) tolerance — not ES-MDA.
+
+## M2 CMG-GEM benchmark
+
+Online Parameter EnKF is paused. Product acceptance is now
+
+`CMG-GEM → sparse gauges → ES-MDA → F_ours(θ̂) → hidden full-field`.
+
+See `cmg_gem/README.md`. GEM 2024.20 ran the alignment deck. First M2a numbers:
+NRMSE_P = 0.39, RMSE_Sg = 0.63 — **FAIL**. Do not invert until forward fields match.
+Inversion never opens `hidden/`.

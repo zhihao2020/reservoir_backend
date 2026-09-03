@@ -11,12 +11,33 @@ from reservoir_backend.domain.types import ControlSeries
 from reservoir_backend.eos.flash import flash_tp
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.rock import Rock
-from reservoir_backend.ports.flow import FlowPort, half_cell_wi, peaceman_wi
+from reservoir_backend.ports.flow import FlowPort, face_half_cell_wi, half_cell_wi, peaceman_wi
 
 
 _SC_P = 1.01325e5
 _SC_T = 288.15
 _VM_STD_GAS = 0.023645  # m3/mol, same as jiyang YAML STG conversion
+_GEM_SC_P = 1.013e5  # GEM separator 101.3 kPa
+_GEM_SC_T = 288.75  # GEM separator 15.6 degC
+
+
+def surface_gas_rate_to_mol(
+    q_stg_m3_s: float,
+    spec: CompSpec,
+    z: NDArray[np.float64] | None = None,
+) -> float:
+    """Convert GEM ``*STG`` (surface gas m³/s) to injector mol/s.
+
+    Flash the injectate at GEM separator conditions. ``*STG`` is the
+    vapour surface volume, so ``q_mol = q_stg / (β v_vap)``.
+    """
+    z = np.asarray(spec.z_inj if z is None else z, dtype=float).ravel()
+    z = z / max(float(np.sum(z)), 1.0e-18)
+    fl = flash_tp(spec.eos, _GEM_SC_P, _GEM_SC_T, z)
+    v_gas = float(fl.vapor_frac) * max(float(fl.v_vap), 0.0)
+    if v_gas <= 1.0e-18:
+        v_gas = max(float(fl.v_mix), _VM_STD_GAS)
+    return float(q_stg_m3_s) / v_gas
 
 
 def _surface_oil_gas(spec: CompSpec, n_dot: NDArray[np.float64]) -> tuple[float, float]:
@@ -55,6 +76,9 @@ def _wi(grid: CartesianGrid, rock: Rock, port: FlowPort, cell: int) -> float:
                 axis=getattr(port, "axis", "k"),
             )
         )
+    face = getattr(port, "face", None)
+    if face:
+        return float(face_half_cell_wi(grid, int(cell), k, str(face))) * float(port.wi_multiplier)
     return float(half_cell_wi(grid, int(cell), k)) * float(port.wi_multiplier)
 
 

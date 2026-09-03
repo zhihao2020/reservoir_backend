@@ -47,7 +47,7 @@ pytest -q
 - 用 HPO/堆叠把 K 调到看起来像 CMG
 - 溶气 Rs、Stone 三相、神经网络代替正演
 
-对 CMG 虚拟实验是后续课题：把 F 升级到与 IMEX 同原理（隐式输运、同一套 SWT/井模型），而不是在错误的 F 上加密测点或堆叠。
+M2 产品尺子是 CMG-GEM 组分 DPDP 交叉验证（`examples/lab_v1/cmg_gem/`）：稀疏测点反演，hidden 全场只用于最后评分。不是把 CMG 三维场喂给 ES-MDA。
 
 ## 5. 甲方能拿到什么图/数
 

@@ -1,615 +1,661 @@
-对。最新 `main` 已经是 `204da38`，仓库状态与这份总结一致：**M1a PASS、M1b 主 Case B PASS、M1c FAIL**。M1b 的正式记录是 \(C_f\) 0.89%、\(T_{mf}\) 0.69%、holdout 0.0069、\(D_{C_f}=3.78\)、fail rate=0；同时 T2=5.37%，5 个 seed 只有 2/5 满足 5% Cf，M1c 在 2 kPa 下只有 \(D_{C_f}\approx0.09\sim0.14\)。
+## 下一阶段应该定义成：M2 = CMG Cross-Simulator Validation
 
-但我建议把“下一刀”再收紧一步：**现在不是直接“延长时间+增加压差直到 \(D>2\)”；先把 M1c 定义成真实实验的 \(H+R+u(t)\) 联合设计问题。**
+不是原来那个 Parameter EnKF M2。online 可以往后排。
 
-## 一、M1c 现在其实还有两层“假实验”
-
-目前 `m1c_sensor_rows()` 虽然把压力误差恢复到 2 kPa，却仍然人为定义了 **9 个 fracture-pressure、3 个 matrix-pressure、以及 fracture/matrix/bulk 的 \(S_g\)**。
-
-这意味着 M1c 当前只实现了：
+整个验证流程应该固定成：
 
 $$
-R_{\rm real}
+\boxed{
+\text{CMG-GEM Truth}
+\rightarrow
+\text{Sparse Observations}
+\rightarrow
+\text{ES-MDA Inversion}
+\rightarrow
+\text{Our Forward Reconstruction}
+\rightarrow
+\text{Full-field Comparison with CMG}
+}
 $$
 
-但还没有证明：
+具体逻辑是：
+
+```text
+                    CMG-GEM
+                       │
+              ┌────────┴────────┐
+              │                 │
+              ▼                 ▼
+       注采/测点数据          CMG全场真值
+       Qinj, Pprod            Pf/Pm?
+       Pobs, Sobs             P, So, Sg, zi...
+              │                 │
+              ▼                 │
+    reservoir_backend           │
+          ES-MDA                │
+              │                 │
+              ▼                 │
+       Cf, beta_mf              │
+       posterior                │
+              │                 │
+              ▼                 │
+     compositional DPDP         │
+        forward model           │
+              │                 │
+              ▼                 ▼
+         重建全场 ─────────► 全场比较
+```
+
+这里最重要的原则是：
+
+> **反演时绝对不能把 CMG 全场喂给我们的模型。**
+
+只能使用未来真实设备会提供的东西，例如：
 
 $$
-H_{\rm real}
+Q_{inj}(t),\quad P_{prod}(t),\quad
+P(x_i,t),\quad S(x_i,t)
 $$
 
-也就是说，真实探头究竟能不能分别测：
+然后 CMG 的完整三维场只在最后作为 hidden truth 做评分。
+
+否则就失去数字孪生验证意义了。
+
+---
+
+# 第一阶段先别做复杂 CMG Case
+
+我建议第一刀做一个**完全对齐的 CMG-GEM reference case**。
+
+不是一开始就用很复杂的济阳真实模型。
+
+先做：
+
+$$
+30\text{ cm}\times30\text{ cm}\times30\text{ cm}
+$$
+
+同样：
+
+$$
+4\times4\times2
+$$
+
+或者一个稍细但仍很快的网格。
+
+然后让 CMG 和我们的软件尽可能保持同样：
+
+* geometry；
+* grid；
+* porosity；
+* matrix permeability；
+* fracture permeability / conductivity；
+* matrix-fracture transfer；
+* temperature；
+* EOS components；
+* \(k_{ij}\)；
+* injection composition；
+* initial composition；
+* initial pressure；
+* injection rate；
+* production BHP；
+* relperm；
+* capillary；
+* gravity；
+* boundary conditions。
+
+第一阶段的目标不是“模拟真实复杂性”。
+
+而是：
+
+$$
+\boxed{\text{先消灭 simulator-definition mismatch}}
+$$
+
+否则最后出现场差异，你不知道究竟是：
+
+$$
+\text{numerics}
+$$
+
+还是：
+
+$$
+EOS
+$$
+
+还是：
+
+$$
+T_{mf}
+$$
+
+还是：
+
+$$
+\text{well/face BC}
+$$
+
+造成的。
+
+---
+
+# 第二步：CMG 必须导出两套数据
+
+这个非常重要。
+
+## A. Observation Dataset
+
+这是给反演器看的。
+
+例如：
+
+```text
+controls.csv
+observations.csv
+```
+
+包括：
+
+$$
+Q_{inj}(t)
+$$
+
+$$
+P_{prod}(t)
+$$
+
+以及有限测点：
+
+$$
+P_i(t)
+$$
+
+$$
+S_{g,i}(t)
+$$
+
+未来如果有水：
+
+$$
+S_{w,i}(t)
+$$
+
+数据结构应该类似：
+
+```text
+time_s,sensor_id,kind,value,sigma
+0.5,P001,pressure,...
+0.5,S001,sg,...
+10.0,P001,pressure,...
+...
+```
+
+这些就是“虚拟实验设备”。
+
+---
+
+## B. Hidden Truth Dataset
+
+这个只能最后评分使用。
+
+例如：
+
+```text
+cmg_truth/
+    grid.csv
+    pressure_t000.npy
+    sg_t000.npy
+    so_t000.npy
+    z_c1_t000.npy
+    z_c10_t000.npy
+    ...
+```
+
+或者统一：
+
+```text
+truth.h5
+```
+
+内部存：
+
+$$
+p(x,y,z,t)
+$$
+
+$$
+S_o(x,y,z,t)
+$$
+
+$$
+S_g(x,y,z,t)
+$$
+
+以及组分：
+
+$$
+z_i(x,y,z,t)
+$$
+
+如果 CMG 双重介质输出能分别拿到 matrix/fracture 状态，还可以进一步保存：
 
 $$
 P_f,\quad P_m
 $$
 
-必须弄清楚。
-
-真实压力探头通常测的是某个孔道/压力接口的局部压力，并不会天然返回“DPDP 裂缝连续体压力”和“基质连续体压力”两个数学状态。如果实验布置确实有探针直接连到裂缝通道，那么可以把它近似成 \(P_f\)；否则 M1b/M1c 的 `continuum=fracture/matrix` 只是理想 observation operator。
-
-所以真正的 M1c 应定义成：
-
 $$
-\boxed{
-\text{真实传感器位置与测量机制 }H
-+
-\text{真实测量协方差 }R
-+
-\text{实验激励 }u(t)
-}
+S_{g,f},\quad S_{g,m}
 $$
 
-三者一起满足可辨识性。
+但第一阶段不一定强求。
 
 ---
 
-# 二、现在不要再无约束增大 q
+# 第三步：先做“正演对正演”验证
 
-这个非常重要。
+这里我非常建议不要一上来就反演。
 
-现在 M1c 脚本已经尝试：
-
-$$
-q=0.0105
-$$
-
-并且代码明确按 60 s 实验做 detectability。
-
-如果这里 `rate` 按仓库通常的 SI 体积流量理解为 m³/s，那么：
+先知道真实参数：
 
 $$
-V_{inj}=0.0105\times60=0.63\ {\rm m^3}
+C_f^{CMG},\quad\beta_{mf}^{CMG}
 $$
 
-而 30 cm 立方体总体积只有：
+直接喂给我们的模型：
 
 $$
-0.3^3=0.027\ {\rm m^3}
+F_{ours}(\theta_{true})
 $$
 
-也就是说 60 s 注入量已经约为：
+然后和：
 
 $$
-23.3
+F_{CMG}(\theta_{true})
 $$
 
-个**岩样总体积**。
+比较。
 
-若按当前 \(\phi_m=0.08,\phi_f=0.02\) 粗略估计孔隙体积，则甚至是数百 PV 的量级。
+这一层叫：
+
+$$
+\boxed{\text{Forward Equivalence Gate}}
+$$
+
+因为如果真实参数都知道，两个 forward simulator 的场已经差很多，那么后面反演得再漂亮也没有意义。
+
+应该先比较：
+
+### 压力场
+
+$$
+NRMSE_P(t)
+=
+\frac{
+\sqrt{\frac1N\sum_i(P_i^{ours}-P_i^{CMG})^2}
+}{
+P_{\max}^{CMG}-P_{\min}^{CMG}
+}
+$$
+
+### 饱和度场
+
+$$
+RMSE_{S_g}(t)
+=
+\sqrt{
+\frac1N
+\sum_i
+(S_{g,i}^{ours}-S_{g,i}^{CMG})^2
+}
+$$
+
+### 组分场
+
+$$
+RMSE_{z_k}(t)
+$$
+
+### 总质量/组分物质守恒
+
+以及：
+
+$$
+P_{inj}(t),\quad
+Q_{prod}(t)
+$$
+
+等动态曲线。
+
+这一步先回答：
+
+> **我们的组分 DPDP 正演本身像不像 GEM？**
+
+---
+
+# 第四步才是真正的数字孪生测试
+
+然后把真实参数藏起来。
+
+假设 CMG truth 是：
+
+$$
+C_f^{true}=C_f^*
+$$
+
+$$
+\beta_{mf}^{true}=\beta^*
+$$
+
+但是我们的系统只知道 prior：
+
+$$
+C_f^{prior}
+\neq C_f^*
+$$
+
+$$
+\beta_{mf}^{prior}
+\neq\beta^*
+$$
+
+只输入 CMG 产生的测点数据：
+
+$$
+d_{CMG}
+=
+[P_{obs},S_{obs}]
+$$
+
+然后：
+
+$$
+p(\theta|d_{CMG})
+\xleftarrow{\text{ES-MDA}}
+p(\theta)
+$$
+
+得到：
+
+$$
+\hat C_f,\quad\hat\beta_{mf}
+$$
+
+再跑：
+
+$$
+F_{ours}(\hat\theta)
+$$
+
+最后和 CMG 全场比较。
+
+这才是最终验收。
+
+---
+
+# 而且最终不能只看参数误差
+
+这一点特别重要。
+
+你的软件目的并不是“猜出 CMG 输入卡里的 \(C_f\)”。
+
+真正目标是：
+
+$$
+\boxed{\text{恢复储层动态场}}
+$$
 
 所以：
 
-> **“solver 能跑”不能作为实验设计唯一约束。**
-
-M1c 必须同时加入真实实验约束：
-
 $$
-q\le q_{\rm pump,max}
+C_f^{ours}
+\neq C_f^{CMG}
 $$
 
-$$
-P_{\min}<P(t)<P_{\max}
-$$
+并不一定意味着失败。
+
+因为两个 simulator 的离散方式、transfer definition、EOS implementation 都可能不同。
+
+只要：
 
 $$
-\Delta P<\Delta P_{\rm safe}
+F_{ours}(\hat\theta)
+\approx
+F_{CMG}(\theta^*)
 $$
 
-$$
-N_{PV}
-=
-\frac{\int q(t)dt}{V_p}
-<N_{PV,\max}
-$$
+其实数字孪生就是成功的。
 
-以及实验允许的总时长。
+因此最终 KPI 应该把**场误差放在参数误差之前**。
 
-否则很容易得到一个数学上 \(D>2\)、实验上完全做不了的方案。
+我建议主指标排成：
+
+| 优先级 | 指标                                  |
+| --- | ----------------------------------- |
+| 1   | pressure field NRMSE                |
+| 2   | \(S_g/S_o/S_w\) field RMSE          |
+| 3   | production/injection dynamic curves |
+| 4   | holdout sensor error                |
+| 5   | component field error               |
+| 6   | \(C_f,\beta_{mf}\) parameter error  |
+
+这非常关键。
 
 ---
 
-# 三、也不要指望“多放几个测点、多采几个时间点”自然解决
+# 还应该比较三个场，而不是两个
 
-当前最好的 2 kPa 测试：
+最后应该同时保存：
 
-$$
-D_{C_f}=0.136
-$$
-
-而目标：
+### CMG truth
 
 $$
-D_{C_f}>2
+X_{CMG}
 $$
 
-所需信息增益约为：
+### 我们的 prior forward
 
 $$
-\frac{2}{0.136}\approx14.7
+X_{prior}
+=
+F_{ours}(\theta_{prior})
 $$
 
-倍的**信号幅度**。
-
-如果只是增加同等信息量、相互独立的观测点，因为：
+### 我们的 posterior forward
 
 $$
-D=
-\sqrt{
-\sum_i
-\left(\frac{\Delta y_i}{\sigma_i}\right)^2
-}
+X_{post}
+=
+F_{ours}(\theta_{post})
 $$
 
-所以观测数量需要大约增加：
-
-$$
-14.7^2\approx216
-$$
-
-倍。
-
-因此简单从：
+然后画：
 
 ```text
-9 个压力点 × 20 时刻
+CMG Truth       Prior             Posterior
+------------------------------------------------
+Pressure
+
+Sg
+
+So
+
+Component C1
 ```
 
-变成更多重复采样，基本救不了这个问题。
-
-而且真实仪器的时间误差通常是相关的，不是独立白噪声。所以当前用：
-
-$$
-R=\operatorname{diag}(\sigma_i^2)
-$$
-
-实际上还可能**高估**了密集采样带来的信息量。
-
-当前 `cf_detectability()` 正是直接用每个 observation 的 `sigma` 做：
-
-$$
-D=
-\sqrt{\sum(\Delta y/\sigma)^2}
-$$
-
-没有完整的时空协方差 \(R\)。
-
----
-
-# 四、所以真正应该做的是“激励设计”，而不是“多采样”
-
-对于这两个参数：
-
-$$
-\theta=
-[\log C_f,\log T_{mf}]
-$$
-
-它们控制的是不同时间尺度。
-
-\(C_f\) 主要控制：
-
-$$
-\text{裂缝快速压力传播}
-$$
-
-而 \(T_{mf}\) 主要控制：
-
-$$
-\text{基质}\leftrightarrow\text{裂缝交换的中后期响应}
-$$
-
-因此我建议 M1c 从现在的“60 s 恒流实验”改成**多阶段瞬态实验**：
-
-$$
-\boxed{
-\text{短时强激励}
-\rightarrow
-\text{恢复}
-\rightarrow
-\text{中长时注采}
-\rightarrow
-\text{第二次脉冲}
-}
-$$
-
-例如概念上：
+以及：
 
 ```text
-0 ──────── t1 ───── t2 ───────────────── t3 ───── t4
-   high-q       rest       moderate-q          pulse
-     ↑                       ↑                   ↑
-   Cf信息                  Tmf信息             Cf验证
+Prior error     Posterior error
 ```
 
-不是现在就固定具体 q，而是让程序寻找。
+这样一眼就能看出来：
 
-短时 rate-step / pulse 的目的，是在基质交换尚未完全建立前制造：
+> 反演到底有没有把我们的模拟器从错误状态拉近 CMG。
 
-$$
-\frac{\partial P_f}{\partial C_f}
-$$
-
-最大的窗口。
-
-中后期则利用：
+最终最有价值的指标其实是：
 
 $$
-P_m,\quad S_g,\quad P_f-P_m
+\text{Improvement}_P
+=
+1-
+\frac{RMSE(P_{post},P_{CMG})}
+{RMSE(P_{prior},P_{CMG})}
 $$
 
-约束 \(T_{mf}\)。
+例如：
 
-这比“恒流跑 600 秒”有效得多。
+$$
+RMSE_{prior}=0.20
+$$
+
+$$
+RMSE_{post}=0.05
+$$
+
+则：
+
+$$
+Improvement=75\%
+$$
+
+这比只写：
+
+> Cf error = 4.2%
+
+有说服力得多。
 
 ---
 
-# 五、下一 Commit 应该直接做 `M1c experiment design`
+# 我建议现在直接重排里程碑
 
-我建议不再碰 ES-MDA。
-
-新增：
-
-```text
-scripts/lab_v1_experiment_design.py
-```
-
-输入一个实验设计：
-
-```yaml
-instrument:
-  pressure_sigma_pa: 2000
-  pressure_covariance: ...
-  saturation_sigma: ...
-
-controls:
-  stages:
-    - duration_s: ...
-      q_inj: ...
-    - duration_s: ...
-      q_inj: ...
-```
-
-每个 candidate 只跑几个 deterministic forward，不跑 ensemble。
-
-计算四类指标：
+目前：
 
 $$
-D_{C_f,5\%}
-=
-\sqrt{\Delta y_{Cf}^{T}R^{-1}\Delta y_{Cf}}
+M1a/M1b
 $$
 
-$$
-D_{Tmf,10\%}
-$$
+已经足够证明 inverse machinery 能工作。
 
-以及 Fisher 信息矩阵：
+现在下一步变成：
 
-$$
-F=S^TR^{-1}S
-$$
+### M2a — CMG forward equivalence
 
-输出：
+已知参数：
 
 $$
-\lambda_{\min}(F)
+CMG \leftrightarrow reservoir\_backend
 $$
 
-$$
-\kappa(F)
-$$
+比较：
 
 $$
-corr(S_{Cf},S_{Tmf})
+P,S,z_i
 $$
 
-再加实验可行性：
+全场。
 
-```text
-max pressure
-max ΔP
-injected volume
-injected PV
-solver failures
-minimum dt
-experiment duration
-```
+必须先过。
 
-最后形成 Pareto table：
+### M2b — CMG sparse-observation inversion
 
-| design        | \(D_{Cf}\) | \(D_{Tmf}\) | cond | ΔPmax | injected PV | solver |
-| ------------- | ---------: | ----------: | ---: | ----: | ----------: | ------ |
-| constant      |       0.14 |           … |    … |     … |           … | PASS   |
-| long constant |          … |           … |    … |     … |           … | PASS   |
-| pulse-1       |          … |           … |    … |     … |           … | PASS   |
-| pulse-rest    |          … |           … |    … |     … |           … | PASS   |
-| multistep     |          … |           … |    … |     … |           … | PASS   |
+CMG 提供：
+
+$$
+Q,P_{prod},P_{obs},S_{obs}
+$$
+
+我们的软件反演：
+
+$$
+C_f,\beta_{mf}
+$$
+
+### M2c — CMG hidden-field reconstruction
+
+跑 posterior forward：
+
+$$
+F_{ours}(\hat\theta)
+$$
+
+与 CMG hidden truth 全场比较。
+
+### M2d — Robustness
+
+改变 CMG truth：
+
+$$
+(C_f,\beta_{mf})
+$$
+
+做 4 个或更多 Case。
+
+再改变 observation 数量、噪声。
+
+### M3
+
+这时候才进入：
+
+* online Parameter EnKF；
+* UDP；
+* 30³ 性能优化；
+* 实际实验数据。
 
 ---
 
-# 六、我还建议把 \(R\) 从 sigma 向量升级成 covariance
+## 当前仓库还有一个文档方向需要马上纠正
 
-这是 M1c 应该顺手解决的问题。
+`docs/lab_product.qmd` 现在仍写：
 
-现在：
+> “不是 CMG 逐格贴场”
 
-$$
-R=\mathrm{diag}(\sigma^2)
-$$
+并且里面还是旧的 2-region log K 产品叙事。
 
-以后至少允许：
+而最新 `STATUS.md` 已经把产品主线定义成：
 
 $$
-R=
-R_{\rm sensor}
-\otimes
-R_{\rm time}
-$$
-
-例如压力表存在共同零漂：
-
-$$
-R_{ij}
-=
-\rho\sigma_i\sigma_j
-$$
-
-时间采样存在：
-
-$$
-R(\Delta t)
-=
-\sigma^2e^{-|\Delta t|/\tau}
-$$
-
-然后统一：
-
-$$
-D^2=\Delta y^TR^{-1}\Delta y
-$$
-
-不能再认为：
-
-> 1 秒采 100 次 = 100 个独立观测。
-
-这对真实数字孪生很重要。
-
----
-
-# 七、裂缝“压差”值得重点研究，但要区分两种情况
-
-如果是两个独立的 2 kPa absolute gauge：
-
-$$
-\Delta P=P_1-P_2
-$$
-
-那么独立误差下：
-
-$$
-\sigma_{\Delta P}
-=
-\sqrt{\sigma_1^2+\sigma_2^2}
-\approx2.83\ {\rm kPa}
-$$
-
-所以**纯数学相减不会提高精度**。
-
-真正有价值的是：
-
-> 实验装置存在专门的 differential-pressure transducer。
-
-它可能在较小量程内直接测：
-
-$$
-P_{\rm in}-P_{\rm out}
-$$
-
-其差压精度可能远好于两个绝压表之差。
-
-如果实验设备允许，这可能比增加几十个绝压探头有效得多。
-
-但必须把仪器实际规格写入 \(R\)，不能再人为设 30 Pa。
-
----
-
-# 八、T2 的 5.37% 现在不要调参“抠过线”
-
-这个我反而建议暂时不要碰。
-
-T2：
-
-$$
-C_f=0.5C_{ref},\quad T_{mf}=2
-$$
-
-得到 5.37%。
-
-它只比 5% 门槛差：
-
-$$
-0.37\%
-$$
-
-目前最大的科学误差却是 M1c：
-
-$$
-D_{Cf}=0.136\ll2
-$$
-
-两者不是一个数量级的问题。
-
-现在去修改：
-
-```text
-Na
-seed
-prior_std
-phase schedule
-```
-
-让 T2 从 5.37% 变成 4.9%，非常容易变成 benchmark tuning。
-
-正确做法是保留：
-
-```text
-T2 = robustness warning
-```
-
-等 M1c 的实验设计改变以后重新跑四真值。
-
-因为新的 \(u(t)\) 会直接改变 T2 的可辨识性。
-
----
-
-# 九、seed/过自信也暂时不要用“加大 posterior std”硬修
-
-5 个 seeds 暴露的问题是真实的：
-
-> Ne=8 + synthetic inverse crime + 分层 ES-MDA 的 posterior calibration 很差。
-
-但现在没有必要先修。
-
-等 M1c 找到真实可观测实验后，再做：
-
-$$
-\boxed{\text{coverage calibration}}
-$$
-
-而不是只做 seed sweep。
-
-正确测试是：
-
-固定真实 \(\theta\)，生成很多组独立噪声：
-
-$$
-d^{(r)}
-=
-H(F(\theta_{true}))
+30^3\ compositional\ DPDP
 +
-\epsilon^{(r)}
+\theta=(\log C_f,\log\beta_{mf})
++
+ES\text{-}MDA
 $$
 
-每组都重新 ES-MDA。
+所以这份文档已经明显落后于实际架构。
 
-然后检查 90% credible interval 的 empirical coverage：
-
-$$
-C_{90}
-=
-\frac{
-N(\theta_{true}\in[P05,P95])
-}{
-N_{\rm replicate}
-}
-$$
-
-这才真正衡量 posterior 是否过自信。
-
-当前只换 ensemble seed，不能完整测试统计 coverage。
-
----
-
-# 十、我建议现在冻结成下面这个顺序
-
-当前阶段：
+下一阶段最好直接把产品验收定义改成：
 
 $$
 \boxed{
-M1a=\text{PASS}
+\text{CMG-GEM cross-simulator field reconstruction benchmark}
 }
 $$
+
+而不是以前的自洽 synthetic：
+
+$$
+F_{ours}(\theta_{true})
+\rightarrow
+F_{ours}(\hat\theta)
+$$
+
+因为那个其实存在明显的 inverse crime。
+
+CMG benchmark 则是：
 
 $$
 \boxed{
-M1b=\text{主 Case PASS / robustness 未完全 PASS}
+F_{CMG}(\theta_{true})
+\rightarrow
+H
+\rightarrow
+Inverse_{ours}
+\rightarrow
+F_{ours}(\hat\theta)
 }
 $$
 
-$$
-\boxed{
-M1c=\text{FAIL}
-}
-$$
+这才是真正独立的验证。
 
-下一步只做一件事：
-
-> **M1c Experimental Design Gate**
-
-先定义真实：
-
-$$
-H_{\rm instrument}
-$$
-
-和：
-
-$$
-R_{\rm instrument}
-$$
-
-然后搜索：
-
-$$
-u^*(t)
-=
-\arg\max_u
-D_{Cf}(u)
-$$
-
-subject to：
-
-$$
-P_{\min}<P<P_{\max}
-$$
-
-$$
-q<q_{\max}
-$$
-
-$$
-PV_{\rm inj}<PV_{\max}
-$$
-
-$$
-\text{solver stable}
-$$
-
-并同时保证：
-
-$$
-D_{Cf,5\%}>2
-$$
-
-且联合 Fisher matrix 不退化。
-
-如果遍历**所有实验上合理的方案**后仍然：
-
-$$
-D_{Cf,5\%}<2
-$$
-
-那么应该接受一个非常有价值的科学结论：
-
-$$
-\boxed{
-\text{现有 2 kPa 仪器 + 当前 30 cm 实验装置无法支撑 5% }C_f\text{ 反演要求}
-}
-$$
-
-这时候不是算法失败。
-
-应该改的是三者之一：
-
-$$
-\text{仪器精度}
-\quad/\quad
-\text{实验激励}
-\quad/\quad
-\text{Cf 验收精度}
-$$
-
-而不是继续调 ES-MDA。
-
-这反而会让整个数字孪生项目从“算法 demo”真正进入**实验设计—物理模型—数据同化闭环**。M2 和 30³ 在这之前继续冻结是正确的。
+**所以我认为下一刀就应该暂停 M2 online，把开发目标改成 `CMG-GEM benchmark pipeline`。先完成一个最小 4×4×2 或 10×10×10 CMG Case 的“正演对齐 → CMG 测点反演 → posterior 全场对比”。这个闭环一旦跑通，整个软件的科学可信度会比现在高一个层级。**

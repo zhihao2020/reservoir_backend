@@ -4,6 +4,8 @@ Criticals: Reid, Prausnitz, Poling, The Properties of Gases and Liquids,
 5th ed., McGraw-Hill, 2001, Appendix A.
 Binary k_ij(C1–nC10) ≈ 0.049: Katz & Firoozabadi, JPT 1978; tabulated in
 Whitson & Brulé, Phase Behavior, SPE Monograph 20, 2000.
+Critical volumes (GEM *VCRIT only): OPM 1D_COMP.DATA METHANE/DECANE
+0.09863 / 0.60980 m3/kmol. The cubic itself does not use Vc.
 """
 
 from __future__ import annotations

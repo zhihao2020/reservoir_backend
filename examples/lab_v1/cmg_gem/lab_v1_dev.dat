@@ -1,0 +1,140 @@
+** GEM 2024.20 alignment deck for examples/lab_v1/case_dev.yaml
+** Keyword layout copied from GEM TPL frr/gmfrr001.dat (DUALPOR compositional).
+** Fluid is published C1-nC10 EXAMPLE (pvt.yaml). Not a Jiyang card.
+**
+** SI map:
+**   k_m = 1e-15 m2 = 1.01325 md
+**   C_f = k_f^eff = 1e-12 m2 = 1013.25 md
+**   P = 1.2e7 Pa = 12000 kPa
+**   Q_inj = 3e-4 m3/s = 25.92 m3/day  (M1b fixture; not a lab pump)
+**   t_end = 60 s = 6.944444444e-4 day
+**   shape_factor 40 m-2 via Kazemi cubic: SIGMA=12/L^2 => L=0.5477225575 m
+**   T_mf = beta * sigma * k_m * V_b with beta=2 => *SIGMAMF 80
+**   *TRANSFER 0 = usual DP (matches q = sigma k V lambda dP; not phase-seg)
+**
+** Names METHANE/DECANE are user components. C1/NC10 are GEM library
+** names and would take database Tc/Pc/Vc/kij instead of this card.
+**
+** gravity:false: *VARI + *DEPTH-TOP *KVAR 0 0 so both layers have the
+** same top (CART forbids this; VARI allows independent layer depths).
+** WI: half-cell face T with k_f=1e-12 m2 => 1.0 md.m (SI md-m).
+** visc: *VISCOR *MIX, C1=0.020 cP / nC10=0.30 cP (our mu_V / mu_L).
+
+*RESULTS *SIMULATOR *GEM
+*TITLE1 'lab_v1_dev 4x4x2 DPDP align'
+*INUNIT *SI
+
+*OUTPRN *GRID *PRES *SO *SG *SW
+*OUTSRF *GRID *PRES *SO *SG *SW
+*WSRF *WELL 1
+*WSRF *GRID 1
+*WRST 0
+
+*GRID *VARI 4 4 2
+*KDIR *DOWN
+*DUALPOR
+*TRANSFER 0
+*DI *CON 0.075
+*DJ *CON 0.075
+*DK *CON 0.15
+*DEPTH-TOP *KVAR 0.0 0.0
+*DIFRAC *CON 0.5477225575
+*DJFRAC *EQUALSI
+*DKFRAC *EQUALSI
+*POR *MATRIX *CON 0.08
+*POR *FRACTURE *CON 0.02
+*PERMI *MATRIX *CON 1.01325
+*PERMJ *MATRIX *CON 1.01325
+*PERMK *MATRIX *CON 1.01325
+*PERMI *FRACTURE *CON 1013.25
+*PERMJ *FRACTURE *CON 1013.25
+*PERMK *FRACTURE *CON 1013.25
+** Gilman-Kazemi sigma=40 m-2 times beta_mf=2. *SHAPE is not used with *SIGMAMF.
+*SIGMAMF *CON 80
+*KAVMF *CON 1.01325
+
+*MODEL *PR
+*NC 2 2
+*COMPNAME 'METHANE' 'DECANE'
+*HCFLAG 0 0
+** GEM INUNIT SI: *PCRIT is bar, not kPa. Grid *PRES stays kPa.
+** C1 45.992 bar = 4599.2 kPa; nC10 21.03 bar = 2103 kPa.
+*PCRIT 45.992 21.03
+*TCRIT 190.564 617.70
+*AC 0.01142 0.490
+*MW 16.0425 142.282
+** Vc from OPM 1D_COMP.DATA METHANE/DECANE (m3/kmol).
+*VCRIT 0.09863 0.60980
+*VSHIFT 0.0 0.0
+** GEM *OMEGA/*OMEGB PR defaults = GEOS CubicEOSPhaseModel.hpp
+*OMEGA 0.457235530 0.457235530
+*OMEGB 0.077796074 0.077796074
+** Katz-Firoozabadi kij=0.049. HCFLAG 0 so *BIN is not overwritten by *PVC3.
+*BIN 0.049
+*TRES 76.85
+** Phase-constant visc via component mix: C1~vapor 0.020 cP, nC10~liquid 0.30 cP.
+*VISCOR *MIX
+*VISCOSITY 0.020 0.30
+*PHASEID *CRIT
+
+*ROCKFLUID
+*RPT 1
+*SGT
+  0.0  0.0  1.0  0.0
+  1.0  1.0  0.0  0.0
+*SWT
+  0.0  0.0  1.0  0.0
+  1.0  1.0  0.0  0.0
+*RTYPE *MATRIX *CON 1
+*RTYPE *FRACTURE *CON 1
+
+*INITIAL
+*VERTICAL *OFF
+*PRES *MATRIX *CON 12000
+*PRES *FRACTURE *CON 12000
+*SW *MATRIX *CON 0.0
+*SW *FRACTURE *CON 0.0
+*ZGLOBALC 'METHANE' *MATRIX *CON 0.55
+*ZGLOBALC 'DECANE' *MATRIX *CON 0.45
+*ZGLOBALC 'METHANE' *FRACTURE *CON 0.55
+*ZGLOBALC 'DECANE' *FRACTURE *CON 0.45
+
+*NUMERICAL
+*NORM *PRESS 100.0
+*NORM *SATUR 0.10
+*NORM *GMOLAR 0.10
+
+*RUN
+*DATE 2026 1 1
+*DTMIN 1.0E-12
+*DTMAX 1.0E-4
+*DTWELL 5.787037E-6
+*AIMSET *FRACTURE *CON 3
+*AIMSET *MATRIX *CON 1
+** Face Tx: k_f*(dy*dz)/(dx/2) = 3e-13 m3 = 304.08 md.m. Not SLIMTUBE (1D tube).
+*WELL 1 'INJ'
+*WELL 2 'PROD'
+*INJECTOR 1
+  *INCOMP *SOLVENT 0.95 0.05
+  *OPERATE *MAX *STG 25.92
+*PRODUCER 2
+  *OPERATE *MIN *BHP 11800
+*PERF *WI 1
+  1 1 1 304.08
+  1 2 1 304.08
+  1 3 1 304.08
+  1 4 1 304.08
+  1 1 2 304.08
+  1 2 2 304.08
+  1 3 2 304.08
+  1 4 2 304.08
+*PERF *WI 2
+  4 1 1 304.08
+  4 2 1 304.08
+  4 3 1 304.08
+  4 4 1 304.08
+  4 1 2 304.08
+  4 2 2 304.08
+  4 3 2 304.08
+  4 4 2 304.08
+*TIME 6.944444444E-4

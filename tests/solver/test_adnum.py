@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from reservoir_backend.solver.adnum import CellAD, clip, interp_with_slope, maximum, minimum, table_eval, where
+from reservoir_backend.solver.adnum import CellAD, clip, interp_with_slope, maximum, table_eval, where
 
 
 def test_cellad_arithmetic_matches_fd() -> None:

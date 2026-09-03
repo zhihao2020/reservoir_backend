@@ -30,7 +30,7 @@ from scipy.sparse.linalg import MatrixRankWarning, lsmr, spsolve
 from reservoir_backend.discretization.tpfa import geometric_transmissibility, phase_interior_fluxes
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.capillary import NoCapillary
-from reservoir_backend.physics.pvt import PSI, BlackOilPVT
+from reservoir_backend.physics.pvt import BlackOilPVT
 from reservoir_backend.solver.seqtools import (
     TARGET_ITERATION_COUNT,
     TOLERANCE_CNV,
@@ -293,11 +293,7 @@ def switch_live_oil_unknown(
         zbool = np.zeros(n, dtype=bool)
         return sw_c, sg_c, np.zeros(n, dtype=float), zbool, zbool, sg_c.copy()
     unsat_n = np.asarray(unsat, dtype=bool).ravel().copy()
-    switched = np.asarray(was_switched, dtype=bool).ravel().copy()
     rs_sat = np.asarray(fluid.rs(p), dtype=float).ravel()
-    eps_base = max(1.0e-6 * max(float(np.mean(np.abs(rs_sat))), 1.0), 1.0e-12)
-    # Stricter barrier if the cell switched on the previous update.
-    eps_rs = np.where(switched, max(eps_osc, 10.0 * eps_base), eps_base)
     sl = np.maximum(1.0 - sw_c, 0.0)
     sg_c = np.zeros(n, dtype=float)
     rs_c = rs_sat.copy()
@@ -1211,7 +1207,6 @@ def solve_fi_step(
         # appearance is handled by switch_live_oil_unknown, while disappearance
         # folds its gas inventory back into Rs there.
         # Recompute total reservoir fluxes at the accepted state.
-        so_f = np.clip(1.0 - sw_f - sg_f, 0.0, 1.0)
         sat_f = None if not live else ~fluid.vo_unsat(sg_f)
         lw_f, lo_f, lg_f = _lambda(three_phase, fluid, sw_f, sg_f, p_f, rs=rs_f, saturated=sat_f)
         bw_f = fluid.b_w(p_f)
@@ -1279,7 +1274,6 @@ def solve_fi_step(
         return None
     if _converged(res, scale):
         return _finish(p, sw, sg, rs, unsat, pack, 0, hard_cnv=True)
-    err_init = err0
     relax = NewtonRelaxation()
     n_its = 0
     du_prev_max = 0.0

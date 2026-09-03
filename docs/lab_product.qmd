@@ -12,45 +12,79 @@ format:
 ## 产品
 
 PetroChina **30 cm** 立方。左面定流量注入，右面定 BHP，其余面封闭。
-反演 **2-region log $K$**，正演同一套 FIM。
-验收：水驱**相似准则** + $F(m_{\mathrm{post}})$ vs $F(m_{\mathrm{true}})$。
-**不是** CMG 逐格贴场。**不是** 1 Hz 反演。
+V1 正演是组分双重介质 DPDP；反演是
 
-入口：`examples/lab/lab_concept.yaml`。验收口径见 `docs/cnpc_acceptance.md`。
+$$
+\theta=(\log C_f,\log\beta_{mf}),\qquad T_{mf}=\beta_{mf}T_{mf}^{ref}.
+$$
+
+产品 Case：`examples/lab_v1/`（30³ 规格 + `case_dev.yaml` 4×4×2 夹具）。
+`examples/lab/lab_concept.yaml` 与 `lab_apply.yaml` 是遗留水驱 / 两区 log $K$，不是主线。
+
+饱和度由上游给出 $S,\sigma$。原始电 / 磁 / 声反演不在核心范围。
+
+## 验收（M2 起）
+
+产品尺子不再是自洽 synthetic
+
+$$
+F_{\mathrm{ours}}(\theta_{\mathrm{true}})\to\mathrm{Inverse}_{\mathrm{ours}}\to F_{\mathrm{ours}}(\hat\theta)
+$$
+
+那条路有 inverse crime。下一阶段验收是 **CMG-GEM cross-simulator field reconstruction**：
+
+$$
+F_{\mathrm{CMG}}(\theta_{\mathrm{true}})\to H\to\mathrm{Inverse}_{\mathrm{ours}}\to F_{\mathrm{ours}}(\hat\theta)
+$$
+
+反演时**绝对不能**把 CMG 全场喂给模型。只能用未来设备会给的
+
+$$
+Q_{\mathrm{inj}}(t),\ P_{\mathrm{prod}}(t),\ P(x_i,t),\ S(x_i,t).
+$$
+
+CMG 三维场只在最后作为 hidden truth 评分。
+
+主指标顺序（场误差先于参数误差）：
+
+1. pressure field NRMSE（分母 $=P_{\max}^{CMG}-P_{\min}^{CMG}$）
+2. $S_g/S_o/S_w$ field RMSE
+3. 注采动态曲线
+4. hold-out 测点误差
+5. 组分场误差
+6. $C_f,\beta_{mf}$ 参数误差
+
+$C_f^{\mathrm{ours}}\neq C_f^{\mathrm{CMG}}$ 本身不是失败。数字孪生成功看
+
+$$
+F_{\mathrm{ours}}(\hat\theta)\approx F_{\mathrm{CMG}}(\theta^*).
+$$
+
+入口：`examples/lab_v1/cmg_gem/`。脚本：`scripts/lab_v1_cmg_forward_gate.py`、`scripts/lab_v1_cmg_invert.py`。
 
 ## 已有
 
-- 网格 30 cm / 10 mm。`CartesianGrid.locate_cell(x, y, z) → I`。
-- 产品默认 FIM（`fully_implicit: true`）。$\Delta t$ 按 Newton 次数 chop/grow。反演闸门已过；默认开是故意的。
-- `pressure_field(case, probes, series)`：测点 + 工况 BC + $p(t)$ → LM → $F()$ → $p(t, I)$。见 `docs/pressure_field.md`。
-- 场表导出 `field.csv`：$(I,x,y,z,p)$ 以及 $S_w$、$K$；$\varphi$ 为重复列（正演常数，不进 $\theta$）。
-- `step_pressure`：固定 $K$，走一个 solver $\mathrm{d}t$。
-- `examples/lab/lab_concept.yaml` + `examples/lab/concept_probes.csv`：91 个 $S_w$ 测点（75 电阻率 + 16 新增，抄自 测点.xlsx）。声波 12 / 电磁 8 只有个数与间距，**不编造 xyz**。
-- `similarity.waterflood_groups` 已挂在 `invert --self-check`。
-- `accept_demo` pass is Sw/p field nRMSE + waterflood similarity displacement ($F(m_{\mathrm{post}})$ vs $F(m_{\mathrm{true}})$; comparison-not-CMG); contrast / logK stay as extras.
-- 声波 / 电磁现阶段当**已知饱和度**；xyz 接口以后再接。
-- 已知 $S_w$ 序列已进 `calibrate` / `pressure_field`（可与压力混装；kind `saturation` / `Sw`）。声波 / 电磁有 xyz 后按 $S_w$ 同化，现不编造坐标。
+- M1a / M1b：分层 ES-MDA 在自洽 synthetic 上能收回联合 $\theta$（算法夹具；M1b 裂缝压力 30 Pa 不是仪器合同）。
+- M1c：实验室包络下没有 $D_{C_f,5\%}>2$ 的可行方案。2 kPa 仪器 + 30 cm 装置撑不住 5% $C_f$。不要再调 ES-MDA。
+- 网格 / 面注采 / 组分 DPDP FIM / Parameter EnKF 代码仍在；**online M2 暂停**。
 
 ## 下一步（按序）
 
-1. 压力测点 xyz：**等用户给坐标**再接，不编造。声波 / 电磁同理。
-2. `lab_concept invert --self-check`：fim-dt 跑 ne=2 two-layer demo（无观测时是 attach_two_layer_demo，不是 91 测点）。跑完报场 nRMSE / underflow。91 测点要有合成观测再另跑。
-
-`accept_demo` 闸门：pass = `sw_field_nrmse < 0.50` 且 `p_field_nrmse < 0.25`（对 $F(m_{\mathrm{true}})$）。contrast / logK / hold-out / 相似准则不是门。
-
-## 方向
-
-V1 主线是 30 cm 实验数字孪生：组分双重介质正演 + 标量 $C_f$ 反演。济阳矿场井网已移出产品。实验室 `apply --demo` 在 ES-MDA 落地前仍走两区 log $K$。
+1. **M2a** Forward Equivalence：已知 $\theta$，比较 $F_{\mathrm{ours}}$ 与 $F_{\mathrm{GEM}}$ 全场。必须先过。本机若无 GEM，门闩停在 export，而不是假装 PASS。
+2. **M2b** GEM 稀疏测点 → ES-MDA（只读 `observations.csv` + `controls.csv`）。
+3. **M2c** posterior forward vs hidden GEM 场；主看 Improvement$_P$。
+4. **M2d** 多个 $(C_f,\beta_{mf})$ truth + 噪声 / 测点密度。
+5. **M3** 才解冻 online Parameter EnKF、UDP、30³ 性能、真实实验数据。
 
 ## 不做
 
-AIM、`*TSCRIT`、1 Hz 再反演、restore harness、`import references/`、liberation 1 psi、编造缺失 xyz、SCI 写作。
+编造济阳 Tc/Pc、`import references/`、把 CMG 全场当观测、为过 5% $C_f$ 去调 ES-MDA、AIM、1 Hz 再反演、restore harness、SCI 写作。
 
 ## 角色
 
 | 角色 | 范围 |
 |------|------|
 | xuzh | 本计划 + 输入 / 导出 |
-| fim-resid | 残差 / 测试 |
-| fim-dt | 时间步 |
+| gem-align | GEM deck 关键字与 Results 导出 |
+| m2-gate | 正演等价 / 反演 / 隐场评分 |
 | lab-review | 只读，对照本 qmd |
