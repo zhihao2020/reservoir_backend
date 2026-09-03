@@ -54,7 +54,7 @@ sensors:
 
 inverse:
   parameterization: log_conductivity
-  algorithm: esmda
+  algorithm: auto
   ensemble_size: 6
   assimilation_steps: 2
   seed: 3

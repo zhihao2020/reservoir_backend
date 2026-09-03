@@ -14,28 +14,39 @@ if str(ROOT) not in sys.path:
 
 import shutil
 
-from reservoir_backend.twin.cmg_benchmark import load_hidden_truth, sample_observations_from_hidden, write_grid_csv
-from reservoir_backend.twin.lab_v1 import load_lab_v1, spatial_holdout, write_controls_csv, write_observations_csv
+from reservoir_backend.twin.cmg_benchmark import load_hidden_truth, load_twin_case, sample_observations_from_hidden, write_grid_csv
+from reservoir_backend.twin.lab_v1 import spatial_holdout, write_controls_csv, write_observations_csv
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--hidden", type=Path, required=True)
     p.add_argument("--export", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "export")
+    p.add_argument("--case", type=Path, default=None, help="YAML case whose sensors define H")
     args = p.parse_args(argv)
-    twin = load_lab_v1(dev=True)
+    twin = load_twin_case(args.case)
     truth = load_hidden_truth(args.hidden)
     held = spatial_holdout(list(twin.experiment.sensors), seed=3)
     series = sample_observations_from_hidden(twin, truth, holdout=held)
     dest = Path(args.export)
     dest.mkdir(parents=True, exist_ok=True)
     write_observations_csv(dest / "observations.csv", series)
-    write_controls_csv(
-        dest / "controls.csv",
-        t_end=float(np.max(truth.times_s)) if truth.times_s.size else 60.0,
-        q_inj=3.0e-4,
-        p_prod=1.18e7,
-    )
+    if args.case is not None and twin.experiment.controls:
+        import csv
+
+        with (dest / "controls.csv").open("w", encoding="utf-8", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["time_s", "port", "kind", "value"])
+            for c in twin.experiment.controls:
+                for t, v in zip(c.times_s, c.values):
+                    w.writerow([float(t), c.port_name, c.kind, float(v)])
+    else:
+        write_controls_csv(
+            dest / "controls.csv",
+            t_end=float(np.max(truth.times_s)) if truth.times_s.size else 60.0,
+            q_inj=3.0e-4,
+            p_prod=1.18e7,
+        )
     hidden_dest = dest / "hidden"
     hidden_dest.mkdir(parents=True, exist_ok=True)
     src = Path(args.hidden)

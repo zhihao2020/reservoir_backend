@@ -3,6 +3,7 @@
 # separate diagnostic fixture (M1a), not this product-geometry case.
 # Sensor contract: fracture-P (30 Pa, algorithmic identifiability only;
 # matrix-P (2 kPa), Sg. M1c must restore instrument R=2 kPa.
+# inverse.algorithm auto: LM first; ES-MDA if identifiability or hold-out is weak.
 geometry:
   size_m: [0.30, 0.30, 0.30]
 
@@ -53,7 +54,7 @@ sensors: sensors_dev.csv
 
 inverse:
   parameterization: log_cf_tmf
-  algorithm: esmda
+  algorithm: auto
   ensemble_size: 8
   assimilation_steps: 5
   seed: 3

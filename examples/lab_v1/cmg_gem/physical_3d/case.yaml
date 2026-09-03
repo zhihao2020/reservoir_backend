@@ -1,0 +1,95 @@
+# 30 cm black-shale cube, CO2 EXAMPLE. Not examples/lab_v1/case.yaml (DPDP 30³).
+# GEM deck: sanwei_co2.dat. Geomechanics frozen (*NOCOUPERM): φ,k at stressed state.
+geometry:
+  size_m: [0.30, 0.30, 0.30]
+
+grid:
+  type: cartesian
+  nx: 15
+  ny: 15
+  nz: 15
+
+physics:
+  model: compositional
+  fluid:
+    file: pvt_co2.yaml
+  temperature_k: 393.15
+  z_init: [0.0080, 0.0630, 0.0387, 0.3146, 0.4122, 0.1285, 0.0350]
+  z_inj: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  capillary: none
+  gravity: false
+  p_init: 5.0e7
+  dt_init: 10.0
+  dt_max: 200.0
+  dt_min: 1.0e-6
+  max_steps: 4000
+
+rock:
+  porosity: 0.0367
+  k_m2: 1.776e-17
+  k_matrix_m2: 1.776e-17
+
+# GEM *KDIR *DOWN: k=1 is the top. Our Cartesian k=1 is the bottom (z up).
+# GEM 1:11 (top) → our 5:15; GEM 11:15 (bottom) → our 1:5.
+ports:
+  - name: INJ
+    role: injector
+    control: pressure
+    ijk: [8, 8]
+    k_perf: [5, 15]
+    use_productivity: true
+    rw_m: 0.003
+    geofac: 0.34
+    skin: 0.0
+  - name: PROD1
+    role: producer
+    control: pressure
+    ijk: [3, 13]
+    k_perf: [11, 15]
+    use_productivity: true
+    rw_m: 0.003
+    geofac: 0.34
+  - name: PROD2
+    role: producer
+    control: pressure
+    ijk: [13, 13]
+    k_perf: [1, 15]
+    use_productivity: true
+    rw_m: 0.003
+    geofac: 0.34
+  - name: PROD3
+    role: producer
+    control: pressure
+    ijk: [3, 3]
+    k_perf: [1, 15]
+    use_productivity: true
+    rw_m: 0.003
+    geofac: 0.34
+  - name: PROD4
+    role: producer
+    control: pressure
+    ijk: [13, 3]
+    k_perf: [1, 5]
+    use_productivity: true
+    rw_m: 0.003
+    geofac: 0.34
+
+sensors_defaults:
+  probe_diameter_m: 0.006
+
+sensors: sensors.csv
+
+inverse:
+  parameterization: log_conductivity
+  algorithm: auto
+  ensemble_size: 4
+  assimilation_steps: 3
+  seed: 3
+  cf_ref_m2: 1.776e-17
+  prior_mean: -1.2
+  prior_std: 0.8
+  k_matrix_m2: 1.776e-17
+
+experiment:
+  history_end_s: 12096
+  controls: controls.csv

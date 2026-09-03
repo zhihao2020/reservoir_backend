@@ -1,0 +1,11 @@
+time_s,port,kind,value
+0.0,INJ,pressure,50000000.0
+12096.0,INJ,pressure,50000000.0
+0.0,PROD1,pressure,49500000.0
+12096.0,PROD1,pressure,49500000.0
+0.0,PROD2,pressure,49500000.0
+12096.0,PROD2,pressure,49500000.0
+0.0,PROD3,pressure,49500000.0
+12096.0,PROD3,pressure,49500000.0
+0.0,PROD4,pressure,49500000.0
+12096.0,PROD4,pressure,49500000.0

@@ -1,0 +1,16 @@
+{
+  "source": "results\\lab_v1\\cmg_gem_physical_3d\\sanwei_co2.out",
+  "t_days": [
+    0.0,
+    0.0001,
+    0.01,
+    0.14
+  ],
+  "unit_pressure": "Pa",
+  "times_s": [
+    0.0,
+    8.64,
+    864.0,
+    12096.000000000002
+  ]
+}

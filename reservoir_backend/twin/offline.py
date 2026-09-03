@@ -11,7 +11,7 @@ from reservoir_backend.comp.dual_state import DualCompositionalState
 from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor, State
 from reservoir_backend.exceptions import TimeStepUnderflow
 from reservoir_backend.grid.cartesian import CartesianGrid
-from reservoir_backend.inverse.lm import identifiability, run_lm
+from reservoir_backend.inverse.lm import LMResult, identifiability, run_lm, should_run_ensemble
 from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble, sample_posterior_ensemble
 from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
 from reservoir_backend.inverse.parameterization import (
@@ -29,7 +29,7 @@ from reservoir_backend.solver.impes import Trajectory, simulate, water_mass
 
 @dataclass
 class InverseSpec:
-    """Low-dimensional inversion. Default LM; V1 Cf path is ES-MDA."""
+    """Low-dimensional inversion. Default ``auto``: LM, ES-MDA only if needed."""
 
     prior_mean: float | NDArray[np.float64] = float(np.log(1.0e-12))
     prior_std: float | NDArray[np.float64] = 0.8
@@ -47,6 +47,7 @@ class InverseSpec:
     clip_innovation: bool = False
     n_workers: int | None = None
     outlier_nsigma: float = 8.0
+    uq: bool = False
 
 
 @dataclass
@@ -512,7 +513,10 @@ class DigitalTwin:
             self._last_dual_rock = dual_rock
             return traj
         if rock is None:
-            raise ValueError("simulate requires a Rock for single-continuum models")
+            if parameters is not None:
+                rock = self.rock_from_theta(parameters)
+            else:
+                raise ValueError("simulate requires a Rock for single-continuum models")
         if str(self.physics.model).lower() in {"compositional", "comp", "eos"} and self.physics.fluid is not None:
             from reservoir_backend.solver.fi_comp import simulate_comp
 
@@ -664,55 +668,35 @@ class DigitalTwin:
             traj = self.simulate(rock, controls=controls, t_end=t_end, report_times=times, state0=state0)
         return predict_from_trajectory(self.operator, self.experiment, traj, series)
 
-    def calibrate(
+    def _esmda_config(self) -> dict:
+        return {
+            "ensemble_size": self.inverse.ensemble_size,
+            "assimilation_steps": self.inverse.assimilation_steps,
+            "seed": self.inverse.seed,
+            "alpha": self.inverse.alpha,
+            "clip_innovation": self.inverse.clip_innovation,
+            "n_workers": self.inverse.n_workers,
+            "outlier_nsigma": getattr(self.inverse, "outlier_nsigma", 8.0),
+        }
+
+    def _calibrate_lm(
         self,
         *,
-        prior_mean: float | NDArray[np.float64] | None = None,
-        prior_std: float | NDArray[np.float64] | None = None,
-        max_iter: int | None = None,
-        time_limit_s: float | None = None,
-        fd_rel: float | None = None,
+        pmean: NDArray[np.float64],
+        pstd: NDArray[np.float64],
+        max_iter: int | None,
+        fd_rel: float | None,
+        time_limit_s: float | None,
     ) -> Posterior:
-        """Fit θ to history observations with LM or ES-MDA."""
         history_end = self.experiment.history_end_s
         assim, hold = split_history_observations(self.experiment.observations, history_end)
         if not assim:
             raise ValueError("no assimilating observations in the history window")
         d_obs = stack_observations(assim)
         t_hist = float(history_end) if history_end is not None else float(np.max(d_obs.times))
-
-        if prior_mean is None:
-            pmean = getattr(self.parameterization, "prior_mean", self.inverse.prior_mean)
-        else:
-            pmean = prior_mean
-        if prior_std is None:
-            pstd = getattr(self.parameterization, "prior_std", self.inverse.prior_std)
-        else:
-            pstd = prior_std
-        pmean = np.asarray(pmean, dtype=float)
-        pstd = np.asarray(pstd, dtype=float)
         niter = int(self.inverse.max_iter if max_iter is None else max_iter)
         fd = float(self.inverse.fd_rel if fd_rel is None else fd_rel)
         budget = time_limit_s if time_limit_s is not None else self.inverse.time_limit_s
-
-        algo = str(self.inverse.algorithm).strip().lower()
-        if algo in {"esmda", "es-mda", "es_mda"}:
-            from reservoir_backend.twin.history_match import HistoryMatchWorkflow
-
-            return HistoryMatchWorkflow().run(
-                self,
-                observations=self.experiment.observations,
-                parameter_prior=(pmean, pstd),
-                config={
-                    "ensemble_size": self.inverse.ensemble_size,
-                    "assimilation_steps": self.inverse.assimilation_steps,
-                    "seed": self.inverse.seed,
-                    "alpha": self.inverse.alpha,
-                    "clip_innovation": self.inverse.clip_innovation,
-                    "n_workers": self.inverse.n_workers,
-                    "outlier_nsigma": getattr(self.inverse, "outlier_nsigma", 8.0),
-                },
-            )
 
         def fwd(theta: NDArray[np.float64]) -> NDArray[np.float64]:
             return self._forward_vector(theta, assim, t_end=t_hist)
@@ -728,8 +712,10 @@ class DigitalTwin:
             fd_rel=fd,
             time_limit_s=budget,
         )
-        rock = self.rock_from_k(result.k)
-        hist = self.simulate(rock, t_end=t_hist, report_times=d_obs.times)
+        if self.uses_dpdp():
+            hist = self.simulate(parameters=result.theta, t_end=t_hist, report_times=d_obs.times)
+        else:
+            hist = self.simulate(self.rock_from_k(result.k), t_end=t_hist, report_times=d_obs.times)
         d_post = predict_from_trajectory(self.operator, self.experiment, hist, assim)
         assim_rmse = float(np.sqrt(np.mean(((d_post - d_obs.values) / d_obs.sigma) ** 2)))
         hold_rmse = float("nan")
@@ -737,20 +723,11 @@ class DigitalTwin:
             d_h = stack_observations(hold)
             pred_h = predict_from_trajectory(self.operator, self.experiment, hist, hold)
             hold_rmse = float(np.sqrt(np.mean(((pred_h - d_h.values) / d_h.sigma) ** 2)))
-        prior_spread = np.broadcast_to(np.asarray(pstd, dtype=float), result.theta.shape)
+        prior_spread = np.broadcast_to(np.asarray(pstd, dtype=float).ravel(), result.theta.shape)
         ident = identifiability(prior_spread, result.theta_std)
         notes = list(result.notes)
         notes.append(f"assimilation whitened RMSE={assim_rmse:.4g}")
         notes.append(f"hold-out whitened RMSE={hold_rmse:.4g}")
-        ensemble = None
-        if bool(self.inverse.post_ensemble_enabled):
-            ensemble = sample_posterior_ensemble(
-                self.parameterization,
-                result,
-                ne=int(self.inverse.post_ensemble_ne),
-                seed=int(self.inverse.post_ensemble_seed),
-            )
-            notes.append(f"post ensemble Ne={int(self.inverse.post_ensemble_ne)}")
         return Posterior(
             theta=result.theta,
             k=result.k,
@@ -763,8 +740,91 @@ class DigitalTwin:
             notes=notes,
             n_forward=int(result.n_forward),
             misfit=list(result.misfit),
-            ensemble=ensemble,
+            ensemble=None,
         )
+
+    def _maybe_lm_interval(self, post: Posterior) -> Posterior:
+        lm_like = LMResult(
+            theta=np.asarray(post.theta, dtype=float),
+            k=np.asarray(post.k, dtype=float),
+            theta_std=np.asarray(post.theta_std, dtype=float),
+            theta_cov=np.diag(np.maximum(np.asarray(post.theta_std, dtype=float).ravel() ** 2, 1.0e-16)),
+            misfit=list(post.misfit),
+            n_forward=int(post.n_forward),
+        )
+        post.ensemble = sample_posterior_ensemble(
+            self.parameterization,
+            lm_like,
+            ne=int(self.inverse.post_ensemble_ne),
+            seed=int(self.inverse.post_ensemble_seed),
+        )
+        post.notes.append(f"interval from LM covariance Ne={int(self.inverse.post_ensemble_ne)}")
+        return post
+
+    def calibrate(
+        self,
+        *,
+        prior_mean: float | NDArray[np.float64] | None = None,
+        prior_std: float | NDArray[np.float64] | None = None,
+        max_iter: int | None = None,
+        time_limit_s: float | None = None,
+        fd_rel: float | None = None,
+    ) -> Posterior:
+        """Fit θ. Default ``auto``: LM, then ES-MDA only if identifiability or hold-out is weak."""
+        if prior_mean is None:
+            pmean = getattr(self.parameterization, "prior_mean", self.inverse.prior_mean)
+        else:
+            pmean = prior_mean
+        if prior_std is None:
+            pstd = getattr(self.parameterization, "prior_std", self.inverse.prior_std)
+        else:
+            pstd = prior_std
+        pmean = np.asarray(pmean, dtype=float)
+        pstd = np.asarray(pstd, dtype=float)
+        algo = str(self.inverse.algorithm).strip().lower()
+        uq = bool(getattr(self.inverse, "uq", False))
+
+        if algo in {"esmda", "es-mda", "es_mda"}:
+            from reservoir_backend.twin.history_match import HistoryMatchWorkflow
+
+            return HistoryMatchWorkflow().run(
+                self,
+                observations=self.experiment.observations,
+                parameter_prior=(pmean, pstd),
+                config=self._esmda_config(),
+            )
+
+        post = self._calibrate_lm(
+            pmean=pmean, pstd=pstd, max_iter=max_iter, fd_rel=fd_rel, time_limit_s=time_limit_s
+        )
+        if algo in {"lm", "point"}:
+            if uq or bool(self.inverse.post_ensemble_enabled):
+                post = self._maybe_lm_interval(post)
+            return post
+
+        escalate, reason = should_run_ensemble(
+            post.identifiability,
+            assimilate_rmse=float(post.assimilate_rmse),
+            holdout_rmse=float(post.holdout_rmse),
+            uq=uq,
+        )
+        post.notes.append(f"auto: {reason}")
+        if escalate:
+            from reservoir_backend.twin.history_match import HistoryMatchWorkflow
+
+            ens = HistoryMatchWorkflow().run(
+                self,
+                observations=self.experiment.observations,
+                parameter_prior=(pmean, pstd),
+                config=self._esmda_config(),
+            )
+            ens.notes = list(post.notes) + list(ens.notes)
+            ens.notes.append(f"escalated from lm ({reason})")
+            ens.n_forward = int(post.n_forward) + int(ens.n_forward)
+            return ens
+        if uq or bool(self.inverse.post_ensemble_enabled):
+            post = self._maybe_lm_interval(post)
+        return post
 
     def assimilate(
         self,

@@ -37,6 +37,47 @@ def identifiability(prior_std: NDArray[np.float64], post_std: NDArray[np.float64
     return np.asarray(post_std, dtype=float) / np.maximum(np.asarray(prior_std, dtype=float), 1.0e-30)
 
 
+# post/prior σ. Above this, LM did not pin the coordinate — escalate to ES-MDA.
+IDENT_RATIO_ESCALATE = 0.70
+HOLDOUT_WHITENED_ESCALATE = 2.0
+HOLDOUT_VS_ASSIM = 1.25
+
+
+def should_run_ensemble(
+    ident: NDArray[np.float64] | list[float],
+    *,
+    assimilate_rmse: float,
+    holdout_rmse: float,
+    uq: bool = False,
+) -> tuple[bool, str]:
+    """Point estimate first. Ensemble only if θ is weakly pinned or UQ is required.
+
+    Spatial localization is not used: V1 θ is a global scalar or pair, not a field.
+    ``uq`` with a well-pinned LM fit should use the LM covariance (post_ensemble),
+    not a full ES-MDA rerun — this function then returns False with reason
+    ``interval_from_lm``.
+    """
+    ratio = np.asarray(ident, dtype=float).ravel()
+    if ratio.size == 0 or not np.all(np.isfinite(ratio)):
+        return True, "identifiability_undefined"
+    weak = bool(np.any(ratio > IDENT_RATIO_ESCALATE))
+    hold = float(holdout_rmse)
+    assim = float(assimilate_rmse)
+    hold_bad = np.isfinite(hold) and hold > HOLDOUT_WHITENED_ESCALATE
+    hold_worse = (
+        np.isfinite(hold)
+        and np.isfinite(assim)
+        and hold > HOLDOUT_VS_ASSIM * max(assim, 1.0e-12)
+    )
+    if weak:
+        return True, "weak_identifiability"
+    if hold_bad or hold_worse:
+        return True, "holdout"
+    if uq:
+        return False, "interval_from_lm"
+    return False, "lm_sufficient"
+
+
 def prior_theta(parameterization: Parameterization, mean: NDArray[np.float64] | float) -> NDArray[np.float64]:
     n = int(parameterization.n_params)
     custom = getattr(parameterization, "prior_mean", None)

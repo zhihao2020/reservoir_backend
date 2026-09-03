@@ -315,16 +315,14 @@ def invert_from_cmg_observations(
     hidden_dir: str | Path | None = None,
     twin: DigitalTwin | None = None,
 ) -> Posterior:
-    """ES-MDA on GEM gauges only. Passing hidden_dir is a hard error."""
+    """Invert GEM gauges via ``twin.calibrate``. Passing hidden_dir is a hard error."""
     if hidden_dir is not None:
         raise ValueError("inversion must not receive CMG hidden truth")
-    from reservoir_backend.twin.history_match import HistoryMatchWorkflow
-
     twin = twin if twin is not None else load_lab_v1(dev=True)
     attach_cmg_observations(twin, export_dir)
     if not twin.experiment.observations:
         raise ValueError("no CMG observations to assimilate")
-    return HistoryMatchWorkflow().run(twin)
+    return twin.calibrate()
 
 
 def pack_visual_fields(traj, times: NDArray[np.float64]) -> dict[str, NDArray[np.float64]]:
@@ -455,6 +453,36 @@ def forward_at_theta(
     t_end = float(np.max(t)) if t.size else float(twin.experiment.history_end_s or 60.0)
     traj = twin.simulate(parameters=np.asarray(theta, dtype=float), t_end=t_end, report_times=t)
     return pack_visual_fields(traj, t)
+
+
+def load_twin_case(case_path: str | Path | None = None, *, dev: bool = True):
+    """Any YAML case, or the M2 lab_v1 fixture when ``case_path`` is omitted."""
+    if case_path is not None:
+        from reservoir_backend.io.case import load_case
+
+        return load_case(case_path)
+    return load_lab_v1(dev=dev)
+
+
+def theta_true_from_twin(
+    twin: DigitalTwin,
+    spec: dict[str, Any] | None = None,
+    *,
+    cf_m2: float | None = None,
+    tmf_multiplier: float | None = None,
+    k_m2: float | None = None,
+) -> NDArray[np.float64]:
+    n = int(twin.parameterization.n_params)
+    if n >= 2:
+        return theta_true_from_spec(twin, spec, cf_m2=cf_m2, tmf_multiplier=tmf_multiplier)
+    k = k_m2
+    if k is None and spec is not None:
+        k = (spec.get("rock") or {}).get("k_m2") or (spec.get("rock") or {}).get("k_matrix_m2")
+    if k is None:
+        k = twin.physics.k_matrix_m2
+    if k is None:
+        k = float(getattr(twin.parameterization, "c_ref_m2", 1.0e-15))
+    return twin.parameterization.encode(np.array([float(k)], dtype=float))
 
 
 def theta_true_from_spec(
@@ -771,6 +799,7 @@ def sample_observations_from_hidden(
 _TIME_DAYS = re.compile(r"Time\s*=\s*([0-9.Ee+\-]+)", re.I)
 _PLANE = re.compile(r"Plane\s+K\s*=\s*(\d+)", re.I)
 _JROW = re.compile(r"J=\s*(\d+)\s+(.*)")
+_IHEAD = re.compile(r"^\s*I\s*=\s*(.+)$", re.I)
 _ALLVAL = re.compile(r"All values are\s+([0-9.Ee+\-]+)", re.I)
 
 
@@ -781,22 +810,30 @@ def _flatten_planes(planes: dict[int, dict[int, list[float]]], nx: int, ny: int,
             for i, v in enumerate(vals):
                 if i >= nx:
                     break
+                if not np.isfinite(v):
+                    continue
                 cell = (int(k) - 1) * ny * nx + (int(j) - 1) * nx + i
                 if 0 <= cell < field.size:
                     field[cell] = float(v)
     return field
 
 
+def _continuum_field(maps: dict[tuple[str, str], NDArray[np.float64]], kind: str) -> NDArray[np.float64] | None:
+    for cont in ("fracture", "matrix", "bulk"):
+        arr = maps.get((kind, cont))
+        if arr is not None:
+            return np.asarray(arr, dtype=float)
+    return None
+
+
 def _si_fields_from_maps(maps: dict[tuple[str, str], NDArray[np.float64]]) -> dict[str, NDArray[np.float64] | None]:
-    pf = maps.get(("pressure", "fracture"))
+    pf = _continuum_field(maps, "pressure")
     pm = maps.get(("pressure", "matrix"))
     if pf is None:
-        pf = pm
-    if pf is None:
         return {}
-    sg = maps.get(("sg", "fracture"))
-    so = maps.get(("so", "fracture"))
-    sw = maps.get(("sw", "fracture"))
+    sg = _continuum_field(maps, "sg")
+    so = _continuum_field(maps, "so")
+    sw = _continuum_field(maps, "sw")
     return {
         "pressure": np.asarray(pf, dtype=float) * 1.0e3,
         "pressure_matrix": None if pm is None else np.asarray(pm, dtype=float) * 1.0e3,
@@ -816,17 +853,19 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
     current: str | None = None
     planes: dict[int, dict[int, list[float]]] = {}
     kplane = 1
+    i_ids: list[int] = []
     snapshots: list[tuple[float, dict[tuple[str, str], NDArray[np.float64]]]] = []
 
     def flush() -> None:
         nonlocal planes, current, kind
-        if kind and current and planes:
-            maps[(kind, current)] = _flatten_planes(planes, nx, ny, nz)
+        cont = current or ("bulk" if kind else None)
+        if kind and cont and planes:
+            maps[(kind, cont)] = _flatten_planes(planes, nx, ny, nz)
         planes = {}
 
     def stash() -> None:
         flush()
-        if maps.get(("pressure", "fracture")) is None and maps.get(("pressure", "matrix")) is None:
+        if _continuum_field(maps, "pressure") is None:
             return
         snapshots.append((float(t_days), {k: np.asarray(v).copy() for k, v in maps.items()}))
 
@@ -861,6 +900,7 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
             kind = new_kind
             current = None
             kplane = 1
+            i_ids = []
             continue
         if "Fundamental Grid - Matrix" in line:
             flush()
@@ -869,17 +909,29 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
             flush()
             current = "fracture"
         allv = _ALLVAL.search(line)
-        if allv and kind and current:
-            maps[(kind, current)] = np.full(nx * ny * nz, float(allv.group(1)))
+        if allv and kind:
+            cont = current or "bulk"
+            maps[(kind, cont)] = np.full(nx * ny * nz, float(allv.group(1)))
             continue
         if "Fundamental Grid - Matrix" in line or "Fundamental Grid - Fracture" in line:
+            continue
+        im = _IHEAD.match(line)
+        if im:
+            i_ids = [int(float(x)) for x in im.group(1).split()]
             continue
         pm = _PLANE.search(line)
         if pm:
             kplane = int(pm.group(1))
+            i_ids = []
         jm = _JROW.match(line.strip())
-        if jm and current is not None:
-            planes.setdefault(kplane, {})[int(jm.group(1))] = [float(x) for x in jm.group(2).split()]
+        if jm and kind is not None:
+            j = int(jm.group(1))
+            vals = [float(x) for x in jm.group(2).split()]
+            ids = i_ids if i_ids else list(range(1, len(vals) + 1))
+            row = planes.setdefault(kplane, {}).setdefault(j, [float("nan")] * nx)
+            for ii, v in zip(ids, vals):
+                if 1 <= int(ii) <= nx:
+                    row[int(ii) - 1] = float(v)
     stash()
     if not snapshots:
         raise ValueError(f"no pressure maps in {out_path}")
@@ -890,7 +942,10 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
         vals = [f[name] for f in fields]
         if any(v is None for v in vals):
             return None
-        return np.stack(vals, axis=0)
+        arr = np.stack(vals, axis=0)
+        if not np.isfinite(arr).all():
+            return None
+        return arr
 
     return HiddenTruth(
         times_s=times,

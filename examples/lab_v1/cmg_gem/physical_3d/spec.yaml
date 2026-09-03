@@ -1,0 +1,182 @@
+# 30 cm black-shale cube, CO2 extraction. Source: 三维.docx + schematic.
+# Not the M2a alignment deck (lab_v1_dev.dat / C1-nC10 / face wells / DPDP).
+# SI unless a GEM column is given.
+
+name: sanwei_co2
+source_doc: 三维.docx
+gem_deck: examples/lab_v1/cmg_gem/physical_3d/sanwei_co2.dat
+our_case: examples/lab_v1/case.yaml   # product geometry only; physics here is different
+
+geometry_m: [0.30, 0.30, 0.30]
+grid: [15, 15, 15]
+cell_m: 0.02
+kdir: down          # k=1 is the top
+cell_order: k_j_i
+
+# Three equal 10 cm layers (schematic).
+layers:
+  upper:  {z_from_bottom_m: [0.20, 0.30], k: [1, 5]}
+  middle: {z_from_bottom_m: [0.10, 0.20], k: [6, 10]}
+  lower:  {z_from_bottom_m: [0.00, 0.10], k: [11, 15]}
+monitor:
+  layer1: {z_from_top_m: 0.09, k: 5,  note: "schematic 监测层1 ~10 cm from top"}
+  layer2: {z_from_top_m: 0.21, k: 11, note: "schematic 监测层2 ~20 cm from top"}
+
+# ---- rock from the document ----
+rock:
+  lithology: black_shale
+  phi: 0.0367                 # 3.67%, taken as already at stressed lab state
+  k_md: 0.018                 # single-porosity; document gives one k
+  k_m2: 1.776e-17             # 0.018 mD * 9.869233e-16
+  mineral_wt_pct:
+    clay: 18.6
+    quartz: 55.7
+    k_feldspar: 0.2
+    plagioclase: 1.2
+    calcite: 14.7
+    dolomite: 6.6
+    siderite: 0.0             # empty cell in the table; others sum to 100
+    pyrite: 3.0
+
+# Grain density / VRH from Mavko mineral table, volume ≈ wt% (no TOC given).
+# Quartz 2.65, illite-clay 2.76, Kspar 2.56, plag 2.63, calcite 2.71,
+# dolomite 2.87, pyrite 5.01 g/cm3.
+  grain_density_kg_m3: 2763
+  bulk_density_dry_kg_m3: 2662   # (1-phi)*rho_g
+  K_solid_GPa: 42.4              # VRH bulk
+  G_solid_GPa: 31.8              # VRH shear
+  E_solid_GPa: 76.3
+  nu_solid: 0.20
+
+# Static frame at ~10 MPa net stress. Quartz-rich shale, Lucaogou-style range
+# Es 3–21 GPa, ν 0.13–0.36 (Xiong et al. 2023 Appl. Sci. 13:12851).
+# Pick Es=20 GPa (siliceous, 56% quartz), ν=0.22.
+  E_static_GPa: 20.0
+  nu_static: 0.22
+  K_dry_GPa: 11.9                # E / (3(1-2ν))
+  biot: 0.72                     # 1 - K_dry/K_solid
+  cohesion_MPa: 25               # Lucaogou C 14.7–34.6 MPa; deck uses 100 MPa to stay elastic
+  friction_deg: 30
+  # GEM *CPOR is (1/φ)dφ/dP at constant total stress, 1/kPa in SI.
+  # α^2 / (φ K_dry) ≈ 1.2e-9 1/Pa = 1.2e-6 1/kPa.
+  cpor_1_per_kPa: 1.2e-6
+  prpor_kPa: 50000
+  sources:
+    - "三维.docx: phi, k, mineralogy"
+    - "Mavko et al. rock-physics mineral table: VRH grain moduli"
+    - "Xiong et al. 2023 Appl. Sci. 13:12851 (Lucaogou shale Es, ν, C, φ)"
+    - "Wu et al. 2025 Sci. Rep. 15:91189 (E, ν rise with confining pressure)"
+
+# ---- confining pressure (must be in the model) ----
+# Lab cell: jacket 60 MPa, pore 50 MPa. GEM *STRESS3D is INITIAL EFFECTIVE stress
+# (gmgmc003). *BIOTSCOEF 1 (explicit): σ' = 60-50 = 10 MPa. VRH α=0.72 is recorded
+# above but not used in the deck, so the 围压/回压 numbers stay Terzaghi.
+# *GCFACTOR 0 = unconstrained = Δtraction 0, total stress stays 60 MPa.
+# *NOCOUPERM: k=0.018 mD is already the stressed measurement; do not retune k.
+stress:
+  confining_MPa: 60.0            # 围压, total
+  pore_MPa: 50.0
+  effective_MPa: 10.0            # Terzaghi, α=1, what GEM *STRESS3D holds
+  gem_stress3d_kPa: [10000, 10000, 10000, 0, 0, 0]
+  gem_elastmod_kPa: 2.0e7        # 20 GPa
+  gem_poissratio: 0.22
+  gem_biotscoef: 1.0
+  gem_cohesion_kPa: 1.0e5        # 100 MPa, stay elastic (templates do this)
+  gem_fricangle_deg: 30
+  gem_nocouperm: true
+  note: "φ and k in the document are used as the stressed state at this σ'."
+
+# ---- fluid: published CO2-flood EXAMPLE, not a Jiyang card ----
+fluid:
+  source: "D:\\Tool\\CMG\\WINPROP\\2024.20\\TPL\\co2_flood_fluid.dat"
+  label: EXAMPLE
+  eos: peng_robinson
+  temperature_C: 120
+  tres_C: 120
+  names: [CO2, N2C1, C2C6, C7C13, C14C26, C26C36, C36P]
+  z_init_mole: [0.0080, 0.0630, 0.0387, 0.3146, 0.4122, 0.1285, 0.0350]
+  z_inj_mole:  [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  viscor: HZYT
+  note: >
+    WinProp sample is a 7-pseudo-component CO2 flood at 126 C with a swelling
+    test. Retuned TRES to 120 C. Not laboratory crude. Swap when PVT arrives.
+    At 50 MPa, 120 C, CO2 is supercritical; PR+HZYT compute density/viscosity.
+
+# ---- wells from the schematic (depths estimated) ----
+# Origin: front-left-bottom. x right, y back, z up.
+# 5 cm inset, snapped to 2 cm cells. rw=3 mm.
+wells:
+  INJ:
+    xy_m: [0.15, 0.15]
+    ijk: [8, 8]
+    k_perf: [1, 11]              # top to 监测层2
+    z_from_bottom_m: [0.10, 0.30]
+    role: injector
+  PROD1:
+    xy_m: [0.05, 0.25]
+    ijk: [3, 13]
+    k_perf: [1, 5]               # upper only
+    z_from_bottom_m: [0.20, 0.30]
+    role: producer
+  PROD2:
+    xy_m: [0.25, 0.25]
+    ijk: [13, 13]
+    k_perf: [1, 15]              # full column
+    z_from_bottom_m: [0.00, 0.30]
+    role: producer
+  PROD3:
+    xy_m: [0.05, 0.05]
+    ijk: [3, 3]
+    k_perf: [1, 15]              # full column
+    z_from_bottom_m: [0.00, 0.30]
+    role: producer
+  PROD4:
+    xy_m: [0.25, 0.05]
+    ijk: [13, 3]
+    k_perf: [11, 15]             # lower only, no top wellhead
+    z_from_bottom_m: [0.00, 0.10]
+    role: producer
+  rw_m: 0.003
+  geofac: 0.34
+  skin: 0.0
+
+# Pump volumetric 5 mL/min, not surface gas.
+controls:
+  q_inj_mL_min: 5.0
+  q_inj_m3_day: 0.0072           # GEM SI *BHF
+  p_inj_kPa: 50000
+  p_prod_kPa: 49500
+  drawdown_kPa: 500
+  note: >
+    Document writes inj and backpressure both 50 MPa. Equal BHP in 0.018 mD
+    switches INJ to BHP and rate ~0. First smoke after that drop: producer
+    49500 kPa (500 kPa drawdown). 5 mL/min through this k needs ~14 MPa ΔP;
+    do not raise k. Rate will be injectivity-limited.
+
+# Sensors: 5x5 snapped to i in {3,5,8,11,13} = 5, 9, 15, 21, 25 cm.
+# Skip centre (8,8) — injector. Pressure = interior 3x3 minus centre.
+# Electrodes = outer frame. GEM does not model resistivity; export Sg/z_CO2.
+sensors:
+  file: sensors.csv
+  n_pressure: 16
+  n_electrode: 32
+
+physics:
+  capillary: none
+  gravity: false
+  water: false
+  thermal: false
+  geochem: false
+  geomech: true
+  dual_porosity: false
+
+relperm:
+  sgt: linear_0_1
+  swt: linear_placeholder
+  sw_init: 0.0
+
+time:
+  smoke_day: 0.01                # ~14 min
+  one_pv_day: 0.14               # only 1 PV if 5 mL/min were delivered
+  pv_mL: 991
+  actual_inj_mL_min_at_0p14d: 0.35   # first GEM run, BHP-limited; 1 PV then ~47 h

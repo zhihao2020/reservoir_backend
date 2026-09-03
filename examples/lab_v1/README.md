@@ -13,6 +13,7 @@ Inputs: \(Q_{inj}(t)\), \(P_{prod}(t)\), \(P_{obs}\), \(S_{obs}(\sigma,x,y,z,t)\
 
 Outputs: reconstructed \(p\), \(S_w,S_o,S_g\), \(z_i\), and
 \(\theta=(\log C_f,\log\beta_{mf})\) with \(T_{mf}=\beta_{mf}T_{mf}^{ref}\).
+Invert is `algorithm: auto` (LM first; ES-MDA if identifiability or hold-out is weak, or `uq: true`).
 
 Saturation is already inverted upstream. Raw Archie / EM / acoustic inversion,
 PINN, SRV, DFM/EDFM, AMR, thermal, zonal \(C_f\), per-cell \(K\), and fracture

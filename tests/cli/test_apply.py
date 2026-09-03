@@ -20,7 +20,7 @@ from reservoir_backend.io.case import load_case
 def test_lab_cf_is_v1_dpdp_apply_path() -> None:
     twin = load_case("examples/lab/lab_cf.yaml")
     assert twin.uses_dpdp()
-    assert twin.inverse.algorithm == "esmda"
+    assert twin.inverse.algorithm == "auto"
     assert twin.parameterization.n_params == 1
     from reservoir_backend.twin.apply import attach_cf_demo
 

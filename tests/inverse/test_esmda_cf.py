@@ -37,7 +37,7 @@ def test_lab_cf_yaml_is_dpdp() -> None:
 
     twin = load_case("examples/lab/lab_cf.yaml")
     assert twin.uses_dpdp()
-    assert twin.inverse.algorithm == "esmda"
+    assert twin.inverse.algorithm == "auto"
     assert twin.parameterization.n_params == 1
 
 
@@ -58,7 +58,7 @@ def test_yaml_log_conductivity_selects_esmda(tmp_path) -> None:
     assert isinstance(param, LogConductivityParameterization)
     assert param.n_params == 1
     spec = inverse_spec_from_cfg({"parameterization": "log_conductivity", "ensemble_size": 12})
-    assert spec.algorithm == "esmda"
+    assert spec.algorithm == "auto"
     assert spec.ensemble_size == 12
     spec_default = inverse_spec_from_cfg({"parameterization": "log_conductivity"})
     assert spec_default.ensemble_size == 12

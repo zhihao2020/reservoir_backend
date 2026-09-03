@@ -21,7 +21,7 @@ def test_log_cf_tmf_roundtrip() -> None:
 def test_lab_v1_yaml_selects_joint_param() -> None:
     twin = load_case("examples/lab_v1/case_dev.yaml")
     assert twin.parameterization.n_params == 2
-    assert twin.inverse.algorithm == "esmda"
+    assert twin.inverse.algorithm == "auto"
     xfer = twin.transfer_operator(np.array([0.0, np.log(2.0)]))
     assert xfer.transfer_multiplier == pytest.approx(2.0)
 
@@ -45,7 +45,7 @@ def test_member_transfer_differs_with_theta() -> None:
     cond = FractureConductivityModel(n_cells=grid.n_cells, fracture_mask=np.ones(grid.n_cells, dtype=bool), k_matrix_m2=1e-15)
     param = LogCfTmfParameterization(conductivity=cond, c_ref_m2=1e-12)
     spec = inverse_spec_from_cfg({"parameterization": "log_cf_tmf", "prior_mean": [0.0, 0.0]})
-    assert spec.algorithm == "esmda"
+    assert spec.algorithm == "auto"
     cfg = {
         "inverse": {"parameterization": "log_cf_tmf", "prior_mean": [0.0, 0.0], "prior_std": [0.8, 0.5]},
         "rock": {"porosity": 0.08, "k_matrix_m2": 1e-15},

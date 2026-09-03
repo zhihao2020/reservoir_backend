@@ -199,6 +199,18 @@ def _port_from_yaml(grid: Any, p: dict[str, Any]) -> FlowPort:
 
 
 def _yaml_cells(grid: Any, p: dict[str, Any]) -> list[int] | None:
+    k_perf = p.get("k_perf") or p.get("k_range")
+    if k_perf is not None and p.get("ijk") is not None:
+        ij = p["ijk"]
+        if isinstance(ij, (list, tuple)) and len(ij) >= 2 and not isinstance(ij[0], (list, tuple, dict)):
+            i0, j0 = ij[0], ij[1]
+        else:
+            triples = _as_triples(ij)
+            if not triples:
+                raise InvalidControl("ijk + k_perf needs I and J")
+            i0, j0 = triples[0][0], triples[0][1]
+        lo, hi = _k_perf_bounds(k_perf)
+        return _cells_from_ijk_triples(grid, [(i0, j0, k) for k in range(lo, hi + 1)], one_based=True)
     if p.get("ijk") is not None:
         return _cells_from_ijk_triples(grid, p["ijk"], one_based=True)
     if p.get("perforations") is not None:
@@ -208,6 +220,16 @@ def _yaml_cells(grid: Any, p: dict[str, Any]) -> list[int] | None:
     if all(k in p for k in ("i", "j", "k")):
         return _cells_from_ijk_triples(grid, [(p["i"], p["j"], p["k"])], one_based=True)
     return None
+
+
+def _k_perf_bounds(raw: Any) -> tuple[int, int]:
+    if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+        lo, hi = int(raw[0]), int(raw[1])
+    else:
+        lo = hi = int(raw)
+    if hi < lo:
+        lo, hi = hi, lo
+    return lo, hi
 
 
 def _cells_from_ijk_triples(grid: Any, raw: Any, *, one_based: bool) -> list[int]:
@@ -376,24 +398,49 @@ def _is_name(tok: str) -> bool:
     return bool(t) and not t.replace(".", "", 1).replace("-", "", 1).isdigit()
 
 
+def _index_span(tok: str) -> list[int] | None:
+    """OPM COMPDAT / GEM PERF ``K1:K2`` (inclusive)."""
+    s = tok.strip()
+    if ":" not in s:
+        return None
+    a, b = s.split(":", 1)
+    try:
+        lo, hi = int(float(a)), int(float(b))
+    except ValueError:
+        return None
+    step = 1 if hi >= lo else -1
+    return list(range(lo, hi + step, step))
+
+
 def _add_perf_tokens(draft: dict[str, Any], tokens: list[str]) -> None:
-    nums: list[float] = []
+    parts: list[str] = []
     for tok in tokens:
         if _keyword(tok) in {"OPEN", "SHUT", "CLOSE", "ON", "OFF"}:
             continue
+        parts.append(tok)
+    if len(parts) < 3:
+        return
+    try:
+        i = int(float(parts[0]))
+        j = int(float(parts[1]))
+    except ValueError:
+        return
+    ks = _index_span(parts[2])
+    if ks is None:
         try:
-            nums.append(float(tok))
+            ks = [int(float(parts[2]))]
         except ValueError:
             return
-    if len(nums) < 3:
-        return
-    i, j, k = int(nums[0]), int(nums[1]), int(nums[2])
-    draft["perfs"].append((i, j, k))
-    if len(nums) >= 4:
-        ff = float(nums[3])
-        if draft["perfs"] and len(draft["perfs"]) == 1:
-            draft["wi_multiplier"] = ff * float(draft.get("wfrac") or 1.0)
-        # later connections keep the first ff; FlowPort has one multiplier
+    ff = None
+    if len(parts) >= 4:
+        try:
+            ff = float(parts[3])
+        except ValueError:
+            ff = None
+    for k in ks:
+        draft["perfs"].append((i, j, k))
+    if ff is not None and len(draft["perfs"]) == len(ks):
+        draft["wi_multiplier"] = ff * float(draft.get("wfrac") or 1.0)
 
 
 def _apply_operate(draft: dict[str, Any], args: list[str]) -> None:

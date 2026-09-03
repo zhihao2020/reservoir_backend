@@ -23,30 +23,33 @@ from reservoir_backend.twin.cmg_benchmark import (
     invert_from_cmg_observations,
     load_alignment_spec,
     load_hidden_truth,
+    load_twin_case,
     reconstruction_report,
-    theta_true_from_spec,
+    theta_true_from_twin,
     write_comparison_plot,
     write_grid_csv,
 )
-from reservoir_backend.twin.lab_v1 import load_lab_v1, physical_from_theta
+from reservoir_backend.twin.lab_v1 import physical_from_theta
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--export", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "export")
     p.add_argument("--out", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_invert")
+    p.add_argument("--case", type=Path, default=None, help="YAML case; default M2 case_dev")
     p.add_argument("--score", action="store_true", help="open hidden/ after invert; never during ES-MDA")
     p.add_argument("--workers", type=int, default=None, help="ensemble forwards in parallel")
     p.add_argument("--cf-m2", type=float, default=None, help="scoring truth C_f; default spec theta_true")
     p.add_argument("--tmf", type=float, default=None, help="scoring truth beta_mf; default spec theta_true")
+    p.add_argument("--k-m2", type=float, default=None, dest="k_m2", help="scoring truth k for log_conductivity")
     args = p.parse_args(argv)
     export = Path(args.export)
     if not (export / "observations.csv").is_file():
         print(json.dumps({"blocked": export_blocked_reason(export)}, indent=2), flush=True)
         return 2
 
-    twin = load_lab_v1(dev=True)
-    spec = load_alignment_spec()
+    twin = load_twin_case(args.case)
+    spec = None if args.case is not None else load_alignment_spec()
     # Invert path: observations only. Hidden 3-D is never passed in.
     if args.workers is not None:
         twin.inverse.n_workers = int(args.workers)
@@ -78,10 +81,11 @@ def main(argv=None) -> int:
         return 2
 
     truth = load_hidden_truth(hidden)
-    theta_true = theta_true_from_spec(twin, spec, cf_m2=args.cf_m2, tmf_multiplier=args.tmf)
+    theta_true = theta_true_from_twin(
+        twin, spec, cf_m2=args.cf_m2, tmf_multiplier=args.tmf, k_m2=args.k_m2
+    )
     prior_theta = np.asarray(twin.parameterization.prior_mean, dtype=float).ravel()
-    # Fresh twin so scoring does not mutate invert observations.
-    score_twin = load_lab_v1(dev=True)
+    score_twin = load_twin_case(args.case)
     attach_cmg_observations(score_twin, export)
     prior_fields = forward_at_theta(score_twin, prior_theta, truth.times_s)
     post_fields = forward_at_theta(score_twin, np.asarray(post.theta, dtype=float).ravel(), truth.times_s)

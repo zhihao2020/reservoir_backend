@@ -118,6 +118,8 @@ def _read_sensors_csv(path: Path) -> list[dict[str, Any]]:
         if not name:
             continue
         kind = str(row.get("kind") or "saturation")
+        if kind.lower() in {"electrode", "resistivity_raw", "er"}:
+            continue
         sigma = row.get("sigma")
         if sigma in (None, ""):
             if row.get("sensor_id"):
@@ -302,8 +304,17 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
         phi_fracture=float(phys_cfg.get("phi_fracture", 0.02)),
         k_matrix_m2=(
             None
-            if (phys_cfg.get("k_matrix_m2") is None and (cfg.get("rock") or {}).get("k_matrix_m2") is None)
-            else float(phys_cfg.get("k_matrix_m2", (cfg.get("rock") or {}).get("k_matrix_m2")))
+            if (
+                phys_cfg.get("k_matrix_m2") is None
+                and (cfg.get("rock") or {}).get("k_matrix_m2") is None
+                and (cfg.get("rock") or {}).get("k_m2") is None
+            )
+            else float(
+                phys_cfg.get(
+                    "k_matrix_m2",
+                    (cfg.get("rock") or {}).get("k_matrix_m2", (cfg.get("rock") or {}).get("k_m2")),
+                )
+            )
         ),
     )
     if not compositional:
@@ -454,7 +465,7 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
     kind = str(inv.get("parameterization", "region")).lower()
     algo_raw = inv.get("algorithm")
     if algo_raw is None:
-        algorithm = "esmda" if kind in _CF_KINDS else "lm"
+        algorithm = "auto" if kind in _CF_KINDS else "lm"
     else:
         algorithm = str(algo_raw).strip().lower()
     if kind in {"log_cf_tmf", "cf_tmf", "joint_cf_tmf"}:
@@ -482,6 +493,7 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
         clip_innovation=bool(inv.get("clip_innovation", False) or inv.get("robust_observations", False)),
         n_workers=None if inv.get("n_workers") is None else int(inv.get("n_workers")),
         outlier_nsigma=float(inv.get("outlier_nsigma", 8.0)),
+        uq=bool(inv.get("uq", False) or inv.get("need_interval", False)),
     )
 
 

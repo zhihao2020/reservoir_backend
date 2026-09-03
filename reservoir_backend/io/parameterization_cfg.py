@@ -101,6 +101,7 @@ def parameterization_from_cfg(grid: CartesianGrid, cfg: dict[str, Any], cfg_dir:
             n_zones=1,
             phi=phi,
             phi_fracture=phi_f,
+            c_ref_m2=float(inv.get("cf_ref_m2", 1.0e-13)),
             conductivity=cond,
             prior_mean=float(pm),
             prior_std=float(ps),

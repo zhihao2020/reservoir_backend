@@ -59,7 +59,7 @@
 | 联合 \(\log C_f,\log\beta_{mf}\) | MVP | `LogCfTmfParameterization` + 分层 ES-MDA | **M1a PASS**。**M1b 主 Case B PASS**（Cf 0.89% / Tmf 0.69%）；T2 与 seed 稳健性未过。**M1c FAIL（已接受）**：实验室可行方案 0 个 \(D_{C_f,5\%}>2\)。不要再调 ES-MDA。 |
 | ES-MDA（log \(C_f\)） | 已验证 | `inverse.esmda`、`twin.history_match` | `tests/inverse/test_esmda.py`、`test_esmda_cf.py`。线性高斯收回；合成无噪声 \(C_f\) 向真值靠近；后验 P05/P50/P95 |
 | Parameter EnKF（在线一步） | MVP | `inverse.parameter_enkf` | `tests/inverse/test_parameter_enkf.py`。**M3 才解冻**；当前 M2 不是这条路 |
-| CMG-GEM 交叉验证流水线 | MVP | `twin.cmg_benchmark`、`examples/lab_v1/cmg_gem/` | **M2a–c PASS**（Case B）。**M2d PASS**（T1–T4 + T2 noise/sparse：6/6 Gate 3，`hidden_used=false`；Improvement\(_P\) 54–83%）。证据 `m2_gate.json`、`m2d_gate.json`。`tests/twin/test_cmg_benchmark.py` |
+| CMG-GEM 交叉验证流水线 | MVP | `twin.cmg_benchmark`、`examples/lab_v1/cmg_gem/` | **M2a–d PASS**（Case B + 四真值）。通用 `--case` 入口；`physical_3d/case.yaml` 15³ 单孔 7 组分 + 16 压力测点已 pack。15³ 正演等价/反演未跑。`tests/twin/test_cmg_benchmark.py` |
 | DualContinuumState / transfer / ForwardModel adapter | MVP | `domain.state`、`physics.transfer`、`solver.forward_adapter` | `tests/domain/test_dual_state.py`、`tests/solver/test_forward_adapter.py` |
 | DPDP DualRock + 组分 transfer | 已验证 | `physics.dual_rock`、`physics.transfer.ComponentTransfer` | `tests/physics/test_dual_rock.py`、`test_component_transfer.py` |
 | DPDP compositional FIM D0–D4 | 已验证 | `comp.dual_residual`、`solver.fi_comp_dual` | `tests/comp/test_dual_d0.py`、`test_dual_d1234.py`：守恒相对误差 < 1e-4 |
@@ -90,7 +90,7 @@
 
 - 30 cm 立方，10 mm 网格，探头直径 6 mm（`H` 在插值场上做球平均）
 - V1 产品 Case：`examples/lab_v1/`（组分 DPDP + 面注采 + log \(C_f\) + ES-MDA）。`lab_cf.yaml` 仅粗网格夹具
-- 反演默认标量 log \(C_f\)（`ensemble_size=12`）。遗留水驱演示才是 2 region log K
+- 反演默认 `algorithm: auto`：先 LM 点估计；可辨识性弱、hold-out 差或 `uq: true` 再 ES-MDA / LM 协方差区间。YAML 仍可写死 `esmda`。遗留水驱演示才是 2 region log K
 - 三维 p/S 是 \(F(\hat\theta)\) 重建。M2 产品尺子是 CMG-GEM 交叉验证（稀疏测点反演 + hidden 全场评分），不再用自洽 synthetic 当最终验收
 - `reservoir harness` 已删除
 - 概念实验室 30 cm：`examples/lab/lab_concept.yaml` + `concept_probes.csv`（75 电阻率 + 16 新增 7.5 cm）。invert 对比 = \(F(m_{\mathrm{post}})\)/\(F(m_{\mathrm{true}})\) 场 nRMSE，不是 CMG。`tests/cases/test_lab_concept.py`。

@@ -50,7 +50,7 @@ sensors: sensors.csv
 
 inverse:
   parameterization: log_cf_tmf
-  algorithm: esmda
+  algorithm: auto
   ensemble_size: 12
   assimilation_steps: 4
   seed: 3

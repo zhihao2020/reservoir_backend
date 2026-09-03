@@ -90,6 +90,40 @@ def test_yaml_column_ports_match_flowport_column() -> None:
     _same_well(ports[0], ref)
 
 
+def test_gem_perf_k_range_matches_yaml_k_perf() -> None:
+    grid = CartesianGrid.uniform((0.30, 0.30, 0.30), 0.02)
+    assert grid.nx == 15 and grid.nz == 15
+    yaml_cfg = {
+        "ports": [
+            {
+                "name": "INJ",
+                "role": "injector",
+                "control": "rate",
+                "ijk": [8, 8],
+                "k_perf": [1, 11],
+                "use_productivity": True,
+            }
+        ]
+    }
+    from_yaml = ports_from_cfg(yaml_cfg, grid)
+    snippet = "\n".join(
+        [
+            "*WELL 1 'INJ'",
+            "*INJECTOR 1",
+            "*OPERATE *MAX *BHF 0.0072",
+            "*GEOMETRY *K 0.003 0.34 1.0 0.0",
+            "*PERF *GEO 1",
+            "  8  8  1:11  1.0",
+        ]
+    )
+    from_deck = parse_well_deck(snippet, grid)
+    assert from_yaml[0].cell_ids.size == 11
+    assert from_deck[0].cell_ids.size == 11
+    assert int(from_yaml[0].cell_ids[0]) == grid.index(7, 7, 0)
+    assert int(from_yaml[0].cell_ids[-1]) == grid.index(7, 7, 10)
+    assert np.array_equal(from_yaml[0].cell_ids, from_deck[0].cell_ids)
+
+
 def test_cmg_well_snippet_matches_yaml_ijk(tmp_path: Path) -> None:
     grid = _grid()
     yaml_cfg = {

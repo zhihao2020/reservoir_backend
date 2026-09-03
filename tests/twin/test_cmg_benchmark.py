@@ -297,6 +297,43 @@ def test_parse_gem_out_pressure_planes(tmp_path: Path) -> None:
     assert truth.so[0, 0] == pytest.approx(0.007)
 
 
+def test_parse_physical_3d_gem_out_if_present() -> None:
+    from reservoir_backend.twin.cmg_benchmark import parse_gem_out_maps
+
+    path = Path("results/lab_v1/cmg_gem_physical_3d/sanwei_co2.out")
+    if not path.is_file():
+        pytest.skip("local GEM physical_3d out not present")
+    truth = parse_gem_out_maps(path, nx=15, ny=15, nz=15)
+    assert truth.pressure.shape[1] == 15 * 15 * 15
+    assert truth.pressure.shape[0] >= 2
+    assert np.isfinite(truth.pressure).all()
+
+
+def test_parse_gem_out_single_porosity_all_values(tmp_path: Path) -> None:
+    from reservoir_backend.twin.cmg_benchmark import parse_gem_out_maps
+
+    snippet = """
+ Time = 0                     Pressure  ( kpa)
+                                                       All values are  50000.0
+ Time = 1.0E-2                Pressure  ( kpa)
+ Plane K = 1
+      I =  1        2
+ J=  1 49580.6  49581.3
+      I =  3
+ J=  1 49588.3
+ Plane K = 2
+      I =  1        2        3
+ J=  1 49590.0  49591.0  49592.0
+"""
+    path = tmp_path / "single.out"
+    path.write_text(snippet, encoding="utf-8")
+    truth = parse_gem_out_maps(path, nx=3, ny=1, nz=2)
+    assert truth.pressure.shape == (2, 6)
+    assert truth.pressure[0, 0] == pytest.approx(5.0e7)
+    assert truth.pressure[1, 0] == pytest.approx(49580.6e3)
+    assert truth.pressure[1, 2] == pytest.approx(49588.3e3)
+
+
 def test_parse_gem_out_keeps_two_report_times(tmp_path: Path) -> None:
     from reservoir_backend.twin.cmg_benchmark import parse_gem_out_maps
 

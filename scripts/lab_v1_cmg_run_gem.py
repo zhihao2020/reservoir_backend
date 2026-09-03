@@ -14,18 +14,19 @@ if str(ROOT) not in sys.path:
 from reservoir_backend.twin.cmg_benchmark import (
     find_gem_exe,
     init_flash_report,
+    load_twin_case,
     parse_gem_out_maps,
     run_gem,
     write_grid_csv,
     write_hidden_truth,
 )
-from reservoir_backend.twin.lab_v1 import load_lab_v1
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--deck", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "lab_v1_dev.dat")
     p.add_argument("--work", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_gem_run")
+    p.add_argument("--case", type=Path, default=None, help="YAML case for nx,ny,nz; default M2 case_dev")
     p.add_argument("--timeout", type=float, default=180.0)
     args = p.parse_args(argv)
     exe = find_gem_exe()
@@ -39,7 +40,7 @@ def main(argv=None) -> int:
         return 1
     outs = rec.get("out_files") or []
     if outs:
-        twin = load_lab_v1(dev=True)
+        twin = load_twin_case(args.case)
         truth = parse_gem_out_maps(outs[0], nx=twin.grid.nx, ny=twin.grid.ny, nz=twin.grid.nz)
         hidden = Path(args.work) / "hidden"
         write_hidden_truth(hidden, truth)
