@@ -36,6 +36,7 @@ def main(argv=None) -> int:
     p.add_argument("--export", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "export")
     p.add_argument("--out", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_invert")
     p.add_argument("--score", action="store_true", help="open hidden/ after invert; never during ES-MDA")
+    p.add_argument("--workers", type=int, default=None, help="ensemble forwards in parallel")
     args = p.parse_args(argv)
     export = Path(args.export)
     if not (export / "observations.csv").is_file():
@@ -44,7 +45,9 @@ def main(argv=None) -> int:
 
     twin = load_lab_v1(dev=True)
     spec = load_alignment_spec()
-    # Invert path: observations only.
+    # Invert path: observations only. Hidden 3-D is never passed in.
+    if args.workers is not None:
+        twin.inverse.n_workers = int(args.workers)
     post = invert_from_cmg_observations(export, twin=twin)
     phys_post = physical_from_theta(twin, np.asarray(post.theta, dtype=float).ravel())
     dest = Path(args.out)

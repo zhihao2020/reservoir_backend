@@ -571,8 +571,27 @@ def _flatten_planes(planes: dict[int, dict[int, list[float]]], nx: int, ny: int,
     return field
 
 
+def _si_fields_from_maps(maps: dict[tuple[str, str], NDArray[np.float64]]) -> dict[str, NDArray[np.float64] | None]:
+    pf = maps.get(("pressure", "fracture"))
+    pm = maps.get(("pressure", "matrix"))
+    if pf is None:
+        pf = pm
+    if pf is None:
+        return {}
+    sg = maps.get(("sg", "fracture"))
+    so = maps.get(("so", "fracture"))
+    sw = maps.get(("sw", "fracture"))
+    return {
+        "pressure": np.asarray(pf, dtype=float) * 1.0e3,
+        "pressure_matrix": None if pm is None else np.asarray(pm, dtype=float) * 1.0e3,
+        "sg": None if sg is None else np.asarray(sg, dtype=float),
+        "so": None if so is None else np.asarray(so, dtype=float),
+        "sw": None if sw is None else np.asarray(sw, dtype=float),
+    }
+
+
 def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: int = 2) -> HiddenTruth:
-    """Parse last GEM ASCII grid maps (kPa) into SI hidden truth. Scoring only."""
+    """Parse GEM ASCII grid maps (kPa) at every report time into SI hidden truth."""
     text = Path(out_path).read_text(encoding="utf-8", errors="ignore")
     lines = text.splitlines()
     t_days = 0.0
@@ -581,6 +600,7 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
     current: str | None = None
     planes: dict[int, dict[int, list[float]]] = {}
     kplane = 1
+    snapshots: list[tuple[float, dict[tuple[str, str], NDArray[np.float64]]]] = []
 
     def flush() -> None:
         nonlocal planes, current, kind
@@ -588,10 +608,23 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
             maps[(kind, current)] = _flatten_planes(planes, nx, ny, nz)
         planes = {}
 
+    def stash() -> None:
+        flush()
+        if maps.get(("pressure", "fracture")) is None and maps.get(("pressure", "matrix")) is None:
+            return
+        snapshots.append((float(t_days), {k: np.asarray(v).copy() for k, v in maps.items()}))
+
     for line in lines:
         tm = _TIME_DAYS.search(line)
         if tm:
-            t_days = float(tm.group(1))
+            t_new = float(tm.group(1))
+            if t_new > t_days + 1.0e-16:
+                stash()
+                maps = {}
+                planes = {}
+                kind = None
+                current = None
+            t_days = t_new
         low = line.strip().lower()
         new_kind = None
         if "matrix pressure - fracture" in low:
@@ -631,28 +664,27 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
         jm = _JROW.match(line.strip())
         if jm and current is not None:
             planes.setdefault(kplane, {})[int(jm.group(1))] = [float(x) for x in jm.group(2).split()]
-    flush()
-    t_s = float(t_days) * 86400.0
-    pf = maps.get(("pressure", "fracture"))
-    pm = maps.get(("pressure", "matrix"))
-    if pf is None and pm is None:
+    stash()
+    if not snapshots:
         raise ValueError(f"no pressure maps in {out_path}")
-    if pf is None:
-        pf = pm
-    pf_pa = np.asarray(pf, dtype=float) * 1.0e3
-    pm_pa = None if pm is None else np.asarray(pm, dtype=float) * 1.0e3
-    sg = maps.get(("sg", "fracture"))
-    so = maps.get(("so", "fracture"))
-    sw = maps.get(("sw", "fracture"))
+    times = np.array([t * 86400.0 for t, _ in snapshots], dtype=float)
+    fields = [_si_fields_from_maps(m) for _, m in snapshots]
+    pf = np.stack([f["pressure"] for f in fields], axis=0)
+    def _stack(name: str):
+        vals = [f[name] for f in fields]
+        if any(v is None for v in vals):
+            return None
+        return np.stack(vals, axis=0)
+
     return HiddenTruth(
-        times_s=np.array([t_s], dtype=float),
-        pressure=pf_pa.reshape(1, -1),
-        sg=None if sg is None else np.asarray(sg, dtype=float).reshape(1, -1),
-        so=None if so is None else np.asarray(so, dtype=float).reshape(1, -1),
-        sw=None if sw is None else np.asarray(sw, dtype=float).reshape(1, -1),
-        pressure_fracture=pf_pa.reshape(1, -1),
-        pressure_matrix=None if pm_pa is None else pm_pa.reshape(1, -1),
-        meta={"source": str(out_path), "t_days": t_days, "unit_pressure": "Pa"},
+        times_s=times,
+        pressure=pf,
+        sg=_stack("sg"),
+        so=_stack("so"),
+        sw=_stack("sw"),
+        pressure_fracture=pf,
+        pressure_matrix=_stack("pressure_matrix"),
+        meta={"source": str(out_path), "t_days": [t for t, _ in snapshots], "unit_pressure": "Pa"},
     )
 
 

@@ -240,6 +240,27 @@ def test_parse_gem_out_pressure_planes(tmp_path: Path) -> None:
     assert truth.so[0, 0] == pytest.approx(0.007)
 
 
+def test_parse_gem_out_keeps_two_report_times(tmp_path: Path) -> None:
+    from reservoir_backend.twin.cmg_benchmark import parse_gem_out_maps
+
+    snippet = """
+ Time = 0                     Pressure  ( kpa)
+  Fundamental Grid - Matrix                            All values are  12000.0
+  Fundamental Grid - Fracture                          All values are  12000.0
+ Time = 6.9444444E-4          Pressure  ( kpa)
+  Fundamental Grid - Matrix                            All values are  11800.5
+  Fundamental Grid - Fracture                          All values are  11800.2
+"""
+    path = tmp_path / "gem.out"
+    path.write_text(snippet, encoding="utf-8")
+    truth = parse_gem_out_maps(path)
+    assert truth.pressure.shape[0] == 2
+    assert truth.times_s[0] == pytest.approx(0.0)
+    assert truth.times_s[1] == pytest.approx(60.0, rel=1e-3)
+    assert truth.pressure[0, 0] == pytest.approx(1.2e7)
+    assert truth.pressure[1, 0] == pytest.approx(1.18002e7)
+
+
 def test_spec_fluid_uses_published_opm_vcrit() -> None:
     spec = load_alignment_spec()
     np.testing.assert_allclose(spec["fluid"]["vcrit_m3_kmol"], [0.09863, 0.60980])

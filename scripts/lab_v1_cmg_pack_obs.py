@@ -6,12 +6,16 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import shutil
+
 from reservoir_backend.twin.cmg_benchmark import load_hidden_truth, sample_observations_from_hidden, write_grid_csv
-from reservoir_backend.twin.lab_v1 import load_lab_v1, spatial_holdout, write_observations_csv
+from reservoir_backend.twin.lab_v1 import load_lab_v1, spatial_holdout, write_controls_csv, write_observations_csv
 
 
 def main(argv=None) -> int:
@@ -26,8 +30,32 @@ def main(argv=None) -> int:
     dest = Path(args.export)
     dest.mkdir(parents=True, exist_ok=True)
     write_observations_csv(dest / "observations.csv", series)
-    write_grid_csv(twin, dest / "hidden" / "grid.csv")
-    print(f"wrote {dest / 'observations.csv'} n_channels={len(series)}", flush=True)
+    write_controls_csv(
+        dest / "controls.csv",
+        t_end=float(np.max(truth.times_s)) if truth.times_s.size else 60.0,
+        q_inj=3.0e-4,
+        p_prod=1.18e7,
+    )
+    hidden_dest = dest / "hidden"
+    hidden_dest.mkdir(parents=True, exist_ok=True)
+    src = Path(args.hidden)
+    for name in (
+        "pressure.npy",
+        "sg.npy",
+        "so.npy",
+        "sw.npy",
+        "pressure_fracture.npy",
+        "pressure_matrix.npy",
+        "meta.json",
+    ):
+        p = src / name
+        if p.is_file():
+            shutil.copy2(p, hidden_dest / name)
+    write_grid_csv(twin, hidden_dest / "grid.csv")
+    print(
+        f"wrote {dest / 'observations.csv'} n_channels={len(series)} n_times={int(truth.times_s.size)}",
+        flush=True,
+    )
     return 0
 
 
