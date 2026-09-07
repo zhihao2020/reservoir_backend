@@ -84,14 +84,14 @@
 **未关（交给后续精度轮）**
 
 1. 历史 433 s underflow：当前 864 / 12096 s 已真实到达，见最新精度轮；不再列为当前阻塞。
-2. GEM `*GEOMECH`（`*NOCOUPERM`）在 F 外。牌上 α=1、K_dry=11.9 GPa 的 α²/K_dry 已加进孔隙体积，远场均值仍是 +524 Pa（GEM +98 Pa）。**停止加大 cpor。** 全场 RMSE 与井柱 RMSE 分开报。
+2. GEM `*GEOMECH` 现由 `physical_3d/case.yaml` 的 `geomech:` 打开 Cartesian 线弹性（`nocouperm: true`，不改 k）。产品 DPDP 默认关。**停止加大 cpor。** 全场 RMSE 与井柱 RMSE 分开报。
 3. 黏度已接线：physical_3d `hzyt` → 现有 LBC/Jossi；GEM 完整 HZYT/PVC3 等价性仍未验证。
 4. 单孔 Jacobian 历史约 1 的误差已在 D0/D2 混跑复现：CSC 缓存拓扑混用；现已修复，列 FD 误差 1.11e-9。
 5. D2 属于产品 DPDP invert 所用 F。underflow 的缓存碰撞根因已修复；原测试保留，20 s 完成。
 6. nrmse_p 在 GEM span 只有几十 Pa 时会被印出噪声放大；看 RMSE_Pa / `nrmse_p_sigma`。
 7. 流量一旦离开 50/50 近零区，要再对 Peaceman WI vs GEM `*GEOMETRY *K 0.003 0.34`。
 
-约束：不重跑 GEM、不调 ES-MDA、不改 50/50 井控去造漏斗、力学不进 F、不宣称 M2a PASS。
+约束：不重跑 GEM、不调 ES-MDA、不改 50/50 井控去造漏斗、不宣称 M2a PASS。产品 DPDP 力学关；physical_3d 由 YAML `geomech` 打开，`*NOCOUPERM` 不改 k。
 
 
 ### physical_3d 精度复核（2026-09-07，当前 main 工作环境）
@@ -123,7 +123,7 @@
 
 井模型：Peaceman BHP 使用 `p_conn=p_ref+rho_wb*g*(z_ref-z_conn)`，z 向上；默认最高连接为 BHP 参考，physical_3d YAML 显式写出 INJ/PROD1–3 的 z_ref=0.29 m、PROD4 的 0.09 m。注井用注入组成，采井用本连接流体组成，在中点井筒压力、T 下闪蒸密度；没有拟合密度。Peaceman 连接默认不允许反向流动，可用 `allow_crossflow` 显式开启；面端口不变。井筒静压独立于 `physics.gravity: false`。BHP 源项的局部导数按组分批处理，保留列 FD 对照。
 
-- 864 s 尺子拆开：`rmse_p_pa` 全场，`rmse_p_inj_column_pa` 注入井柱。加牌上 Biot 体积储集 α²/K_dry=1/11.9 GPa（不加大 *CPOR）后：**全场 437 Pa**，**注入井柱 41 Pa**。远场均值 ours +524 Pa vs GEM +98 Pa，与加储集前几乎相同（α²/K_dry 只比 *CPOR 多 ~7%）。缺口是完整力学，停止加大 cpor。图标题同时写两项。不是 M2a PASS。
+- 864 s 尺子拆开：`rmse_p_pa` 全场，`rmse_p_inj_column_pa` 注入井柱。加牌上 Biot 体积储集 α²/K_dry=1/11.9 GPa（不加大 *CPOR）后：**全场 437 Pa**，**注入井柱 41 Pa**。远场均值 ours +524 Pa vs GEM +98 Pa，与加储集前几乎相同（α²/K_dry 只比 *CPOR 多 ~7%）。缺口交给 YAML `geomech` 线弹性，停止加大 cpor。图标题同时写两项。不是 M2a PASS。
 - GEM 原始井报表来自 `results/lab_v1/cmg_gem_physical_3d/sanwei_co2.out`，在 `Well Summary at Reservoir Conditions at 1.0000E-02 days` 直接读取 **BHP-Pblock 最后一列**（kPa ×1000），共 51 条连接。没有从 5 位有效数字 BHP 反推压差。原文摘录持久保存于 `tests/fixtures/gem_physical_3d_wells_864.txt`，解析器拒绝不存在的 8.64 s 井报表。
 
 下表全为 Pa；“井模型@GEM块压”是隔离测试：仅测试井方程，使用 hidden 的实际 GEM 块压与固定初始组成，不进入正演或反演。GEM 地图打印分辨率 100 Pa，五口井最深连接的这一隔离误差均 <50 Pa；完整 F 的块压仍不匹配。
@@ -174,4 +174,12 @@ DPDP 修复证据：
 - 井加载/黏度/井源项扩展组合 → **30 passed in 11.35s**（`well_visc_tests.log`）；产品 PVT/io/5³ DPDP → **14 passed in 2.81s**（`product_pvt_tests.log`）。
 - 完整反演复验命令：`python -m pytest tests/inverse/test_esmda_cf.py tests/inverse/test_log_cf_tmf.py tests/inverse/test_auto_invert.py tests/inverse/test_lab_v1_recovery.py -q -s -o addopts='' -p no:cacheprovider`。`-o addopts=''` 必须保留，仓库默认跳过 slow 恢复测试。最终结果见本节收尾记录。
 
-剩余阻塞：864 s 场误差与顶部井压差符号仍不匹配；井筒隔离测试通过不能代替储层 F 验证。GEM 完整黏度细节、WI/多连接约束与其他未建模项仍需独立证据；力学继续留在 F 外。反演门槛通过但数值精度未整体提高。本地 Git 暂存尝试失败：`.git/index.lock: Permission denied`，当前沙箱只读 .git 且禁止提权；未 commit、未 push，用户文件 `_codex_task.txt` 与 `三维.docx` 未改动。
+剩余阻塞：864 s 场误差与顶部井压差符号仍不匹配；井筒隔离测试通过不能代替储层 F 验证。GEM 完整黏度细节、WI/多连接约束与其他未建模项仍需独立证据。YAML 线弹性已进 physical_3d，远场仍是 +525 Pa vs GEM +98 Pa；停止加大 cpor，不加拟合系数。反演门槛通过但数值精度未整体提高。
+
+### YAML 线弹性（2026-09-07）
+
+`examples/lab_v1/cmg_gem/physical_3d/case.yaml` 增加 `geomech:`（`enabled` / `nocouperm` / `boundary` / `biot` / `E_GPa` / `nu`）。产品 `examples/lab_v1/case.yaml` 默认关；DPDP 若打开会拒绝。Hex8 线弹性，\(V_p=\varphi V\exp(c_{\mathrm{por}}\Delta p)(1+\alpha\theta)\)，\(\theta=\nabla\cdot u\)，k 不改。打开后不再叠标量 α²/K_dry。
+
+删除 `ours.npz` 后 864 s 重算（147 s，未截断）：**全场 RMSE 437.54 Pa**，**注入井柱 41.08 Pa**，远场均值 ours **+524.67 Pa** vs GEM **+98.10 Pa**。注入井柱 GEM k=1…11：ours 46/166/295/425/555/683/809/932/1050/1159/1247，GEM 0/100/300/400/500/700/800/900/1100/1200/1300。与标量 Biot 一轮几乎相同：E=20 GPa 无约束样品上 θ~10⁻⁸，不能把压力钉在井旁。**停止加大 cpor，不加拟合系数。** 剩余不是再拧力学模量。不是 M2a PASS。
+
+复算：`python scripts/lab_v1_cmg_compare_plot.py --case examples/lab_v1/cmg_gem/physical_3d/case.yaml --hidden examples/lab_v1/cmg_gem/physical_3d/export/hidden --out results/lab_v1/cmg_gem_physical_3d_compare --t-end 864`。测试：`tests/physics/test_geomech.py`。

@@ -51,13 +51,14 @@ def coupled_residual(
     *,
     props: PhaseProps | None = None,
     reflash: NDArray[np.int64] | None = None,
+    vol_strain: NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.float64], PhaseProps]:
     """Packed residual (n_cells * (nc+1),). Mass then volume per cell."""
     if props is None:
         props = flash_state(spec, pressure, moles)
     elif reflash is not None:
         flash_state(spec, pressure, moles, cells=reflash, out=props)
-    pv = rock.pore_volume(grid.cell_volumes(), pressure)
+    pv = rock.pore_volume(grid.cell_volumes(), pressure, vol_strain=vol_strain)
     div = molar_divergence(grid, t_geom[0], t_geom[1], t_geom[2], pressure, props)
     mass = (moles - moles_old) + float(dt) * (div - q_src)
     vol = volume_residual(moles, props, pv, spec.n_hc)

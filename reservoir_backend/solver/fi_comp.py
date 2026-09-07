@@ -242,8 +242,12 @@ def solve_comp_step(
     *,
     max_newton: int = 20,
     tol: float = 1.0e-6,
+    elasticity=None,
 ) -> CompStepResult | None:
     """One fully implicit compositional step, or None on Newton failure."""
+    if elasticity is not None:
+        rock.biot = float(elasticity.spec.biot)
+        rock.k_dry = 0.0
     n_cells = grid.n_cells
     nc = spec.nc
     n0 = np.asarray(moles, dtype=float).reshape(n_cells, nc).copy()
@@ -270,8 +274,9 @@ def solve_comp_step(
         q_src, rates, bhp = well_molar_sources(
             grid, rock, ports, controls, pr, props_q, spec, t + dt, need_bhp=need_bhp
         )
+        theta = None if elasticity is None else elasticity.volumetric_strain(pr)
         res, props_out = coupled_residual(
-            grid, rock, spec, nm, pr, n0, dt, q_src, t_geom, props=props_q
+            grid, rock, spec, nm, pr, n0, dt, q_src, t_geom, props=props_q, vol_strain=theta
         )
         return res, props_out, rates, bhp, q_src
 
@@ -279,6 +284,14 @@ def solve_comp_step(
         jac, _ = assemble_single_jacobian(
             grid, spec, nm, pr, props0, dt, t_geom, n_scale, p_scale, rock=rock
         )
+        if elasticity is not None:
+            theta = elasticity.volumetric_strain(pr)
+            pv = rock.pore_volume(grid.cell_volumes(), pr, vol_strain=theta)
+            alpha = float(elasticity.spec.biot)
+            kd = max(float(elasticity.spec.K_dr), 1.0)
+            extra = (pv / np.maximum(1.0 + alpha * theta, 0.05)) * (alpha * alpha / kd)
+            idx = np.arange(n_cells) * nu + nc
+            jac = jac + sparse.csc_matrix((-extra, (idx, idx)), shape=jac.shape)
         if ports:
             jac = jac + _well_jacobian(
                 grid, rock, spec, ports, controls, nm, pr, props0, dt, t + dt, n_scale, p_scale
@@ -446,11 +459,19 @@ def simulate_comp(
     dt_max: float = 60.0,
     max_steps: int = 12000,
     report_times: NDArray[np.float64] | None = None,
+    geomech=None,
 ) -> Trajectory:
     """Time loop. Δt from Newton count. Failure chops; underflow raises."""
     from reservoir_backend.eos.threads import configure_forward_threads
 
     configure_forward_threads(n_slots=int(spec.nc) + 1)
+    elasticity = None
+    if geomech is not None and getattr(geomech, "enabled", False):
+        from reservoir_backend.physics.geomech import CartesianElasticity
+
+        elasticity = CartesianElasticity(grid, geomech)
+        rock.biot = float(geomech.biot)
+        rock.k_dry = 0.0
     cmap = _control_map(controls)
     if state0.moles is None:
         st = initialize_state(grid, rock, spec, float(np.mean(state0.pressure)))
@@ -488,7 +509,7 @@ def simulate_comp(
             if (t_end - t) <= float(dt_min):
                 break
             raise TimeStepUnderflow(f"failed to accept a step at t={t} last={LAST_NEWTON_FAIL}")
-        nxt = solve_comp_step(grid, rock, spec, ports, cmap, moles, p, dt, t)
+        nxt = solve_comp_step(grid, rock, spec, ports, cmap, moles, p, dt, t, elasticity=elasticity)
         if nxt is None:
             if progress_path:
                 print(

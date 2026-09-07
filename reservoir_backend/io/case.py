@@ -12,6 +12,7 @@ from reservoir_backend.domain.types import ControlSeries, Experiment, Observatio
 from reservoir_backend.io.grid_cfg import grid_from_cfg
 from reservoir_backend.io.parameterization_cfg import parameterization_from_cfg
 from reservoir_backend.physics.capillary import capillary_from_name
+from reservoir_backend.physics.geomech import geomech_from_cfg
 from reservoir_backend.physics.relperm import CoreyTwoPhase
 from reservoir_backend.io.well_load import ports_from_cfg
 from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec
@@ -306,6 +307,8 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
         single = False
         implicit = True
         fully_implicit = True
+    gm = geomech_from_cfg(cfg, p_ref=p_init)
+    rock_cfg = cfg.get("rock") or {}
     physics = PhysicsSpec(
         relperm=relperm,
         three_phase=three,
@@ -353,10 +356,11 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                 (cfg.get("rock") or {}).get("kv_kh", (cfg.get("rock") or {}).get("kz_over_kx", 1.0)),
             )
         ),
-        cpor=_cpor_1_per_pa(cfg.get("rock") or {}),
-        prpor=_prpor_pa(cfg.get("rock") or {}, default=p_init),
-        biot=_biot(cfg.get("rock") or {}),
-        k_dry=_k_dry_pa(cfg.get("rock") or {}),
+        cpor=_cpor_1_per_pa(rock_cfg),
+        prpor=_prpor_pa(rock_cfg, default=p_init),
+        biot=float(gm.biot) if gm.enabled else _biot(rock_cfg),
+        k_dry=0.0 if gm.enabled else _k_dry_pa(rock_cfg),
+        geomech=gm,
     )
 
     ports = ports_from_cfg(cfg, grid, cfg_dir=cfg_dir)

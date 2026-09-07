@@ -1,5 +1,5 @@
 # 30 cm black-shale cube, CO2 EXAMPLE. Not examples/lab_v1/case.yaml (DPDP 30³).
-# GEM deck: sanwei_co2.dat. Geomechanics frozen (*NOCOUPERM): φ,k at stressed state.
+# GEM deck: sanwei_co2.dat. *NOCOUPERM: k stays at the stressed measurement.
 geometry:
   size_m: [0.30, 0.30, 0.30]
 
@@ -32,8 +32,17 @@ rock:
   kv_kh: 0.1   # GEM *PERMK = 0.1 * PERMI
   cpor_1_per_kPa: 1.2e-6  # GEM *CPOR (1/kPa)
   prpor: 5.0e7            # GEM *PRPOR 50000 kPa
-  biot: 1.0               # GEM *BIOTSCOEF 1 (lab Terzaghi)
-  K_dry_GPa: 11.9         # spec K_dry; extra storage α²/K_dry, not a stress solver
+
+# Cartesian linear elasticity. Product lab_v1/case.yaml leaves this off.
+# enabled: false falls back to rock-only *CPOR (no α²/K_dry, no div u).
+geomech:
+  enabled: true
+  nocouperm: true
+  boundary: unconstrained  # GEM *GCFACTOR 0
+  biot: 1.0                # GEM *BIOTSCOEF 1
+  E_GPa: 20.0              # GEM *ELASTMOD 2.0e7 kPa
+  nu: 0.22                 # GEM *POISSRATIO
+  K_dry_GPa: 11.9          # used only if E_GPa is omitted
 
 # GEM *KDIR *DOWN: k=1 is the top. Our Cartesian k=1 is the bottom (z up).
 # GEM 1:11 (top) → our 5:15; GEM 11:15 (bottom) → our 1:5.

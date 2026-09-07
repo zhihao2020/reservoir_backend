@@ -22,6 +22,7 @@ from reservoir_backend.inverse.parameterization import (
 from reservoir_backend.observation.operator import ObservationOperator
 from reservoir_backend.physics.capillary import NoCapillary
 from reservoir_backend.physics.relperm import CoreyThreePhase, CoreyTwoPhase, TableThreePhase
+from reservoir_backend.physics.geomech import GeomechSpec
 from reservoir_backend.physics.rock import Rock
 from reservoir_backend.ports.flow import FlowPort, validate_port_controls
 from reservoir_backend.solver.trajectory import Trajectory
@@ -87,6 +88,7 @@ class PhysicsSpec:
     prpor: float = 1.0e5
     biot: float = 0.0
     k_dry: float = 0.0
+    geomech: GeomechSpec = field(default_factory=GeomechSpec)
 
 
 def physical_from_theta(parameterization, theta: NDArray[np.float64]) -> dict[str, float]:
@@ -407,14 +409,21 @@ class DigitalTwin:
             kz = k * np.asarray(self.kz_ratio, dtype=float).ravel()
         else:
             kz = k * float(self.physics.kz_over_kx)
+        gm = self.physics.geomech
+        if gm is not None and getattr(gm, "enabled", False):
+            biot = float(gm.biot)
+            k_dry = 0.0
+        else:
+            biot = float(self.physics.biot)
+            k_dry = float(self.physics.k_dry)
         return Rock(
             permeability=k,
             porosity=np.full(self.grid.n_cells, phi),
             kz=kz,
             cpor=float(self.physics.cpor),
             prpor=float(self.physics.prpor),
-            biot=float(self.physics.biot),
-            k_dry=float(self.physics.k_dry),
+            biot=biot,
+            k_dry=k_dry,
         )
 
     def rock_from_theta(self, theta: NDArray[np.float64]) -> Rock:
@@ -440,6 +449,9 @@ class DigitalTwin:
         if report_times is None:
             report_times = self.experiment.all_times_s()
         floor = self.physics.dt_min if dt_min is None else float(dt_min)
+        gm = getattr(self.physics, "geomech", None)
+        if self.uses_dpdp() and gm is not None and getattr(gm, "enabled", False):
+            raise ValueError("geomech is not implemented for DPDP; set geomech.enabled: false")
         if self.uses_dpdp() and self.physics.fluid is not None:
             from reservoir_backend.solver.fi_comp_dual import (
                 dual_from_visual_state,
@@ -527,6 +539,7 @@ class DigitalTwin:
                 dt_max=self.physics.dt_max,
                 max_steps=int(self.physics.max_steps),
                 report_times=report_times,
+                geomech=gm,
             )
         raise ValueError(
             "forward model must be compositional_dpdp or compositional; "

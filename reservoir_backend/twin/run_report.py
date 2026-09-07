@@ -52,6 +52,7 @@ def _grid_summary(twin: DigitalTwin) -> dict[str, Any]:
 
 def _physics_summary(twin: DigitalTwin) -> dict[str, Any]:
     p = twin.physics
+    gm = getattr(p, "geomech", None)
     return {
         "model": str(p.model),
         "fully_implicit": bool(p.fully_implicit),
@@ -59,6 +60,7 @@ def _physics_summary(twin: DigitalTwin) -> dict[str, Any]:
         "p_init_Pa": float(p.p_init),
         "sw_init": float(p.sw_init),
         "capillary": getattr(p.capillary, "name", type(p.capillary).__name__),
+        "geomech_enabled": bool(gm is not None and getattr(gm, "enabled", False)),
     }
 
 

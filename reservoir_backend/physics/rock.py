@@ -41,8 +41,9 @@ class Rock:
     """Static cell properties. k is kx=ky; optional kz.
 
     ``cpor`` is GEM ``*CPOR`` in 1/Pa: φ = φ_ref exp(cpor (p − prpor)).
-    ``biot`` and ``k_dry`` add unconstrained bulk storage α²/K_dry (1/Pa),
-    not a stress solver. k_dry=0 disables that term.
+    ``biot`` and ``k_dry`` add unconstrained bulk storage α²/K_dry (1/Pa)
+    when ``vol_strain`` is omitted. Passing ``vol_strain`` uses only *CPOR
+    in the exponent, then ``(1 + α θ)``. k_dry=0 disables the scalar term.
     """
 
     permeability: NDArray[np.float64]
@@ -69,13 +70,23 @@ class Rock:
             kz=kz_arr,
         )
 
-    def pore_volume(self, cell_volumes: NDArray[np.float64], pressure: NDArray[np.float64] | None = None) -> NDArray[np.float64]:
+    def pore_volume(
+        self,
+        cell_volumes: NDArray[np.float64],
+        pressure: NDArray[np.float64] | None = None,
+        *,
+        vol_strain: NDArray[np.float64] | None = None,
+    ) -> NDArray[np.float64]:
         pv0 = np.asarray(self.porosity, dtype=float).ravel() * np.asarray(cell_volumes, dtype=float).ravel()
-        stor = self.storage_1_per_pa()
-        if stor == 0.0 or pressure is None:
-            return pv0
-        p = np.asarray(pressure, dtype=float).ravel()
-        return pv0 * np.exp(stor * (p - float(self.prpor)))
+        stor = float(self.cpor) if vol_strain is not None else self.storage_1_per_pa()
+        pv = pv0
+        if stor != 0.0 and pressure is not None:
+            p = np.asarray(pressure, dtype=float).ravel()
+            pv = pv0 * np.exp(stor * (p - float(self.prpor)))
+        if vol_strain is not None:
+            theta = np.asarray(vol_strain, dtype=float).ravel()
+            pv = pv * np.maximum(1.0 + float(self.biot) * theta, 0.05)
+        return pv
 
     def __post_init__(self) -> None:
         self.permeability = np.asarray(self.permeability, dtype=float).ravel()

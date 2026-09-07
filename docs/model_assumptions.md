@@ -85,6 +85,14 @@ python scripts/lab_v1_offline.py --dev
 reservoir invert examples/lab/lab_cf.yaml --self-check --output results/cf
 ```
 
+## 力学（可选，YAML）
+
+- 产品 `examples/lab_v1/case.yaml` 默认关。DPDP 正演若 `geomech.enabled: true` 会直接拒绝。
+- 单孔组分可在 case 里写 `geomech:`：Cartesian hex8 线弹性，孔隙体积 \(V_p=\varphi_{\mathrm{ref}}V_{\mathrm{cell}}\exp(c_{\mathrm{por}}\Delta p)\,(1+\alpha\theta)\)，\(\theta=\nabla\cdot u\)。`nocouperm: true`（默认）不改渗透率，对齐 GEM `*NOCOUPERM`。
+- `boundary: unconstrained` 对齐 GEM `*GCFACTOR 0`（增量面力 0）。`confined` 把边界位移钉死。
+- 打开力学后不再把标量 \(\alpha^2/K_{\mathrm{dry}}\) 叠进 `*CPOR` 指数。`K_dry_GPa` 只在省略 `E_GPa` 时用来反推模量。
+- 不是塑性、不是网格运动、不是渗透率应力函数。远场仍对不上 GEM 时停止加拟合系数。
+
 ## 井 / 端口
 
 - 实验室入口出口是 `FlowPort`

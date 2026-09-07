@@ -46,7 +46,7 @@ python scripts/lab_v1_cmg_forward_gate.py --case examples/lab_v1/cmg_gem/physica
 python scripts/lab_v1_cmg_invert.py --case examples/lab_v1/cmg_gem/physical_3d/case.yaml --export examples/lab_v1/cmg_gem/physical_3d/export --score --workers 4
 ```
 
-先过正演等价再反演。15³×7 组分 ensemble 很重。力学不进 \(F\)（对齐 GEM `*NOCOUPERM`）。
+先过正演等价再反演。15³×7 组分 ensemble 很重。`case.yaml` 的 `geomech:` 打开 Cartesian 线弹性（`*GCFACTOR 0` / `*NOCOUPERM`：k 不随应力改）；产品 `examples/lab_v1/case.yaml` 默认关。
 定压注入井的源项用 `z_inj`（CO2），不用格子里的原油组成。`phaseid: crit` 对齐 GEM `*PHASEID *CRIT`。
 
 ## 跑 GEM
