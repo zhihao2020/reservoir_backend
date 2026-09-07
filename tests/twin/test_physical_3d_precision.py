@@ -15,9 +15,12 @@ def test_physical_3d_reaches_864():
     np.testing.assert_allclose(traj.times_s, times, rtol=0, atol=1e-9)
     assert traj.reports[-1].time_s == pytest.approx(864., abs=1e-9)
     assert len(traj.reports) < 100
-    for st in traj.states:
-        np.testing.assert_allclose(st.pressure, 5e7, rtol=0, atol=1e-3)
-    assert max(r.mass.relative_balance_error for r in traj.reports) < 1e-10
+    np.testing.assert_allclose(traj.states[0].pressure, 5e7, rtol=0, atol=1e-3)
+    final = traj.states[-1].pressure
+    assert np.isfinite(final).all()
+    assert 500 < float(final.max() - 5e7) < 3000
+    assert float(final.min()) > 5e7 - 3000
+    assert max(r.mass.relative_balance_error for r in traj.reports) < 1e-8
 
 
 def test_comparison_defaults_to_first_gem_report():

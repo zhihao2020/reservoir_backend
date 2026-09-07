@@ -18,9 +18,9 @@ kij:
   - [0.13, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
   - [0.13, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
   - [0.15, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
-# Bulk F still uses constant μ. BHP injectate uses LBC (dense CO2 ~0.06 cP),
-# not mu_vapor. phaseid:crit is GEM *PHASEID *CRIT for saturation labels.
-visc_model: constant
+# GEM HZYT card: MIXVC=1, VISVC=VCRIT, VISCOEFF matches the LBC/Jossi polynomial.
+# Both reservoir phases and well injectate use this density-dependent model.
+visc_model: hzyt
 mu_liquid: 1.0e-3
 mu_vapor: 2.0e-5
 phaseid: crit

@@ -152,6 +152,29 @@ def _well_jacobian(
     n0 = np.asarray(moles, dtype=float)
     p0 = np.asarray(pressure, dtype=float).ravel()
 
+    if all(port.control == "pressure" for port in ports):
+        # BHP source and local wellbore density depend only on that cell's
+        # thermodynamics. Perturb one slot at ALL completions in one batch.
+        # Rate allocation has inter-completion coupling and uses columns below.
+        ids = np.asarray(cells, dtype=np.int64)
+        rows, cols, data = [], [], []
+        for slot in range(nu):
+            n_t, p_t = n0.copy(), p0.copy()
+            eps = eps_n if slot < nc else eps_p
+            if slot < nc:
+                n_t[ids, slot] += eps
+            else:
+                p_t[ids] += eps
+            trial = props.copy()
+            flash_state(spec, p_t, n_t, cells=ids, out=trial)
+            q1, _, _ = well_molar_sources(grid, rock, ports, controls, p_t, trial, spec, t, need_bhp=False)
+            dq = -float(dt) * (q1[ids] - q0[ids]) / eps
+            for i in range(nc):
+                rows.extend(ids * nu + i)
+                cols.extend(ids * nu + slot)
+                data.extend(dq[:, i])
+        return sparse.csc_matrix((data, (rows, cols)), shape=(n_u, n_u))
+
     def _one_cell(c: int) -> tuple[list[int], list[int], list[float]]:
         rows_c: list[int] = []
         cols_c: list[int] = []

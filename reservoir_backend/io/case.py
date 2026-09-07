@@ -207,6 +207,8 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
             kwargs["mu_liquid"] = float(phys_cfg["mu_liquid"])
         if phys_cfg.get("mu_vapor") is not None:
             kwargs["mu_vapor"] = float(phys_cfg["mu_vapor"])
+        if phys_cfg.get("visc_model") is not None:
+            kwargs["visc_model"] = str(phys_cfg["visc_model"])
         if str(phys_cfg.get("has_water", "")).lower() in {"1", "true", "yes", "on"} or phys_cfg.get("has_water") is True:
             kwargs["has_water"] = True
             kwargs["sw_init"] = float(phys_cfg.get("sw_init", 0.20))
@@ -227,6 +229,9 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
             preset = str(fluid_raw)
         if card_path is not None:
             eos = load_eos_card(card_path)
+            # A VCRIT card supports the density-dependent Jossi/LBC family.
+            # Constant viscosity is the fallback only for incomplete cards.
+            card_visc_default = "lbc" if eos.vcrit is not None else "constant"
             if "z_init" not in kwargs:
                 kwargs["z_init"] = np.full(eos.nc, 1.0 / eos.nc)
             if "z_inj" not in kwargs:
@@ -255,6 +260,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                 ):
                     if extra.get(src) is not None and dest not in kwargs:
                         kwargs[dest] = float(extra[src])
+            kwargs.setdefault("visc_model", card_visc_default)
             fluid = CompSpec(eos=eos, **kwargs)
         else:
             fluid = fluid_from_name(preset, **kwargs)

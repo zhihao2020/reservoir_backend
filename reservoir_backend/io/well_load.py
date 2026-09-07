@@ -101,6 +101,7 @@ def parse_well_deck(text: str, grid: Any, *, source: str = "well deck") -> list[
                 rw_m=float(draft["rw_m"]),
                 skin=float(draft["skin"]),
                 geofac=float(draft["geofac"]),
+                axis=str(draft["axis"]),
                 wi_multiplier=float(draft["wi_multiplier"]),
             )
         )
@@ -202,6 +203,10 @@ def _port_from_yaml(grid: Any, p: dict[str, Any]) -> FlowPort:
             )
     if p.get("axis") is not None:
         port.axis = str(p["axis"]).strip().lower()[:1] or "k"
+    if p.get("bhp_reference_z_m") is not None:
+        port.bhp_reference_z_m = float(p["bhp_reference_z_m"])
+    if p.get("allow_crossflow") is not None:
+        port.allow_crossflow = bool(p["allow_crossflow"])
     if p.get("wi_multiplier") is not None:
         port.wi_multiplier = float(p["wi_multiplier"])
     if p.get("continuum_coupling") is not None or p.get("coupling") is not None:
@@ -298,6 +303,7 @@ def _new_draft(well_id: str, name: str) -> dict[str, Any]:
         "rw_m": 0.0,
         "skin": 0.0,
         "geofac": 0.0,
+        "axis": "k",
         "wi_multiplier": 1.0,
         "wfrac": 1.0,
     }
@@ -477,6 +483,8 @@ def _apply_geometry(draft: dict[str, Any], args: list[str]) -> None:
     for tok in args:
         kw = _keyword(tok)
         if kw in {"K", "I", "J", "H", "GEO"}:
+            if kw in {"K", "I", "J"}:
+                draft["axis"] = kw.lower()
             continue
         try:
             nums.append(float(tok))

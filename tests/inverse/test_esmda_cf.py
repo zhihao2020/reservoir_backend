@@ -29,6 +29,8 @@ def test_esmda_scalar_cf_moves_toward_truth() -> None:
     assert post.misfit[-1] <= post.misfit[0] * 1.05
     assert post.history.reports[-1].mass.relative_balance_error < 0.08
     cf_post = float(case.twin.parameterization.decode(post.theta)[0])
+    print("scalar_cf", {"true_log_cf": true_m, "prior_log_cf": prior_m, "post_log_cf": post_m,
+                        "cf_post": cf_post, "misfit_first": post.misfit[0], "misfit_last": post.misfit[-1]})
     assert cf_post > 0.0
 
 
@@ -38,7 +40,11 @@ def test_lab_cf_yaml_is_dpdp() -> None:
     twin = load_case("examples/lab/lab_cf.yaml")
     assert twin.uses_dpdp()
     assert twin.inverse.algorithm == "auto"
-    assert twin.parameterization.n_params == 1
+    from reservoir_backend.inverse.log_cf_tmf import LogCfTmfParameterization
+    # This YAML has been the joint Cf/Tmf apply fixture since the product
+    # migration; the scalar recovery fixture above remains one-dimensional.
+    assert isinstance(twin.parameterization, LogCfTmfParameterization)
+    assert twin.parameterization.n_params == 2
 
 
 def test_yaml_log_conductivity_selects_esmda(tmp_path) -> None:

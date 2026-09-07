@@ -276,7 +276,8 @@ def _transfer_coo(
     nu = nc + 1
     n_hc = spec.n_hc
     c = np.arange(n_cells, dtype=np.int64)
-    cond = float(transfer.shape_factor) * np.asarray(km, dtype=float).ravel() * np.asarray(vol, dtype=float).ravel()
+    cond = (float(transfer.shape_factor) * float(transfer.transfer_multiplier)
+            * np.asarray(km, dtype=float).ravel() * np.asarray(vol, dtype=float).ravel())
     dphi = np.asarray(pm, dtype=float).ravel() - np.asarray(pf, dtype=float).ravel()
     from_m = dphi >= 0.0
     lam_l = np.where(from_m, props_m.lam_l, props_f.lam_l)
@@ -457,7 +458,7 @@ def _csc_cached(rows, cols, data, n_u: int):
     """Reuse CSC indptr/indices; fill values with the same COO pattern."""
     key = (int(n_u), int(rows.size))
     cached = _JAC_CACHE.get(key)
-    if cached is None:
+    if cached is None or not (np.array_equal(rows, cached[3]) and np.array_equal(cols, cached[4])):
         jac = sparse.csc_matrix((data, (rows, cols)), shape=(n_u, n_u))
         indptr = np.asarray(jac.indptr, dtype=np.int64)
         indices = np.asarray(jac.indices, dtype=np.int64)
@@ -467,9 +468,9 @@ def _csc_cached(rows, cols, data, n_u: int):
         sorted_keys = keys_csc[order]
         keys_coo = cols.astype(np.int64) * int(n_u) + rows.astype(np.int64)
         mapping = order[np.searchsorted(sorted_keys, keys_coo)]
-        _JAC_CACHE[key] = (indptr, indices, mapping)
+        _JAC_CACHE[key] = (indptr, indices, mapping, rows.copy(), cols.copy())
         return jac
-    indptr, indices, mapping = cached
+    indptr, indices, mapping, _, _ = cached
     acc = np.zeros(indices.size, dtype=float)
     np.add.at(acc, mapping, data)
     return sparse.csc_matrix((acc, indices, indptr), shape=(n_u, n_u))

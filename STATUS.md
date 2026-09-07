@@ -36,7 +36,7 @@
 | 联合 \(\log C_f,\log\beta_{mf}\) | MVP | `LogCfTmfParameterization` + 分层 ES-MDA | **M1a PASS**。**M1b 主 Case B PASS**（Cf 0.89% / Tmf 0.69%）；T2 与 seed 稳健性未过。**M1c FAIL（已接受）**：实验室可行方案 0 个 \(D_{C_f,5\%}>2\)。不要再调 ES-MDA。 |
 | ES-MDA（log \(C_f\)） | 已验证 | `inverse.esmda`、`twin.history_match` | `tests/inverse/test_esmda.py`、`test_esmda_cf.py`。线性高斯收回；合成无噪声 \(C_f\) 向真值靠近；后验 P05/P50/P95 |
 | Parameter EnKF（在线一步） | MVP | `inverse.parameter_enkf` | `tests/inverse/test_parameter_enkf.py`。**M3 才解冻**；当前 M2 不是这条路 |
-| CMG-GEM 交叉验证流水线 | MVP | `twin.cmg_benchmark`、`examples/lab_v1/cmg_gem/` | **M2a–d PASS**（Case B + 四真值）。通用 `--case` 入口。`physical_3d` 15³ 单孔 7 组分：当前 `sanwei_co2.out` 重打包 hidden（时刻 0 / 0.01 / 0.14 / 1 / 3 d，无 0.0001 d 幽灵帧）。t=8.64 s \(F_\mathrm{ours}(k_\mathrm{GEM})\) 压力 RMSE **1.6 Pa**（GEM 在 0.01 d 全场 span ~1.5 kPa；旧 pack 的 0.45 MPa「采井漏斗」是坏图）。**不是 M2a PASS**。15³ 正演在 ~433 s 切步 underflow，864/12096 s 未对齐。`tests/twin/test_cmg_benchmark.py` |
+| CMG-GEM 交叉验证流水线 | MVP | `twin.cmg_benchmark`、`examples/lab_v1/cmg_gem/` | Case B + 四真值历史合成尺子。`physical_3d` 15³ 单孔 7 组分：逐连接井筒静压 + HZYT/LBC 接线后真实到达 864 / 12096 s；压力 RMSE **527.00 / 233.13 Pa**。864 s 比恒压基线 163.24 Pa 差，**physical_3d 未通过 M2a**。详见本页最新精度轮。 |
 | DualContinuumState / transfer / ForwardModel adapter | MVP | `domain.state`、`physics.transfer`、`solver.forward_adapter` | `tests/domain/test_dual_state.py`、`tests/solver/test_forward_adapter.py` |
 | DPDP DualRock + 组分 transfer | 已验证 | `physics.dual_rock`、`physics.transfer.ComponentTransfer` | `tests/physics/test_dual_rock.py`、`test_component_transfer.py` |
 | DPDP compositional FIM D0–D4 | 已验证 | `comp.dual_residual`、`solver.fi_comp_dual` | `tests/comp/test_dual_d0.py`、`test_dual_d1234.py`：守恒相对误差 < 1e-4 |
@@ -83,11 +83,11 @@
 
 **未关（交给后续精度轮）**
 
-1. 15³ 组分 FIM 约 433 s `TimeStepUnderflow`，对不上 GEM 第一个报告时刻 864 s（0.01 d），更对不上 0.14 / 1 / 3 d。
-2. GEM `*GEOMECH`（`*NOCOUPERM`）在 F 外；864 s 的 ~1.5 kPa 鼓包本模型没有。
-3. 黏度：GEM `*VISCOR *HZYT`，我们是 LBC / 常数 μ。
-4. `tests/solver/test_comp_analytic_jac.py` Jacobian 误差约 1（已知）。
-5. `tests/comp/test_dual_d1234.py` D2 underflow（已知，产品路径外）。
+1. 历史 433 s underflow：当前 864 / 12096 s 已真实到达，见最新精度轮；不再列为当前阻塞。
+2. GEM `*GEOMECH`（`*NOCOUPERM`）在 F 外。井筒静压后 864 s 网格 RMSE 从 163 Pa 升到 527 Pa：我们的注入柱 ~1.4 kPa，GEM 采井流量为 0、格子几乎仍是 50 MPa。
+3. 黏度已接线：physical_3d `hzyt` → 现有 LBC/Jossi；GEM 完整 HZYT/PVC3 等价性仍未验证。
+4. 单孔 Jacobian 历史约 1 的误差已在 D0/D2 混跑复现：CSC 缓存拓扑混用；现已修复，列 FD 误差 1.11e-9。
+5. D2 属于产品 DPDP invert 所用 F。underflow 的缓存碰撞根因已修复；原测试保留，20 s 完成。
 6. nrmse_p 在 GEM span 只有几十 Pa 时会被印出噪声放大；看 RMSE_Pa / `nrmse_p_sigma`。
 7. 流量一旦离开 50/50 近零区，要再对 Peaceman WI vs GEM `*GEOMETRY *K 0.003 0.34`。
 
@@ -116,3 +116,62 @@
 - Jacobian 原测试本环境先有 6 passed；扩展 ±200,000 Pa 压力梯度后 8 passed，三个列 FD 最大误差均 **1.11119469e-9 < 0.005**，仍用原物理单位缩放和容差，未删测试。历史 ~1 误差未复现，不归因于已修复的解析导数。
 - 验证命令：`python -m pytest tests/twin/test_physical_3d_precision.py tests/solver/test_comp_analytic_jac.py tests/twin/test_cmg_benchmark.py tests/comp/test_bhp_injector.py tests/physics/test_lbc.py -q -s -p no:cacheprovider`。输出：**50 passed in 3.30s**（包括 test_parse_physical_3d_gem_out_if_present 与 test_parse_gem_out_ignores_timestep_table_times）。
 - 重算命令：`python scripts/lab_v1_cmg_compare_plot.py --case examples/lab_v1/cmg_gem/physical_3d/case.yaml --hidden examples/lab_v1/cmg_gem/physical_3d/export/hidden --out results/lab_v1/cmg_gem_physical_3d_compare --t-end 864`。
+
+### Forward / invert 精度轮（2026-09-07，f8dce74 工作树）
+
+**结果与边界**：修复井筒静压、黏度接线和 DPDP Jacobian 两个真实缺陷；864 s RMSE 未改善。无 GEM 重跑、无储层重力/力学变更、无井控改动、无 ES-MDA 超参数改动。M1b Case B 历史 Cf 0.89% / Tmf 0.69% 与 M1c FAIL 结论保持；本轮合成恢复测试不是重做 M1b 认证，不能据此声称 M1b 精度提高。**physical_3d 未通过 M2a。**
+
+井模型：Peaceman BHP 使用 `p_conn=p_ref+rho_wb*g*(z_ref-z_conn)`，z 向上；默认最高连接为 BHP 参考，physical_3d YAML 显式写出 INJ/PROD1–3 的 z_ref=0.29 m、PROD4 的 0.09 m。注井用注入组成，采井用本连接流体组成，在中点井筒压力、T 下闪蒸密度；没有拟合密度。Peaceman 连接默认不允许反向流动，可用 `allow_crossflow` 显式开启；面端口不变。井筒静压独立于 `physics.gravity: false`。BHP 源项的局部导数按组分批处理，保留列 FD 对照。
+
+- 严格删除旧 `ours.npz` 后按用户命令计算：仅静压修正、原体相常黏度 **RMSE_p=526.8906268800674 Pa**；再接通 HZYT/LBC 后 **527.0025638080366 Pa**；基线 **163.2357985428623 Pa**。最终 17 个接受步到 864 s，压力范围 50,000,050.0499 … 50,001,429.6241 Pa，Sg RMSE=0；没有用插值 8.64 s 替代 864 s。compare 缓存报告的摩尔守恒相对误差为 1.07134e-10；新的非零流动集成测试使用 <1e-8 门槛（旧恒压零流测试为 <1e-10），Newton 接受容差未改。
+- GEM 原始井报表来自 `results/lab_v1/cmg_gem_physical_3d/sanwei_co2.out`，在 `Well Summary at Reservoir Conditions at 1.0000E-02 days` 直接读取 **BHP-Pblock 最后一列**（kPa ×1000），共 51 条连接。没有从 5 位有效数字 BHP 反推压差。原文摘录持久保存于 `tests/fixtures/gem_physical_3d_wells_864.txt`，解析器拒绝不存在的 8.64 s 井报表。
+
+下表全为 Pa；“井模型@GEM块压”是隔离测试：仅测试井方程，使用 hidden 的实际 GEM 块压与固定初始组成，不进入正演或反演。GEM 地图打印分辨率 100 Pa，五口井最深连接的这一隔离误差均 <50 Pa；完整 F 的块压仍不匹配。
+
+|井 / GEM I,J,K|GEM BHP-Pblock|井模型@GEM块压|完整 F_ours BHP-Pblock，864 s|
+|---|---:|---:|---:|
+|INJ 8,8,1|14.460|—|−280.264|
+|INJ 8,8,11|126.780|142.487|12.863|
+|PROD1 3,13,1|171.770|—|−50.050|
+|PROD1 3,13,5|598.900|557.327|119.419|
+|PROD2 13,13,1|171.690|—|−52.895|
+|PROD2 13,13,15|2109.900|2100.646|1602.889|
+|PROD3 3,3,1|171.870|—|−52.895|
+|PROD3 3,3,15|2110.000|2100.646|1602.889|
+|PROD4 13,3,11|−10.544|—|−142.979|
+|PROD4 13,3,15|446.310|457.327|46.492|
+
+- 864 s ours INJ 储层率 **1.34692e-7 m³/day**，GEM **3.6903e-7**；ours PROD1/2/3 分别 −1.70131e-8 / −1.85167e-8 / −1.85167e-8，GEM 均 0；PROD4 ours −6.54269e-8，GEM −6.1186e-9。全连接数值在 `well_diagnostics.json`；复算诊断命令：`python scripts/lab_v1_physical_3d_diagnostics.py --cache results/lab_v1/cmg_gem_physical_3d_compare/ours.npz`。缓存的 p/z 仅用于诊断源项，不重建总在位摩尔数。
+- 12096 s 已运行相同 compare 命令，仅 `--out results/lab_v1/cmg_gem_physical_3d_compare_12096 --t-end 12096`：**74 个接受步**，实际 t=12096.000000000002 s，无截断；RMSE_p **233.13450624912585 Pa**，ours 范围 50,000,050.0755 … 50,001,429.6129 Pa，GEM 49,999,800 … 50,001,400 Pa，Sg RMSE=0，缓存报告摩尔守恒相对误差 1.39666e-10。
+
+黏度：`pvt_co2.yaml` 的 `visc_model: hzyt` 选择已有 LBC/Jossi；卡的 MIXVC=1、VISVC=VCRIT、VISCOEFF 多项式与实现对应。体相不再硬编码常 μ，注入井流体沿用密度相关 μ；带 VCRIT 的未指定模型卡默认 LBC，缺 VCRIT 卡才默认常数。不改 Tc/Pc/Mw/VCRIT，不捏造济阳参数。这是模型接线验证，尚非 GEM 全 HZYT/PVC3 内部行为的等价证明。物理假设见 `docs/model_assumptions.md`。
+
+DPDP 修复证据：
+
+- 原 D2 单独跑通过；原 `D0 -> D1–D4 -> single Jacobian` 合跑为 **5 failed, 15 passed in 35.71s**（D2 underflow、三项单孔列 FD、单孔 Newton）。根因 `_csc_cached` 仅以 `(n_u, COO条数)` 命中缓存，不同网格/单双孔布局复用了错误的 COO→CSC 映射。现逐次核验 rows/cols 拓扑，维数相等不再意味着拓扑相同；没有删 D2、减小时窗或放宽 Newton 容差。
+- `ComponentTransfer.compute` 残差乘 `transfer_multiplier`，原 `_transfer_coo` 导数漏乘；现一致地乘一次。新增异组成、双向 transfer、倍率 0.25 / 1 / 4 的所有列 FD 检查，最大相对误差分别 **5.45e-7 / 1.18e-7 / 2.71e-7**（门槛 5e-4）。单孔三个压力偏置的列 FD 误差均 **1.11119469e-9**（原门槛 0.005）。
+- 修复后 D0/D1–D4 + sparse + 单孔/DPDP Jacobian：**24 passed in 32.30s**，D2 原 20 s 时窗真实完成，守恒/分离极限断言保留。
+
+反演（Ne / Na / inflation / prior_std / seed 全部保持既有测试值）：
+
+|夹具 / 指标|本轮修复前|修复后|
+|---|---:|---:|
+|scalar Cf，log Cf 真值 / 先验|1.609438 / 2.809438|相同|
+|scalar Cf，log Cf 后验|2.727992428|2.727992428|
+|scalar Cf，misfit 首→末|0.01482475→0.01489512|相同|
+|joint 4×2×1，Cf 相对误差|0.005727%|2.162019%|
+|joint 4×2×1，Tmf 相对误差|3.943207%|3.882916%|
+|joint Cf P50 (m²)|9.99942731e-13|9.78379807e-13|
+|joint Tmf P50（真值 2）|2.078864137|2.077658327|
+|joint holdout 白化 RMSE|0.091671083|0.100564417|
+|joint holdout 后验/先验 RMSE 比|0.04005016|0.04398016|
+
+联合夹具仍通过原 Cf<5%、Tmf<10%、holdout 改善的门槛，但 **Cf 与数据 RMSE 回退，未证明整体恢复精度提高**；Tmf 略改善、scalar Cf 不变。正确 Jacobian 改变自适应步序，恢复精度仍需用时间离散误差收敛检验，不能靠 ES-MDA 调参掩盖。`test_lab_cf_yaml_is_dpdp` 另有预存的过期断言：已是 `log_cf_tmf` 的 YAML 仍断言 n_params=1；现断言类型与 n_params=2，未改配置或恢复门槛。
+
+验证日志都位于 `results/lab_v1/cmg_gem_physical_3d_compare/`（gitignored）：
+
+- `python -m pytest tests/twin/test_physical_3d_precision.py tests/solver/test_comp_analytic_jac.py tests/twin/test_cmg_benchmark.py tests/comp/test_bhp_injector.py tests/physics/test_lbc.py tests/comp/test_well_hydrostatic.py tests/solver/test_dpdp_jacobian_precision.py tests/comp/test_dual_d0.py tests/comp/test_dual_d1234.py tests/comp/test_dpdp_sparse.py -q -s -o addopts='' -p no:cacheprovider` → **73 passed in 204.40s**（`pytest_verified.log`，包括实际 864 s）。随后新增的 GEM 块压隔离测试在 `tests/comp/test_well_hydrostatic.py` 单独执行 → **5 passed in 1.37s**。
+- 井加载/黏度/井源项扩展组合 → **30 passed in 11.35s**（`well_visc_tests.log`）；产品 PVT/io/5³ DPDP → **14 passed in 2.81s**（`product_pvt_tests.log`）。
+- 完整反演复验命令：`python -m pytest tests/inverse/test_esmda_cf.py tests/inverse/test_log_cf_tmf.py tests/inverse/test_auto_invert.py tests/inverse/test_lab_v1_recovery.py -q -s -o addopts='' -p no:cacheprovider`。`-o addopts=''` 必须保留，仓库默认跳过 slow 恢复测试。最终结果见本节收尾记录。
+
+剩余阻塞：864 s 场误差与顶部井压差符号仍不匹配；井筒隔离测试通过不能代替储层 F 验证。GEM 完整黏度细节、WI/多连接约束与其他未建模项仍需独立证据；力学继续留在 F 外。反演门槛通过但数值精度未整体提高。本地 Git 暂存尝试失败：`.git/index.lock: Permission denied`，当前沙箱只读 .git 且禁止提权；未 commit、未 push，用户文件 `_codex_task.txt` 与 `三维.docx` 未改动。

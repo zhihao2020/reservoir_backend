@@ -885,6 +885,37 @@ def _si_fields_from_maps(maps: dict[tuple[str, str], NDArray[np.float64]]) -> di
     }
 
 
+def parse_gem_well_connections(text: str, time_s: float) -> list[dict[str, Any]]:
+    """Parse printed reservoir BHP-Pblock, kPa -> Pa; never subtract rounded BHP."""
+    header = re.compile(r"Well Summary at Reservoir Conditions at\s+([\d.Ee+\-]+) days")
+    matches = list(header.finditer(text))
+    block = None
+    for i, match in enumerate(matches):
+        if abs(float(match[1]) * 86400.0 - float(time_s)) < 1.e-5:
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            block = text[match.end():end].split("Cumulative Field Total", 1)[0]
+            break
+    if block is None:
+        raise ValueError(f"no GEM reservoir well summary at {time_s} s")
+    rows = []
+    name = None
+    for line in block.splitlines():
+        well = re.match(r"\s*\d+\s+(\S+)\s+BHP\s+", line)
+        if well:
+            name = well[1]
+        conn = re.search(r"(\d+),(\d+),(\d+)\s+(.+)$", line)
+        if conn and name:
+            values = [float(v) for v in conn[4].split()]
+            if len(values) != 6:
+                raise ValueError(f"unexpected GEM well connection: {line}")
+            rows.append(dict(well=name, ijk=[int(conn[j]) for j in (1, 2, 3)],
+                             bhp_pa=1000.0 * values[0], reservoir_m3_day=values[4],
+                             bhp_minus_block_pa=1000.0 * values[5]))
+    if not rows:
+        raise ValueError("GEM reservoir well summary has no BHP connections")
+    return rows
+
+
 def parse_gem_out_maps(
     out_path: str | Path,
     *,

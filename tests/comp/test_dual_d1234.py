@@ -104,6 +104,8 @@ def test_d2_zero_sigma_matches_uncoupled_simulators() -> None:
         grid, dual, spec, dead, [], [], state, t_end=20.0, dt_init=5.0, dt_max=10.0
     )
     assert traj.reports
+    assert traj.reports[-1].time_s == pytest.approx(20., abs=1e-9)
+    assert dual_end.time_s == pytest.approx(20., abs=1e-9)
     st_f = initialize_state(grid, dual.fracture, spec, 1.0e7)
     st_f.pressure = state.fracture.pressure.copy()
     st_f.moles = state.fracture.moles.copy()

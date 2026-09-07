@@ -93,6 +93,8 @@ reservoir invert examples/lab/lab_cf.yaml --self-check --output results/cf
 - 定压采出：按井格分流把净流入抽走，避免井格攒到 \(S_w=1\) 后时间步崩溃
 - 实验室默认格子 Dirichlet / 半格 WI（半格也乘总流度 \(\lambda_t\)）。CMG 虚拟实验复制牌组 `*GEOMETRY` 的 Peaceman（\(r_w\)、geofac），\(q=\mathrm{WI}\,\lambda_t\,(p_{\mathrm{conn}}-p)\)。`*K` 井底压钉在最上射孔，往下加井筒水头 \(\rho_{\mathrm{wb}} g\Delta z\)。不拧 `wi_multiplier` 去贴 IMEX 流量
 - 和 IMEX 比的是同一套射孔层位和 \(u(t)\)，不是同一套井指数公式
+- 组分 Peaceman BHP 井同样独立于储层 `gravity` 计算井筒静压。坐标 z 向上，默认参考最上连接；`bhp_reference_z_m` 可显式给出参考高度。注井用注入组成、采井用连接处流体组成，在 BHP 与连接压力中点闪蒸取均相井筒密度；不含摩阻、滑移或温度梯度。`allow_crossflow: false` 默认禁止连接逆井角色流动（对应 physical_3d GEM 正压差采井零流量）；面端口不受此规则影响。
+- 带 VCRIT 的流体卡默认使用现有 LBC/Jossi 黏度，无 VCRIT 才回退常数。physical_3d `visc_model: hzyt` 接到该实现，牌组 MIXVC=1、VISVC=VCRIT、VISCOEFF 与代码多项式一致；储层相和井筒注入流体均使用该模型。这验证接线，不等于已验证 GEM 所有 HZYT/PVC3 内部细节或全 PVT 等价。
 - CMG 虚拟实验 \(\varphi=0.30\)、海水 \(S_w^{\mathrm{inj}}=1\)、PVT 取牌组 `*BWI/*CW/*CO/*CPOR`。\(F(K_{\mathrm{CMG}})\) 场尺子均值压已落到几 psi（五点/断层 242 d）；剩下的是空间形态和相对渗透率表，不是再拧 \(c_t\)
 - 跨模拟器时 \(R\) 加上 \(F(K_{\mathrm{CMG}})\) 对 CMG 测点的残差，避免把模型差拧进 \(K\)。协议 A 不吃井流量（定压流量对 \(K\) 太陡）
 

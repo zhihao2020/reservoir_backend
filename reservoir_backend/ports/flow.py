@@ -26,6 +26,8 @@ class FlowPort:
     skin: float = 0.0
     geofac: float = 0.0
     axis: str = "k"  # Peaceman wellbore axis: i / j / k (CMG *GEOMETRY *I/*J/*K)
+    bhp_reference_z_m: float | None = None  # elevation (z up); default top completion
+    allow_crossflow: bool = False  # Peaceman BHP connections; face ports unaffected
     min_bhp_Pa: float | None = None  # rate-well floor (IMEX *MIN *BHP); producers only
     continuum_coupling: str = "fracture"  # fracture | matrix | split
     fracture_fraction: float = 1.0  # used when coupling is split; fraction of q on fracture

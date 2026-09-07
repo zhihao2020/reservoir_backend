@@ -8,7 +8,7 @@ grid:
   nx: 15
   ny: 15
   nz: 15
-  kdir: down   # GEM *KDIR DOWN: Plane K=1 is the top. Our k=1 is zmin.
+  kdir: down   # GEM maps flip K. YAML ports below already use our z-up indices.
 
 physics:
   model: compositional
@@ -39,6 +39,7 @@ ports:
     control: pressure
     ijk: [8, 8]
     k_perf: [5, 15]
+    bhp_reference_z_m: 0.29  # GEM first/top connection k=1
     use_productivity: true
     rw_m: 0.003
     geofac: 0.34
@@ -48,6 +49,7 @@ ports:
     control: pressure
     ijk: [3, 13]
     k_perf: [11, 15]
+    bhp_reference_z_m: 0.29
     use_productivity: true
     rw_m: 0.003
     geofac: 0.34
@@ -56,6 +58,7 @@ ports:
     control: pressure
     ijk: [13, 13]
     k_perf: [1, 15]
+    bhp_reference_z_m: 0.29
     use_productivity: true
     rw_m: 0.003
     geofac: 0.34
@@ -64,6 +67,7 @@ ports:
     control: pressure
     ijk: [3, 3]
     k_perf: [1, 15]
+    bhp_reference_z_m: 0.29
     use_productivity: true
     rw_m: 0.003
     geofac: 0.34
@@ -72,6 +76,7 @@ ports:
     control: pressure
     ijk: [13, 3]
     k_perf: [1, 5]
+    bhp_reference_z_m: 0.09  # GEM first connection k=11
     use_productivity: true
     rw_m: 0.003
     geofac: 0.34

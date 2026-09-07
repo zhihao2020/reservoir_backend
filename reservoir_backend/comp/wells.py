@@ -6,7 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from reservoir_backend.comp.fluid import CompSpec
-from reservoir_backend.comp.properties import PhaseProps
+from reservoir_backend.comp.properties import PhaseProps, flash_state
 from reservoir_backend.domain.types import ControlSeries
 from reservoir_backend.eos.flash import flash_tp
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -106,6 +106,46 @@ def _wi(grid: CartesianGrid, rock: Rock, port: FlowPort, cell: int) -> float:
     return float(half_cell_wi(grid, int(cell), k)) * float(port.wi_multiplier)
 
 
+def perforation_pressures(
+    grid: CartesianGrid, port: FlowPort, spec: CompSpec, props: PhaseProps, p_ref: float,
+) -> NDArray[np.float64]:
+    """Static wellbore head, independent of reservoir gravity (z is elevation).
+
+    GEM GEOMETRY K without an explicit datum references the top connection.
+    Homogeneous fluid density is flashed at midpoint wellbore pressure and T;
+    injectors use injectate, producers use each connection's reservoir mixture.
+    The latter keeps the source derivative local, including its density response.
+    No friction or thermal wellbore model is implied.
+    """
+    cells = port.cell_ids
+    pw = np.full(len(cells), float(p_ref))
+    if not port.use_productivity:
+        return pw
+    z = grid.cell_centers()[cells, 2]
+    datum = float(np.max(z)) if port.bhp_reference_z_m is None else float(port.bhp_reference_z_m)
+    head = 9.80665 * (datum - z)
+    if not np.any(head):
+        return pw
+    if port.role == "injector":
+        comp = np.broadcast_to(spec.z_inj, (len(cells), spec.n_hc)).copy()
+        sw = np.full(len(cells), port.sw_inj if spec.has_water else 0.0)
+    else:
+        beta = props.vapor_frac[cells, None]
+        comp = (1.0 - beta) * props.x[cells] + beta * props.y[cells]
+        sw = props.sw[cells]
+    # flash_state accepts component amounts; this is an HC-only flash for water cards.
+    from dataclasses import replace
+    hc_spec = replace(spec, has_water=False) if spec.has_water else spec
+    mw = comp @ spec.eos.mw
+    for _ in range(3):
+        fluid = flash_state(hc_spec, np.maximum(0.5 * (pw + p_ref), 1.0e4), comp)
+        rho = (1.0 - sw) * mw / np.maximum(fluid.v_mix, 1.0e-12)
+        if spec.has_water:
+            rho += sw * 0.01801528 / spec.water_vw(0.5 * (pw + p_ref))
+        pw = p_ref + rho * head
+    return pw
+
+
 def _implied_rate_bhp(
     spec: CompSpec,
     z: NDArray[np.float64],
@@ -199,9 +239,13 @@ def well_molar_sources(
                 bhp[port.name] = float(np.average(p[cells], weights=w))
             continue
         p_wf = ctrl(port, "pressure")
+        pw = perforation_pressures(grid, port, spec, props, p_wf)
+        dp = pw - p[cells]
+        if port.use_productivity and not port.allow_crossflow:
+            dp = np.maximum(dp, 0.0) if port.role == "injector" else np.minimum(dp, 0.0)
         if port.role == "injector":
             xi_inj, lam_inj = _injectate_xi_lam(spec, p_wf)
-            q_vol = wi * lam_inj * (p_wf - p[cells])
+            q_vol = wi * lam_inj * dp
             n_dot = np.zeros(n_hc)
             inj_vol = 0.0
             for i, c in enumerate(cells):
@@ -212,8 +256,8 @@ def well_molar_sources(
                     n_dot += qm * z_inj[:n_hc]
                     inj_vol += qv
                 else:
-                    q_l = wi[i] * props.lam_l[int(c)] * (p_wf - p[int(c)])
-                    q_v = wi[i] * props.lam_v[int(c)] * (p_wf - p[int(c)])
+                    q_l = wi[i] * props.lam_l[int(c)] * dp[i]
+                    q_v = wi[i] * props.lam_v[int(c)] * dp[i]
                     src_b = (
                         props.xi_l[int(c)] * props.x[int(c)] * q_l
                         + props.xi_v[int(c)] * props.y[int(c)] * q_v
@@ -227,8 +271,8 @@ def well_molar_sources(
             rates[port.name + ":q_inj"] = float(inj_vol)
             bhp[port.name] = float(p_wf)
             continue
-        q_l = wi * props.lam_l[cells] * (p_wf - p[cells])
-        q_v = wi * props.lam_v[cells] * (p_wf - p[cells])
+        q_l = wi * props.lam_l[cells] * dp
+        q_v = wi * props.lam_v[cells] * dp
         xi_l = props.xi_l[cells]
         xi_v = props.xi_v[cells]
         src = xi_l[:, None] * props.x[cells] * q_l[:, None] + xi_v[:, None] * props.y[cells] * q_v[:, None]
@@ -236,7 +280,7 @@ def well_molar_sources(
         for i, c in enumerate(cells):
             q[int(c), :n_hc] += src[i]
             if spec.has_water:
-                q_wv = wi[i] * props.lam_w[int(c)] * (p_wf - p[int(c)])
+                q_wv = wi[i] * props.lam_w[int(c)] * dp[i]
                 dw = props.xi_w[int(c)] * q_wv
                 q[int(c), n_hc] += dw
                 water_src += float(dw)
@@ -248,4 +292,3 @@ def well_molar_sources(
         rates[port.name + ":q_inj"] = 0.0
         bhp[port.name] = float(p_wf)
     return q, rates, bhp
-

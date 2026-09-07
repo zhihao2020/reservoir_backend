@@ -75,6 +75,7 @@ def test_lab_v1_face_esmda_recovers_cf_and_holdout() -> None:
         "holdout_rmse_ratio": rmse_post / max(rmse_prior, 1.0e-12),
     }
     gates = offline_gates(report)
+    print("recovery", report, "gates", gates, "holdout_whitened_rmse", rmse_prior, rmse_post)
     assert rel < abs(cf_prior - cf_true) / cf_true
     assert gates["cf_ok"], f"Cf rel error {rel:.3%} exceeds {NOISELESS_CF_TOL:.0%}"
     assert gates["tmf_ok"], f"Tmf rel error {gates['tmf_rel_error']:.3%} exceeds 10%"
