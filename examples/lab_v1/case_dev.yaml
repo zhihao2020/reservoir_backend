@@ -35,6 +35,14 @@ rock:
   porosity: 0.08
   k_matrix_m2: 1.0e-15
 
+geomech:
+  enabled: false
+  nocouperm: true
+  boundary: unconstrained
+  biot: 1.0
+  E_GPa: 20.0
+  nu: 0.22
+
 wells: wells.yaml
 
 sensors_defaults:

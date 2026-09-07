@@ -60,6 +60,8 @@ def test_load_lab_v1_product_spec_is_30_cubed() -> None:
     assert twin.inverse.algorithm == "esmda"
     assert twin.parameterization.n_params == 2
     assert twin.physics.model == "compositional_dpdp"
+    assert twin.physics.geomech.enabled is False
+    assert twin.physics.geomech.E == pytest.approx(20.0e9)
 
 
 def test_new_sensor_csv_requires_sigma(tmp_path: Path) -> None:

@@ -178,7 +178,7 @@ DPDP 修复证据：
 
 ### YAML 线弹性（2026-09-07）
 
-`examples/lab_v1/cmg_gem/physical_3d/case.yaml` 增加 `geomech:`（`enabled` / `nocouperm` / `boundary` / `biot` / `E_GPa` / `nu`）。产品 `examples/lab_v1/case.yaml` 默认关；DPDP 若打开会拒绝。Hex8 线弹性，\(V_p=\varphi V\exp(c_{\mathrm{por}}\Delta p)(1+\alpha\theta)\)，\(\theta=\nabla\cdot u\)，k 不改。打开后不再叠标量 α²/K_dry。
+`geomech.E_GPa` / `nu` / `biot` 是用户 case 输入，不是代码常量，不进 θ。physical_3d 默认 20 GPa 只对齐该副 GEM `*ELASTMOD`。产品 `examples/lab_v1/case.yaml` 写出这些键，`enabled: false`；DPDP 若打开会拒绝。Hex8 线弹性，\(V_p=\varphi V\exp(c_{\mathrm{por}}\Delta p)(1+\alpha\theta)\)，\(\theta=\nabla\cdot u\)，k 不改。打开后不再叠标量 α²/K_dry。
 
 删除 `ours.npz` 后 864 s 重算（147 s，未截断）：**全场 RMSE 437.54 Pa**，**注入井柱 41.08 Pa**，远场均值 ours **+524.67 Pa** vs GEM **+98.10 Pa**。注入井柱 GEM k=1…11：ours 46/166/295/425/555/683/809/932/1050/1159/1247，GEM 0/100/300/400/500/700/800/900/1100/1200/1300。与标量 Biot 一轮几乎相同：E=20 GPa 无约束样品上 θ~10⁻⁸，不能把压力钉在井旁。**停止加大 cpor，不加拟合系数。** 剩余不是再拧力学模量。不是 M2a PASS。
 

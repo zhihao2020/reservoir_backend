@@ -87,11 +87,12 @@ reservoir invert examples/lab/lab_cf.yaml --self-check --output results/cf
 
 ## 力学（可选，YAML）
 
-- 产品 `examples/lab_v1/case.yaml` 默认关。DPDP 正演若 `geomech.enabled: true` 会直接拒绝。
-- 单孔组分可在 case 里写 `geomech:`：Cartesian hex8 线弹性，孔隙体积 \(V_p=\varphi_{\mathrm{ref}}V_{\mathrm{cell}}\exp(c_{\mathrm{por}}\Delta p)\,(1+\alpha\theta)\)，\(\theta=\nabla\cdot u\)。`nocouperm: true`（默认）不改渗透率，对齐 GEM `*NOCOUPERM`。
+- 杨氏模量、泊松比、Biot 系数是 case 输入：`geomech.E_GPa` / `nu` / `biot`。不进 \(\theta\)。代码不写死 20 GPa；physical_3d 里的 20 只对齐该副 GEM `*ELASTMOD`。
+- 产品 `examples/lab_v1/case.yaml` 写出这些键，默认 `enabled: false`。DPDP 正演若 `enabled: true` 会直接拒绝。
+- 单孔组分 `enabled: true`：Cartesian hex8 线弹性，孔隙体积 \(V_p=\varphi_{\mathrm{ref}}V_{\mathrm{cell}}\exp(c_{\mathrm{por}}\Delta p)\,(1+\alpha\theta)\)，\(\theta=\nabla\cdot u\)。`nocouperm: true`（默认）不改渗透率，对齐 GEM `*NOCOUPERM`。
 - `boundary: unconstrained` 对齐 GEM `*GCFACTOR 0`（增量面力 0）。`confined` 把边界位移钉死。
 - 打开力学后不再把标量 \(\alpha^2/K_{\mathrm{dry}}\) 叠进 `*CPOR` 指数。`K_dry_GPa` 只在省略 `E_GPa` 时用来反推模量。
-- 不是塑性、不是网格运动、不是渗透率应力函数。远场仍对不上 GEM 时停止加拟合系数。
+- 不是塑性、不是网格运动、不是渗透率应力函数。远场仍对不上 GEM 时停止加大 cpor，不把 E 塞进反演。
 
 ## 井 / 端口
 

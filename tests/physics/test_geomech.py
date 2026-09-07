@@ -106,6 +106,18 @@ def test_one_cell_newton_with_elasticity_drops_residual() -> None:
     np.testing.assert_array_equal(rock.permeability, np.full(1, 1.0e-13))
 
 
+def test_yaml_youngs_modulus_sets_stiffness() -> None:
+    soft = geomech_from_cfg({"geomech": {"enabled": True, "E_GPa": 5.0, "nu": 0.22}}, p_ref=0.0)
+    stiff = geomech_from_cfg({"geomech": {"enabled": True, "E_GPa": 20.0, "nu": 0.22}}, p_ref=0.0)
+    assert soft.E == pytest.approx(5.0e9)
+    assert stiff.E == pytest.approx(20.0e9)
+    grid = CartesianGrid.uniform((0.08, 0.08, 0.08), 0.02)
+    p = np.full(grid.n_cells, 1.0e6)
+    th_soft = CartesianElasticity(grid, soft).volumetric_strain(p)
+    th_stiff = CartesianElasticity(grid, stiff).volumetric_strain(p)
+    np.testing.assert_allclose(float(np.mean(th_soft)) / float(np.mean(th_stiff)), 4.0, rtol=2.0e-3)
+
+
 def test_physical_3d_yaml_enables_geomech_product_stays_off() -> None:
     twin = load_case("examples/lab_v1/cmg_gem/physical_3d/case.yaml")
     gm = twin.physics.geomech
@@ -120,4 +132,6 @@ def test_physical_3d_yaml_enables_geomech_product_stays_off() -> None:
     assert rock.biot == pytest.approx(1.0)
     prod = load_case("examples/lab_v1/case.yaml")
     assert prod.physics.geomech.enabled is False
+    assert prod.physics.geomech.E == pytest.approx(20.0e9)
+    assert prod.physics.geomech.nu == pytest.approx(0.22)
     assert prod.uses_dpdp()

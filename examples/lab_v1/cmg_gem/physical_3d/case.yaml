@@ -33,16 +33,15 @@ rock:
   cpor_1_per_kPa: 1.2e-6  # GEM *CPOR (1/kPa)
   prpor: 5.0e7            # GEM *PRPOR 50000 kPa
 
-# Cartesian linear elasticity. Product lab_v1/case.yaml leaves this off.
-# enabled: false falls back to rock-only *CPOR (no α²/K_dry, no div u).
+# User sets E_GPa / nu / biot. 20 GPa is this GEM deck, not a code constant.
 geomech:
   enabled: true
   nocouperm: true
   boundary: unconstrained  # GEM *GCFACTOR 0
   biot: 1.0                # GEM *BIOTSCOEF 1
-  E_GPa: 20.0              # GEM *ELASTMOD 2.0e7 kPa
-  nu: 0.22                 # GEM *POISSRATIO
-  K_dry_GPa: 11.9          # used only if E_GPa is omitted
+  E_GPa: 20.0              # change this; GEM *ELASTMOD 2.0e7 kPa
+  nu: 0.22
+  K_dry_GPa: 11.9          # only used if E_GPa is omitted
 
 # GEM *KDIR *DOWN: k=1 is the top. Our Cartesian k=1 is the bottom (z up).
 # GEM 1:11 (top) → our 5:15; GEM 11:15 (bottom) → our 1:5.
