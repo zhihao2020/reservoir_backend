@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from reservoir_backend.exceptions import TimeStepUnderflow
 from reservoir_backend.twin.cmg_benchmark import (
     PRESSURE_SPAN_FLOOR_PA,
     _k_to_our,
@@ -131,8 +130,8 @@ def _cap_times(times: np.ndarray, t_end: float | None, n_cells: int) -> np.ndarr
     t = t[np.isfinite(t)]
     cap = t_end
     if cap is None and n_cells >= 1000:
-        # 15³ F_ours currently stalls before GEM's first *TIME 0.01 d.
-        cap = 8.64
+        # Default to the first actual GEM report.
+        cap = float(t[t > 0.0][0]) if np.any(t > 0.0) else 864.0
     if cap is None:
         return t
     cap = float(cap)
@@ -148,15 +147,8 @@ def _forward_capped(twin, theta, times: np.ndarray) -> tuple[dict, np.ndarray, b
     times = np.asarray(times, dtype=float).ravel()
     if times.size == 0:
         times = np.array([8.64])
-    try:
-        ours = forward_at_theta(twin, theta, times)
-        return ours, times, False
-    except TimeStepUnderflow:
-        short = times[times <= 8.64 + 1.0e-6]
-        if short.size == 0 or float(short[-1]) <= 1.0e-12:
-            short = np.unique(np.concatenate([short, np.array([8.64], dtype=float)])) if short.size else np.array([8.64])
-        ours = forward_at_theta(twin, theta, short)
-        return ours, short, True
+    ours = forward_at_theta(twin, theta, times)
+    return ours, times, False
 
 
 def _field_at(times: np.ndarray, arr: np.ndarray | None, t: float) -> np.ndarray | None:
@@ -427,7 +419,15 @@ def main(argv=None) -> int:
     )
     cache = dest / "ours.npz"
     truncated = False
+    cache_valid = False
     if cache.is_file():
+        with np.load(cache) as saved:
+            cache_valid = (
+                "times_s" in saved and "truncated" in saved
+                and np.array_equal(saved["times_s"], times)
+                and not bool(saved["truncated"])
+            )
+    if cache_valid:
         blob = np.load(cache)
         truncated = bool(np.asarray(blob["truncated"]).reshape(-1)[0]) if "truncated" in blob.files else False
         ours = {k: blob[k] for k in blob.files if k != "truncated"}
@@ -468,6 +468,8 @@ def main(argv=None) -> int:
         "nrmse_p": nrmse_range(p_ours, p_gem),
         "nrmse_p_sigma": nrmse_range(p_ours, p_gem, span_floor=PRESSURE_SPAN_FLOOR_PA),
         "rmse_p_pa": rmse(p_ours, p_gem),
+        "gem_pressure_min_max_pa": [float(p_gem.min()), float(p_gem.max())],
+        "ours_pressure_min_max_pa": [float(p_ours.min()), float(p_ours.max())],
         "rmse_sg": None if sg_gem is None else rmse(np.asarray(ours["sg"][-1]), sg_gem),
         "t_s": t_ours,
         "t_gem_s": t_ours,
@@ -475,7 +477,7 @@ def main(argv=None) -> int:
         "truncated": bool(truncated),
         "n_cells": int(twin.grid.n_cells),
         "shape": [int(twin.grid.nx), int(twin.grid.ny), int(twin.grid.nz)],
-        "note": "F_ours(k_GEM) vs GEM hidden (linear in t if no exact report). 15³ smoke caps at 8.64 s. Not an M2a PASS claim.",
+        "note": "F_ours(k_GEM) vs GEM hidden (linear in t if no exact report). Not an M2a PASS claim.",
     }
     (dest / "compare.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 

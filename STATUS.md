@@ -92,3 +92,27 @@
 7. 流量一旦离开 50/50 近零区，要再对 Peaceman WI vs GEM `*GEOMETRY *K 0.003 0.34`。
 
 约束：不重跑 GEM、不调 ES-MDA、不改 50/50 井控去造漏斗、力学不进 F、不宣称 M2a PASS。
+
+
+### physical_3d 精度复核（2026-09-07，当前 main 工作环境）
+
+- 原代码真实运行到 **864.0 s**：9 个接受步，末步 dt=157.49794238683137 s，Newton=1，scaled residual ratio=0；50/50 BHP、k/PVT/井控未变。加 8.64 s 报告点时 10 步。历史 ~433 s underflow 本环境未复现，因此没有盲改 dt/Newton、linear.py 或放宽残差，历史原因仍未解释。未重跑 GEM、未调 ES-MDA、未处理 Dual D2；**不是 M2a PASS**。
+- 删除旧 ours.npz 后按请求命令重算 864 s：**RMSE_p=163.2357985428623 Pa**，GEM min/max=49,999,800 / 50,001,300 Pa，ours=50,000,000 / 50,000,000 Pa，Sg RMSE=0。8.64 s RMSE=1.632357985428623 Pa（GEM 地图由 0/864 s 插值，不是 GEM 报告）。中文标签及相对 50 MPa 的 Pa 色标保留。
+- 比较默认取首个实际 GEM 报告，underflow 不再自动回退到 8.64 s；缓存时刻不匹配或标记 truncated 则重算。forward_at_theta 检查真实接受时刻，禁止 nearest-state 冒充目标快照。
+
+井诊断：两时刻 ours 所有井 BHP 和全部完井块压力均为 50,000,000 Pa；储层率均为 0 m³/day，well_molar_sources 各组分及总量均为 0 mol/s。下表 GEM 块压来自 hidden 的完井区 min/max，列值为 p−50 MPa（Pa）；864 s 总率来自 sanwei_co2.out 首个 Well Summary at Reservoir Conditions，保留原符号。
+
+|井 (i,j)|连接数|ours ΣWI (m³)|GEM 块压差 8.64 s（插值）|GEM 块压差 864 s|GEM 储层总率 864 s (m³/day)|
+|---|---:|---:|---:|---:|---:|
+|INJ (8,8)|11|3.00004300652e-17|0 … 13|0 … 1300|3.6903e-7|
+|PROD1 (3,13)|5|1.36365591205e-17|−2 … 1|−200 … 100|0|
+|PROD2 (13,13)|15|4.09096773616e-17|−2 … 2|−200 … 200|0|
+|PROD3 (3,3)|15|4.09096773616e-17|−2 … 2|−200 … 200|0|
+|PROD4 (13,3)|5|1.36365591205e-17|0 … 2|0 … 200|−6.1186e-9|
+
+- GEM 各井首连接 BHP 打印 5.0000e4 kPa（参考 BHP=50 MPa）；深部连接 BHP 打印可达 5.0002e4 kPa，不能把其有限位数表格反推成精确块压。GEM 8.64 s 无井报表，BHP/率不插值捏造。GEM INJ 地面气量 1.46264e-7 **M m³/day**，与储层总率不是同一单位/口径；不与 mol/s 直接相等比较。
+- `.out` 五井回显 `*GEOMETRY *K 0.003 0.34 1.0 0.0`。ours peaceman_wi 用 dz=0.02 m、re=0.34√(dx dy)=0.0068 m、rw=0.003 m、skin=0、k=1.776e-17 m²，WI=2πk dz/ln(re/rw)=**2.727311824109158e-18 m³/连接**。这是本模型计算值，不是 GEM 打印 WI；GEM 等效 WI/非零率行为尚未验证。力学仍在 F 外，HZYT/LBC 差异保留。
+- 可复现诊断：`python scripts/lab_v1_physical_3d_diagnostics.py`，逐连接 WI、两时刻块压/源项及来源保存到 `results/lab_v1/cmg_gem_physical_3d_compare/well_diagnostics.json`。baseline.log、progress.json、compare.json、pytest.log 同目录（gitignored）；本节为持久摘要。
+- Jacobian 原测试本环境先有 6 passed；扩展 ±200,000 Pa 压力梯度后 8 passed，三个列 FD 最大误差均 **1.11119469e-9 < 0.005**，仍用原物理单位缩放和容差，未删测试。历史 ~1 误差未复现，不归因于已修复的解析导数。
+- 验证命令：`python -m pytest tests/twin/test_physical_3d_precision.py tests/solver/test_comp_analytic_jac.py tests/twin/test_cmg_benchmark.py tests/comp/test_bhp_injector.py tests/physics/test_lbc.py -q -s -p no:cacheprovider`。输出：**50 passed in 3.30s**（包括 test_parse_physical_3d_gem_out_if_present 与 test_parse_gem_out_ignores_timestep_table_times）。
+- 重算命令：`python scripts/lab_v1_cmg_compare_plot.py --case examples/lab_v1/cmg_gem/physical_3d/case.yaml --hidden examples/lab_v1/cmg_gem/physical_3d/export/hidden --out results/lab_v1/cmg_gem_physical_3d_compare --t-end 864`。

@@ -1,6 +1,7 @@
 """Single-porosity compositional Jacobian: local-flash FD + analytic TPFA."""
 
 import numpy as np
+import pytest
 
 from reservoir_backend.comp.fluid import fluid_from_name
 from reservoir_backend.comp.properties import flash_state, moles_from_z
@@ -49,8 +50,11 @@ def test_parallel_thermo_fd_matches_serial() -> None:
     np.testing.assert_allclose(a.dlam_l, b.dlam_l, rtol=1.0e-10, atol=1.0e-16)
 
 
-def test_single_jacobian_matches_column_fd() -> None:
+@pytest.mark.parametrize("pressure_offset", [0.0, 2.0e5, -2.0e5])
+def test_single_jacobian_matches_column_fd(pressure_offset) -> None:
     grid, rock, spec, moles, p = _tiny()
+    p = p.copy()
+    p[0] += pressure_offset
     dt = 1.0
     t_geom = geometric_transmissibility(grid, rock.permeability, kz=rock.kz)
     props = flash_state(spec, p, moles)
@@ -77,6 +81,8 @@ def test_single_jacobian_matches_column_fd() -> None:
         jd[:, col] = (r2 - res0) / eps
     scale = np.maximum(np.max(np.abs(jd), axis=0), 1.0)
     err = np.max(np.abs(js - jd) / scale[None, :])
+    # Physical-unit column FD; 0.5% allows local flash FD/upwind truncation.
+    print(f"column FD offset={pressure_offset:g} Pa error={err:.9g} tolerance=0.005")
     assert err < 5.0e-3
 
 

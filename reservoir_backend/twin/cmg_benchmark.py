@@ -452,6 +452,12 @@ def forward_at_theta(
     t = np.asarray(times, dtype=float).ravel()
     t_end = float(np.max(t)) if t.size else float(twin.experiment.history_end_s or 60.0)
     traj = twin.simulate(parameters=np.asarray(theta, dtype=float), t_end=t_end, report_times=t)
+    # state_at uses nearest sampling; never relabel an unfinished run as a report.
+    actual = np.asarray(traj.times_s, dtype=float)
+    if any(not np.any(np.isclose(actual, tt, rtol=0.0, atol=1.0e-9)) for tt in t):
+        from reservoir_backend.exceptions import TimeStepUnderflow
+
+        raise TimeStepUnderflow(f"requested reports {t.tolist()}, accepted times {actual.tolist()}")
     return pack_visual_fields(traj, t)
 
 
