@@ -1,7 +1,8 @@
 """Cartesian linear isotropic elasticity for optional flow coupling.
 
 ``*NOCOUPERM``: permeability is never updated. Pore volume follows
-``V_p = φ_ref V_cell exp(cpor Δp) (1 + α θ)`` with θ = div u.
+``V_p = φ_ref V_cell exp(cpor Δp) (1 + (α/φ) θ)`` with θ = div u
+(Biot ``dV_p = α dV_bulk``).
 ``boundary: unconstrained`` is GEM ``*GCFACTOR 0`` (zero incremental traction).
 Enable only from YAML ``geomech.enabled``. Product DPDP stays off.
 """

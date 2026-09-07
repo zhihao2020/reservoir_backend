@@ -182,4 +182,10 @@ DPDP 修复证据：
 
 删除 `ours.npz` 后 864 s 重算（147 s，未截断）：**全场 RMSE 437.54 Pa**，**注入井柱 41.08 Pa**，远场均值 ours **+524.67 Pa** vs GEM **+98.10 Pa**。注入井柱 GEM k=1…11：ours 46/166/295/425/555/683/809/932/1050/1159/1247，GEM 0/100/300/400/500/700/800/900/1100/1200/1300。与标量 Biot 一轮几乎相同：E=20 GPa 无约束样品上 θ~10⁻⁸，不能把压力钉在井旁。**停止加大 cpor，不加拟合系数。** 剩余不是再拧力学模量。不是 M2a PASS。
 
+### Biot ΔV_p=α ΔV_bulk + 注入井气体流度（2026-09-07）
+
+孔隙体积原先写成 `(1+αθ)`，相对孔隙体积少了 `1/φ`（φ=0.0367 约 27 倍）。改为 Biot `dV_p=α θ V_cell`，即 `(1+(α/φ)θ)`。注入井对齐 GEM `Mob Wtd Gas Inj`：正向用注入 CO2 流度，反向仍用格子油流度。
+
+864 s 重算（291 s，未截断）：**全场 RMSE 400.06 Pa**（此前 437.5），**注入井柱 69.60 Pa**（此前 41.1），远场均值 ours **+487.2 Pa** vs GEM **+98.1 Pa**。井底 ours 1427 vs GEM 1300；角井底 ours 454 vs 井报表 191。最上 3 段注入井仍有反流（GEM 11 段全正）。径向仍偏平。不是 M2a PASS。不加大 cpor。
+
 复算：`python scripts/lab_v1_cmg_compare_plot.py --case examples/lab_v1/cmg_gem/physical_3d/case.yaml --hidden examples/lab_v1/cmg_gem/physical_3d/export/hidden --out results/lab_v1/cmg_gem_physical_3d_compare --t-end 864`。测试：`tests/physics/test_geomech.py`。

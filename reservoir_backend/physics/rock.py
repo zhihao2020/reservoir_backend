@@ -43,7 +43,8 @@ class Rock:
     ``cpor`` is GEM ``*CPOR`` in 1/Pa: φ = φ_ref exp(cpor (p − prpor)).
     ``biot`` and ``k_dry`` add unconstrained bulk storage α²/K_dry (1/Pa)
     when ``vol_strain`` is omitted. Passing ``vol_strain`` uses only *CPOR
-    in the exponent, then ``(1 + α θ)``. k_dry=0 disables the scalar term.
+    in the exponent, then Biot ``ΔV_p = α θ V_cell`` i.e. ``(1 + (α/φ) θ)``.
+    k_dry=0 disables the scalar term.
     """
 
     permeability: NDArray[np.float64]
@@ -85,7 +86,9 @@ class Rock:
             pv = pv0 * np.exp(stor * (p - float(self.prpor)))
         if vol_strain is not None:
             theta = np.asarray(vol_strain, dtype=float).ravel()
-            pv = pv * np.maximum(1.0 + float(self.biot) * theta, 0.05)
+            phi = np.maximum(np.asarray(self.porosity, dtype=float).ravel(), 1.0e-8)
+            # dV_p = α dV_bulk = α θ V_cell, so ΔV_p / V_p0 = (α/φ) θ.
+            pv = pv * np.maximum(1.0 + float(self.biot) * theta / phi, 0.05)
         return pv
 
     def __post_init__(self) -> None:

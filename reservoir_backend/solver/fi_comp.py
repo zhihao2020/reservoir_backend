@@ -285,11 +285,11 @@ def solve_comp_step(
             grid, spec, nm, pr, props0, dt, t_geom, n_scale, p_scale, rock=rock
         )
         if elasticity is not None:
-            theta = elasticity.volumetric_strain(pr)
-            pv = rock.pore_volume(grid.cell_volumes(), pr, vol_strain=theta)
             alpha = float(elasticity.spec.biot)
             kd = max(float(elasticity.spec.K_dr), 1.0)
-            extra = (pv / np.maximum(1.0 + alpha * theta, 0.05)) * (alpha * alpha / kd)
+            phi = np.maximum(np.asarray(rock.porosity, dtype=float).ravel(), 1.0e-8)
+            pv_cpor = rock.pore_volume(grid.cell_volumes(), pr, vol_strain=np.zeros(n_cells))
+            extra = (pv_cpor / phi) * (alpha * alpha / kd)
             idx = np.arange(n_cells) * nu + nc
             jac = jac + sparse.csc_matrix((-extra, (idx, idx)), shape=jac.shape)
         if ports:

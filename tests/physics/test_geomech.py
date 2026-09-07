@@ -52,6 +52,19 @@ def test_confined_one_cell_has_zero_strain() -> None:
     np.testing.assert_allclose(theta, 0.0, atol=1.0e-18)
 
 
+def test_vol_strain_pore_volume_uses_alpha_over_phi() -> None:
+    grid = CartesianGrid.uniform((0.02, 0.02, 0.02), 0.02)
+    rock = Rock.uniform(1, k=1.0e-13, phi=0.0367)
+    rock.cpor = 0.0
+    rock.prpor = 5.0e7
+    rock.biot = 1.0
+    p = np.array([5.0e7])
+    theta = np.array([1.0e-6])
+    pv0 = rock.pore_volume(grid.cell_volumes(), p, vol_strain=np.zeros(1))
+    pv = rock.pore_volume(grid.cell_volumes(), p, vol_strain=theta)
+    np.testing.assert_allclose(pv[0] / pv0[0], 1.0 + rock.biot * theta[0] / 0.0367, rtol=1e-12)
+
+
 def test_vol_strain_skips_scalar_biot_storage() -> None:
     grid = CartesianGrid.uniform((0.02, 0.02, 0.02), 0.02)
     rock = Rock.uniform(1, k=1.0e-13, phi=0.20)
