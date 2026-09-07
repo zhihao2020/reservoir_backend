@@ -83,6 +83,8 @@ class PhysicsSpec:
     shape_factor: float = 40.0
     phi_fracture: float = 0.02
     k_matrix_m2: float | None = None
+    cpor: float = 0.0
+    prpor: float = 1.0e5
 
 
 def physical_from_theta(parameterization, theta: NDArray[np.float64]) -> dict[str, float]:
@@ -403,7 +405,13 @@ class DigitalTwin:
             kz = k * np.asarray(self.kz_ratio, dtype=float).ravel()
         else:
             kz = k * float(self.physics.kz_over_kx)
-        return Rock(permeability=k, porosity=np.full(self.grid.n_cells, phi), kz=kz)
+        return Rock(
+            permeability=k,
+            porosity=np.full(self.grid.n_cells, phi),
+            kz=kz,
+            cpor=float(self.physics.cpor),
+            prpor=float(self.physics.prpor),
+        )
 
     def rock_from_theta(self, theta: NDArray[np.float64]) -> Rock:
         return self.rock_from_k(self.parameterization.expand(theta))

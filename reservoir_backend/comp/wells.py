@@ -245,7 +245,10 @@ def well_molar_sources(
             dp = np.maximum(dp, 0.0) if port.role == "injector" else np.minimum(dp, 0.0)
         if port.role == "injector":
             xi_inj, lam_inj = _injectate_xi_lam(spec, p_wf)
-            q_vol = wi * lam_inj * dp
+            # Cell mobility while the block is oil (GEM sg=0 at 864 s). Injectate
+            # λ (~0.06 cP CO2 vs ~1 cP oil) overstates throughput and fills the box.
+            lam_conn = np.where(props.lam_v[cells] > props.lam_l[cells], lam_inj, lam_t)
+            q_vol = wi * lam_conn * dp
             n_dot = np.zeros(n_hc)
             inj_vol = 0.0
             for i, c in enumerate(cells):

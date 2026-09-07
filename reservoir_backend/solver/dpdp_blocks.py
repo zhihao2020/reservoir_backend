@@ -160,6 +160,7 @@ def _acc_coo(
     th: CellThermoJac,
     spec: CompSpec,
     n_cells: int,
+    dpv_dp: NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]]:
     nc = spec.nc
     nu = nc + 1
@@ -170,6 +171,7 @@ def _acc_coo(
     rows: list[NDArray[np.int64]] = []
     cols: list[NDArray[np.int64]] = []
     data: list[NDArray[np.float64]] = []
+    dpor = None if dpv_dp is None else np.asarray(dpv_dp, dtype=float).ravel()
     for s in range(nu):
         val = hc * th.dv_mix[:, s]
         if s < n_hc:
@@ -178,6 +180,8 @@ def _acc_coo(
             val = val + moles[:, n_hc] * th.dvw[:, s]
             if s == n_hc:
                 val = val + props.vw
+        if dpor is not None and s == nc:
+            val = val - dpor
         rows.append(r_vol)
         cols.append(cont * n_cells * nu + c * nu + s)
         data.append(val)
@@ -414,6 +418,7 @@ def assemble_single_jacobian(
     t_geom: tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]],
     n_scale: float,
     p_scale: float,
+    rock: object | None = None,
 ) -> tuple[sparse.csc_matrix, float]:
     """Single-porosity accumulation + TPFA. Local flash FD, analytic faces.
 
@@ -427,7 +432,11 @@ def assemble_single_jacobian(
     parts_r: list[NDArray[np.int64]] = []
     parts_c: list[NDArray[np.int64]] = []
     parts_d: list[NDArray[np.float64]] = []
-    acc = _acc_coo(0, moles, props, th, spec, n_cells)
+    dpv_dp = None
+    if rock is not None and float(getattr(rock, "cpor", 0.0) or 0.0) != 0.0:
+        pv = rock.pore_volume(grid.cell_volumes(), pressure)
+        dpv_dp = float(rock.cpor) * pv
+    acc = _acc_coo(0, moles, props, th, spec, n_cells, dpv_dp=dpv_dp)
     parts_r.append(acc[0])
     parts_c.append(acc[1])
     parts_d.append(acc[2])

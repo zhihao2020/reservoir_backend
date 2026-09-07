@@ -30,6 +30,8 @@ rock:
   k_m2: 1.776e-17
   k_matrix_m2: 1.776e-17
   kv_kh: 0.1   # GEM *PERMK = 0.1 * PERMI
+  cpor_1_per_kPa: 1.2e-6  # GEM *CPOR (1/kPa)
+  prpor: 5.0e7            # GEM *PRPOR 50000 kPa
 
 # GEM *KDIR *DOWN: k=1 is the top. Our Cartesian k=1 is the bottom (z up).
 # GEM 1:11 (top) → our 5:15; GEM 11:15 (bottom) → our 1:5.
@@ -40,6 +42,7 @@ ports:
     ijk: [8, 8]
     k_perf: [5, 15]
     bhp_reference_z_m: 0.29  # GEM first/top connection k=1
+    allow_crossflow: true    # GEM default; no *NOCROSSFLOW. Stops the box filling to max(p_wf).
     use_productivity: true
     rw_m: 0.003
     geofac: 0.34

@@ -25,6 +25,25 @@ def _load_yaml(path: str | Path) -> dict[str, Any]:
     return data
 
 
+def _cpor_1_per_pa(rock_cfg: dict[str, Any]) -> float:
+    """GEM *CPOR is 1/kPa in SI decks. YAML may give 1/Pa or 1/kPa."""
+    if rock_cfg.get("cpor") is not None:
+        return float(rock_cfg["cpor"])
+    if rock_cfg.get("cpor_1_per_pa") is not None:
+        return float(rock_cfg["cpor_1_per_pa"])
+    if rock_cfg.get("cpor_1_per_kPa") is not None:
+        return float(rock_cfg["cpor_1_per_kPa"]) * 1.0e-3
+    return 0.0
+
+
+def _prpor_pa(rock_cfg: dict[str, Any], *, default: float) -> float:
+    if rock_cfg.get("prpor") is not None:
+        return float(rock_cfg["prpor"])
+    if rock_cfg.get("prpor_kPa") is not None:
+        return float(rock_cfg["prpor_kPa"]) * 1.0e3
+    return float(default)
+
+
 def _read_control_csv(path: Path) -> list[dict[str, Any]]:
     import csv
 
@@ -316,6 +335,8 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                 (cfg.get("rock") or {}).get("kv_kh", (cfg.get("rock") or {}).get("kz_over_kx", 1.0)),
             )
         ),
+        cpor=_cpor_1_per_pa(cfg.get("rock") or {}),
+        prpor=_prpor_pa(cfg.get("rock") or {}, default=p_init),
     )
 
     ports = ports_from_cfg(cfg, grid, cfg_dir=cfg_dir)

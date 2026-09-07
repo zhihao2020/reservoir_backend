@@ -277,7 +277,7 @@ def solve_comp_step(
 
     def assemble_jacobian(nm, pr, props0):
         jac, _ = assemble_single_jacobian(
-            grid, spec, nm, pr, props0, dt, t_geom, n_scale, p_scale
+            grid, spec, nm, pr, props0, dt, t_geom, n_scale, p_scale, rock=rock
         )
         if ports:
             jac = jac + _well_jacobian(

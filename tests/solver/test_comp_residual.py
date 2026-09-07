@@ -52,3 +52,19 @@ def test_flash_inner_not_rs_switch() -> None:
     assert props.sv.shape == (1,)
     assert 0.0 <= float(props.sv[0]) <= 1.0
     assert abs(float(props.sl[0] + props.sv[0]) - 1.0) < 1.0e-12
+
+
+def test_cpor_increases_pore_volume_with_pressure() -> None:
+    grid, rock, spec, moles, p = _one_cell()
+    rock.cpor = 1.2e-9
+    rock.prpor = float(p[0])
+    pv0 = rock.pore_volume(grid.cell_volumes(), p)
+    pv1 = rock.pore_volume(grid.cell_volumes(), p * 1.01)
+    assert float(pv1[0]) > float(pv0[0])
+    np.testing.assert_allclose(pv1[0] / pv0[0], np.exp(rock.cpor * 0.01 * p[0]), rtol=1e-12)
+    q = np.zeros_like(moles)
+    t_geom = geometric_transmissibility(grid, rock.permeability)
+    res, _ = coupled_residual(grid, rock, spec, moles, p, moles, 1.0, q, t_geom)
+    # At p = prpor the pore volume matches the uncompressed init moles.
+    vol = res.reshape(1, spec.nc + 1)[0, spec.nc]
+    assert abs(float(vol)) / float(pv0[0]) < 1.0e-8

@@ -15,6 +15,17 @@ from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.twin.cmg_benchmark import parse_gem_well_connections
 
 
+def test_physical_3d_injector_allows_crossflow_and_cpor():
+    twin = load_case('examples/lab_v1/cmg_gem/physical_3d/case.yaml')
+    inj = next(p for p in twin.ports if p.name == 'INJ')
+    assert inj.allow_crossflow is True
+    prods = [p for p in twin.ports if p.role == 'producer']
+    assert all(p.allow_crossflow is False for p in prods)
+    rock = twin.rock_from_theta(np.zeros(twin.parameterization.n_params))
+    assert rock.cpor == pytest.approx(1.2e-9)
+    assert rock.prpor == pytest.approx(5.0e7)
+
+
 def test_gem_connection_parser_uses_delta_column_not_rounded_bhp():
     raw = Path('tests/fixtures/gem_physical_3d_wells_864.txt').read_text()
     rows = parse_gem_well_connections(raw, 864.)

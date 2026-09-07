@@ -21,6 +21,17 @@ def test_physical_3d_reaches_864():
     assert 500 < float(final.max() - 5e7) < 3000
     assert float(final.min()) > 5e7 - 3000
     assert max(r.mass.relative_balance_error for r in traj.reports) < 1e-8
+    # Injector column (GEM k=1..11) tracks wellbore head, not a flat 50 MPa field.
+    gem = np.load(Path('examples/lab_v1/cmg_gem/physical_3d/export/hidden/pressure.npy'))[1]
+    nz, ny, nx = twin.grid.nz, twin.grid.ny, twin.grid.nx
+    col = []
+    gcol = []
+    for gem_k in range(1, 12):
+        k0 = nz - gem_k
+        cell = k0 * ny * nx + 7 * nx + 7
+        col.append(final[cell] - 5e7)
+        gcol.append(gem[cell] - 5e7)
+    np.testing.assert_allclose(col, gcol, atol=150.0)
 
 
 def test_comparison_defaults_to_first_gem_report():

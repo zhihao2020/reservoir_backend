@@ -84,7 +84,7 @@
 **未关（交给后续精度轮）**
 
 1. 历史 433 s underflow：当前 864 / 12096 s 已真实到达，见最新精度轮；不再列为当前阻塞。
-2. GEM `*GEOMECH`（`*NOCOUPERM`）在 F 外。井筒静压后 864 s 网格 RMSE 从 163 Pa 升到 527 Pa：我们的注入柱 ~1.4 kPa，GEM 采井流量为 0、格子几乎仍是 50 MPa。
+2. GEM `*GEOMECH`（`*NOCOUPERM`）在 F 外。注入井柱 k=1…11 已跟上 GEM 水头（逐层 |Δp|<150 Pa）；全场 RMSE 442 Pa 仍高于无井流时的 163 Pa，远场被扩散抬升，力学储集不在 F。
 3. 黏度已接线：physical_3d `hzyt` → 现有 LBC/Jossi；GEM 完整 HZYT/PVC3 等价性仍未验证。
 4. 单孔 Jacobian 历史约 1 的误差已在 D0/D2 混跑复现：CSC 缓存拓扑混用；现已修复，列 FD 误差 1.11e-9。
 5. D2 属于产品 DPDP invert 所用 F。underflow 的缓存碰撞根因已修复；原测试保留，20 s 完成。
@@ -119,11 +119,11 @@
 
 ### Forward / invert 精度轮（2026-09-07，f8dce74 工作树）
 
-**结果与边界**：修复井筒静压、黏度接线和 DPDP Jacobian 两个真实缺陷；864 s RMSE 未改善。无 GEM 重跑、无储层重力/力学变更、无井控改动、无 ES-MDA 超参数改动。M1b Case B 历史 Cf 0.89% / Tmf 0.69% 与 M1c FAIL 结论保持；本轮合成恢复测试不是重做 M1b 认证，不能据此声称 M1b 精度提高。**physical_3d 未通过 M2a。**
+**结果与边界**：井筒静压 + 注入井交叉流 + `*CPOR` + 油格子流度后，注入井柱跟上 GEM 水头；全场 RMSE 442 Pa（仍不是 M2a）。无 GEM 重跑、无储层重力/力学进 F、无 49.5 MPa、无 ES-MDA 调参。M1b Case B 未重跑认证。
 
 井模型：Peaceman BHP 使用 `p_conn=p_ref+rho_wb*g*(z_ref-z_conn)`，z 向上；默认最高连接为 BHP 参考，physical_3d YAML 显式写出 INJ/PROD1–3 的 z_ref=0.29 m、PROD4 的 0.09 m。注井用注入组成，采井用本连接流体组成，在中点井筒压力、T 下闪蒸密度；没有拟合密度。Peaceman 连接默认不允许反向流动，可用 `allow_crossflow` 显式开启；面端口不变。井筒静压独立于 `physics.gravity: false`。BHP 源项的局部导数按组分批处理，保留列 FD 对照。
 
-- 严格删除旧 `ours.npz` 后按用户命令计算：仅静压修正、原体相常黏度 **RMSE_p=526.8906268800674 Pa**；再接通 HZYT/LBC 后 **527.0025638080366 Pa**；基线 **163.2357985428623 Pa**。最终 17 个接受步到 864 s，压力范围 50,000,050.0499 … 50,001,429.6241 Pa，Sg RMSE=0；没有用插值 8.64 s 替代 864 s。compare 缓存报告的摩尔守恒相对误差为 1.07134e-10；新的非零流动集成测试使用 <1e-8 门槛（旧恒压零流测试为 <1e-10），Newton 接受容差未改。
+- 864 s 网格 RMSE：**163 Pa**（平 50 MPa）→ **527 Pa**（静压+注入 CO2 流度）→ **442 Pa**（注入井交叉流 + GEM `*CPOR` + 油格子流度）。注入井柱 GEM k=1…11 相对 50 MPa：GEM 0/100/300/400/500/700/800/900/1100/1200/1300 Pa，ours 46/167/295/425/555/684/810/933/1051/1161/1248 Pa（逐层 <150 Pa）。远场仍偏高（ours 均值 +529 Pa，GEM +98 Pa）：无力学储集时 864 s 已扩散过全盒。压力范围 50,000,040 … 50,001,248 Pa，Sg RMSE=0。
 - GEM 原始井报表来自 `results/lab_v1/cmg_gem_physical_3d/sanwei_co2.out`，在 `Well Summary at Reservoir Conditions at 1.0000E-02 days` 直接读取 **BHP-Pblock 最后一列**（kPa ×1000），共 51 条连接。没有从 5 位有效数字 BHP 反推压差。原文摘录持久保存于 `tests/fixtures/gem_physical_3d_wells_864.txt`，解析器拒绝不存在的 8.64 s 井报表。
 
 下表全为 Pa；“井模型@GEM块压”是隔离测试：仅测试井方程，使用 hidden 的实际 GEM 块压与固定初始组成，不进入正演或反演。GEM 地图打印分辨率 100 Pa，五口井最深连接的这一隔离误差均 <50 Pa；完整 F 的块压仍不匹配。

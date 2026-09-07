@@ -38,11 +38,16 @@ def exp_permeability(theta: NDArray[np.float64] | float) -> NDArray[np.float64]:
 
 @dataclass
 class Rock:
-    """Static cell properties. k is kx=ky; optional kz."""
+    """Static cell properties. k is kx=ky; optional kz.
+
+    ``cpor`` is GEM ``*CPOR`` in 1/Pa: φ = φ_ref exp(cpor (p − prpor)).
+    """
 
     permeability: NDArray[np.float64]
     porosity: NDArray[np.float64]
     kz: NDArray[np.float64] | None = None
+    cpor: float = 0.0
+    prpor: float = 1.0e5
 
     @classmethod
     def uniform(cls, n_cells: int, k: float = 1.0e-12, phi: float = 0.20, kz: float | None = None) -> Rock:
@@ -52,6 +57,13 @@ class Rock:
             porosity=np.full(n_cells, float(phi), dtype=float),
             kz=kz_arr,
         )
+
+    def pore_volume(self, cell_volumes: NDArray[np.float64], pressure: NDArray[np.float64] | None = None) -> NDArray[np.float64]:
+        pv0 = np.asarray(self.porosity, dtype=float).ravel() * np.asarray(cell_volumes, dtype=float).ravel()
+        if float(self.cpor) == 0.0 or pressure is None:
+            return pv0
+        p = np.asarray(pressure, dtype=float).ravel()
+        return pv0 * np.exp(float(self.cpor) * (p - float(self.prpor)))
 
     def __post_init__(self) -> None:
         self.permeability = np.asarray(self.permeability, dtype=float).ravel()
