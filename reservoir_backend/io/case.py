@@ -44,6 +44,24 @@ def _prpor_pa(rock_cfg: dict[str, Any], *, default: float) -> float:
     return float(default)
 
 
+def _biot(rock_cfg: dict[str, Any]) -> float:
+    if rock_cfg.get("biot") is not None:
+        return float(rock_cfg["biot"])
+    if rock_cfg.get("biotscoef") is not None:
+        return float(rock_cfg["biotscoef"])
+    return 0.0
+
+
+def _k_dry_pa(rock_cfg: dict[str, Any]) -> float:
+    if rock_cfg.get("k_dry") is not None:
+        return float(rock_cfg["k_dry"])
+    if rock_cfg.get("K_dry_Pa") is not None:
+        return float(rock_cfg["K_dry_Pa"])
+    if rock_cfg.get("K_dry_GPa") is not None:
+        return float(rock_cfg["K_dry_GPa"]) * 1.0e9
+    return 0.0
+
+
 def _read_control_csv(path: Path) -> list[dict[str, Any]]:
     import csv
 
@@ -337,6 +355,8 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
         ),
         cpor=_cpor_1_per_pa(cfg.get("rock") or {}),
         prpor=_prpor_pa(cfg.get("rock") or {}, default=p_init),
+        biot=_biot(cfg.get("rock") or {}),
+        k_dry=_k_dry_pa(cfg.get("rock") or {}),
     )
 
     ports = ports_from_cfg(cfg, grid, cfg_dir=cfg_dir)

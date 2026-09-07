@@ -433,9 +433,10 @@ def assemble_single_jacobian(
     parts_c: list[NDArray[np.int64]] = []
     parts_d: list[NDArray[np.float64]] = []
     dpv_dp = None
-    if rock is not None and float(getattr(rock, "cpor", 0.0) or 0.0) != 0.0:
+    stor = float(getattr(rock, "storage_1_per_pa", lambda: 0.0)()) if rock is not None else 0.0
+    if stor != 0.0:
         pv = rock.pore_volume(grid.cell_volumes(), pressure)
-        dpv_dp = float(rock.cpor) * pv
+        dpv_dp = stor * pv
     acc = _acc_coo(0, moles, props, th, spec, n_cells, dpv_dp=dpv_dp)
     parts_r.append(acc[0])
     parts_c.append(acc[1])

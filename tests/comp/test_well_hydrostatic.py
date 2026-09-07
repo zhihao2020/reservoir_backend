@@ -24,6 +24,9 @@ def test_physical_3d_injector_allows_crossflow_and_cpor():
     rock = twin.rock_from_theta(np.zeros(twin.parameterization.n_params))
     assert rock.cpor == pytest.approx(1.2e-9)
     assert rock.prpor == pytest.approx(5.0e7)
+    assert rock.biot == pytest.approx(1.0)
+    assert rock.k_dry == pytest.approx(11.9e9)
+    assert rock.storage_1_per_pa() == pytest.approx(1.2e-9 + 1.0 / 11.9e9)
 
 
 def test_gem_connection_parser_uses_delta_column_not_rounded_bhp():

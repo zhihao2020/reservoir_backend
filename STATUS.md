@@ -84,7 +84,7 @@
 **未关（交给后续精度轮）**
 
 1. 历史 433 s underflow：当前 864 / 12096 s 已真实到达，见最新精度轮；不再列为当前阻塞。
-2. GEM `*GEOMECH`（`*NOCOUPERM`）在 F 外。注入井柱 k=1…11 已跟上 GEM 水头（逐层 |Δp|<150 Pa）；全场 RMSE 442 Pa 仍高于无井流时的 163 Pa，远场被扩散抬升，力学储集不在 F。
+2. GEM `*GEOMECH`（`*NOCOUPERM`）在 F 外。牌上 α=1、K_dry=11.9 GPa 的 α²/K_dry 已加进孔隙体积，远场均值仍是 +524 Pa（GEM +98 Pa）。**停止加大 cpor。** 全场 RMSE 与井柱 RMSE 分开报。
 3. 黏度已接线：physical_3d `hzyt` → 现有 LBC/Jossi；GEM 完整 HZYT/PVC3 等价性仍未验证。
 4. 单孔 Jacobian 历史约 1 的误差已在 D0/D2 混跑复现：CSC 缓存拓扑混用；现已修复，列 FD 误差 1.11e-9。
 5. D2 属于产品 DPDP invert 所用 F。underflow 的缓存碰撞根因已修复；原测试保留，20 s 完成。
@@ -123,7 +123,7 @@
 
 井模型：Peaceman BHP 使用 `p_conn=p_ref+rho_wb*g*(z_ref-z_conn)`，z 向上；默认最高连接为 BHP 参考，physical_3d YAML 显式写出 INJ/PROD1–3 的 z_ref=0.29 m、PROD4 的 0.09 m。注井用注入组成，采井用本连接流体组成，在中点井筒压力、T 下闪蒸密度；没有拟合密度。Peaceman 连接默认不允许反向流动，可用 `allow_crossflow` 显式开启；面端口不变。井筒静压独立于 `physics.gravity: false`。BHP 源项的局部导数按组分批处理，保留列 FD 对照。
 
-- 864 s 网格 RMSE：**163 Pa**（平 50 MPa）→ **527 Pa**（静压+注入 CO2 流度）→ **442 Pa**（注入井交叉流 + GEM `*CPOR` + 油格子流度）。注入井柱 GEM k=1…11 相对 50 MPa：GEM 0/100/300/400/500/700/800/900/1100/1200/1300 Pa，ours 46/167/295/425/555/684/810/933/1051/1161/1248 Pa（逐层 <150 Pa）。远场仍偏高（ours 均值 +529 Pa，GEM +98 Pa）：无力学储集时 864 s 已扩散过全盒。压力范围 50,000,040 … 50,001,248 Pa，Sg RMSE=0。
+- 864 s 尺子拆开：`rmse_p_pa` 全场，`rmse_p_inj_column_pa` 注入井柱。加牌上 Biot 体积储集 α²/K_dry=1/11.9 GPa（不加大 *CPOR）后：**全场 437 Pa**，**注入井柱 41 Pa**。远场均值 ours +524 Pa vs GEM +98 Pa，与加储集前几乎相同（α²/K_dry 只比 *CPOR 多 ~7%）。缺口是完整力学，停止加大 cpor。图标题同时写两项。不是 M2a PASS。
 - GEM 原始井报表来自 `results/lab_v1/cmg_gem_physical_3d/sanwei_co2.out`，在 `Well Summary at Reservoir Conditions at 1.0000E-02 days` 直接读取 **BHP-Pblock 最后一列**（kPa ×1000），共 51 条连接。没有从 5 位有效数字 BHP 反推压差。原文摘录持久保存于 `tests/fixtures/gem_physical_3d_wells_864.txt`，解析器拒绝不存在的 8.64 s 井报表。
 
 下表全为 Pa；“井模型@GEM块压”是隔离测试：仅测试井方程，使用 hidden 的实际 GEM 块压与固定初始组成，不进入正演或反演。GEM 地图打印分辨率 100 Pa，五口井最深连接的这一隔离误差均 <50 Pa；完整 F 的块压仍不匹配。

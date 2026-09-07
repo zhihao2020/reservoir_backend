@@ -117,6 +117,21 @@ def _monitor_k_our(case: Path | None, nz: int) -> list[tuple[str, int]]:
     return out
 
 
+def _port_cells(twin, name: str) -> np.ndarray:
+    for port in twin.ports:
+        if str(port.name).upper() == str(name).upper():
+            return np.asarray(port.cell_ids, dtype=np.int64)
+    return np.zeros(0, dtype=np.int64)
+
+
+def _rmse_on_cells(pred, truth, cells: np.ndarray) -> float | None:
+    if cells.size == 0:
+        return None
+    a = np.asarray(pred, dtype=float).ravel()
+    b = np.asarray(truth, dtype=float).ravel()
+    return rmse(a[cells], b[cells])
+
+
 def _injector_j(twin) -> int:
     for port in twin.ports:
         if str(port.name).upper() == "INJ" and port.cell_ids.size:
@@ -289,7 +304,13 @@ def _plot_physical_3d(
     stop = "（提前终止）" if metrics.get("truncated") else ""
     fig.suptitle(
         f"压力场对比  GEM时刻={metrics['t_gem_s']:.2f} s  本模型时刻={metrics['t_s']:.2f} s  "
-        f"均方根误差={metrics['rmse_p_pa']:.0f} Pa{stop}",
+        f"全场均方根误差={metrics['rmse_p_pa']:.0f} Pa"
+        + (
+            f"  注入井柱={metrics['rmse_p_inj_column_pa']:.0f} Pa"
+            if metrics.get("rmse_p_inj_column_pa") is not None
+            else ""
+        )
+        + stop,
         fontsize=11,
     )
     fig.savefig(dest / "pressure_monitors.png", dpi=140)
@@ -468,6 +489,9 @@ def main(argv=None) -> int:
         "nrmse_p": nrmse_range(p_ours, p_gem),
         "nrmse_p_sigma": nrmse_range(p_ours, p_gem, span_floor=PRESSURE_SPAN_FLOOR_PA),
         "rmse_p_pa": rmse(p_ours, p_gem),
+        "rmse_p_inj_column_pa": _rmse_on_cells(p_ours, p_gem, _port_cells(twin, "INJ")),
+        "gem_mean_offset_pa": float(np.mean(p_gem) - 5.0e7),
+        "ours_mean_offset_pa": float(np.mean(p_ours) - 5.0e7),
         "gem_pressure_min_max_pa": [float(p_gem.min()), float(p_gem.max())],
         "ours_pressure_min_max_pa": [float(p_ours.min()), float(p_ours.max())],
         "rmse_sg": None if sg_gem is None else rmse(np.asarray(ours["sg"][-1]), sg_gem),

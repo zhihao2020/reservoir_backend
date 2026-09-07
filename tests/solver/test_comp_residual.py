@@ -1,6 +1,7 @@
 """One-cell / small-grid compositional Newton. ||R|| drop is the gate."""
 
 import numpy as np
+import pytest
 
 from reservoir_backend.comp.fluid import fluid_from_name
 from reservoir_backend.comp.properties import flash_state, moles_from_z
@@ -52,6 +53,19 @@ def test_flash_inner_not_rs_switch() -> None:
     assert props.sv.shape == (1,)
     assert 0.0 <= float(props.sv[0]) <= 1.0
     assert abs(float(props.sl[0] + props.sv[0]) - 1.0) < 1.0e-12
+
+
+def test_biot_storage_adds_alpha_squared_over_k_dry() -> None:
+    grid, rock, spec, moles, p = _one_cell()
+    rock.cpor = 1.2e-9
+    rock.prpor = float(p[0])
+    rock.biot = 1.0
+    rock.k_dry = 11.9e9
+    assert rock.storage_1_per_pa() == pytest.approx(1.2e-9 + 1.0 / 11.9e9)
+    pv_cpor = np.exp(1.2e-9 * 1.0e6)
+    pv_both = rock.pore_volume(grid.cell_volumes(), p + 1.0e6)[0] / rock.pore_volume(grid.cell_volumes(), p)[0]
+    assert float(pv_both) > float(pv_cpor)
+    np.testing.assert_allclose(pv_both, np.exp(rock.storage_1_per_pa() * 1.0e6), rtol=1e-12)
 
 
 def test_cpor_increases_pore_volume_with_pressure() -> None:

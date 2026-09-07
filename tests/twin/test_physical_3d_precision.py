@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from reservoir_backend.exceptions import TimeStepUnderflow
-from reservoir_backend.twin.cmg_benchmark import load_twin_case, theta_true_from_twin, forward_at_theta
-from scripts.lab_v1_cmg_compare_plot import _cap_times, _forward_capped
+from reservoir_backend.twin.cmg_benchmark import load_twin_case, theta_true_from_twin, forward_at_theta, rmse
+from scripts.lab_v1_cmg_compare_plot import _cap_times, _forward_capped, _port_cells, _rmse_on_cells
 
 
 def test_physical_3d_reaches_864():
@@ -32,6 +32,19 @@ def test_physical_3d_reaches_864():
         col.append(final[cell] - 5e7)
         gcol.append(gem[cell] - 5e7)
     np.testing.assert_allclose(col, gcol, atol=150.0)
+
+
+def test_injector_column_rmse_is_not_the_full_field():
+    twin = load_twin_case(Path('examples/lab_v1/cmg_gem/physical_3d/case.yaml'))
+    n = twin.grid.n_cells
+    pred = np.full(n, 5.0e7)
+    truth = np.full(n, 5.0e7)
+    cells = _port_cells(twin, 'INJ')
+    pred[cells] = 5.0e7 + 100.0
+    truth[cells] = 5.0e7 + 100.0
+    pred[0] = 5.0e7 + 1.0e4
+    assert _rmse_on_cells(pred, truth, cells) == pytest.approx(0.0)
+    assert rmse(pred, truth) > 100.0
 
 
 def test_comparison_defaults_to_first_gem_report():

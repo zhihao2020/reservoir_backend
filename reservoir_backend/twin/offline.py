@@ -85,6 +85,8 @@ class PhysicsSpec:
     k_matrix_m2: float | None = None
     cpor: float = 0.0
     prpor: float = 1.0e5
+    biot: float = 0.0
+    k_dry: float = 0.0
 
 
 def physical_from_theta(parameterization, theta: NDArray[np.float64]) -> dict[str, float]:
@@ -411,6 +413,8 @@ class DigitalTwin:
             kz=kz,
             cpor=float(self.physics.cpor),
             prpor=float(self.physics.prpor),
+            biot=float(self.physics.biot),
+            k_dry=float(self.physics.k_dry),
         )
 
     def rock_from_theta(self, theta: NDArray[np.float64]) -> Rock:

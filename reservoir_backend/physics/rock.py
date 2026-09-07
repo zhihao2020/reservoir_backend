@@ -41,6 +41,8 @@ class Rock:
     """Static cell properties. k is kx=ky; optional kz.
 
     ``cpor`` is GEM ``*CPOR`` in 1/Pa: φ = φ_ref exp(cpor (p − prpor)).
+    ``biot`` and ``k_dry`` add unconstrained bulk storage α²/K_dry (1/Pa),
+    not a stress solver. k_dry=0 disables that term.
     """
 
     permeability: NDArray[np.float64]
@@ -48,6 +50,15 @@ class Rock:
     kz: NDArray[np.float64] | None = None
     cpor: float = 0.0
     prpor: float = 1.0e5
+    biot: float = 0.0
+    k_dry: float = 0.0
+
+    def storage_1_per_pa(self) -> float:
+        extra = 0.0
+        kd = float(self.k_dry)
+        if kd > 0.0:
+            extra = float(self.biot) ** 2 / kd
+        return float(self.cpor) + extra
 
     @classmethod
     def uniform(cls, n_cells: int, k: float = 1.0e-12, phi: float = 0.20, kz: float | None = None) -> Rock:
@@ -60,10 +71,11 @@ class Rock:
 
     def pore_volume(self, cell_volumes: NDArray[np.float64], pressure: NDArray[np.float64] | None = None) -> NDArray[np.float64]:
         pv0 = np.asarray(self.porosity, dtype=float).ravel() * np.asarray(cell_volumes, dtype=float).ravel()
-        if float(self.cpor) == 0.0 or pressure is None:
+        stor = self.storage_1_per_pa()
+        if stor == 0.0 or pressure is None:
             return pv0
         p = np.asarray(pressure, dtype=float).ravel()
-        return pv0 * np.exp(float(self.cpor) * (p - float(self.prpor)))
+        return pv0 * np.exp(stor * (p - float(self.prpor)))
 
     def __post_init__(self) -> None:
         self.permeability = np.asarray(self.permeability, dtype=float).ravel()
