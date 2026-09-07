@@ -188,4 +188,6 @@ DPDP 修复证据：
 
 864 s 重算（291 s，未截断）：**全场 RMSE 400.06 Pa**（此前 437.5），**注入井柱 69.60 Pa**（此前 41.1），远场均值 ours **+487.2 Pa** vs GEM **+98.1 Pa**。井底 ours 1427 vs GEM 1300；角井底 ours 454 vs 井报表 191。最上 3 段注入井仍有反流（GEM 11 段全正）。径向仍偏平。不是 M2a PASS。不加大 cpor。
 
+随后：注入井在 sg=0 时改回油流度（GEM BHP-Pblock 127 Pa 对齐油 λ，不是 16 Pa 的 CO2 λ）。`geofac` 改为 Peaceman `0.14√2≈0.198`（牌上 0.34 把 \(r_e\) 算大，WI 约为 GEM 连接 PI 的 1/3）。864 s：**全场 RMSE 373.0 Pa**，**注入井柱 41.9 Pa**，井底 1355 vs GEM 1300，远场均值 +460 vs GEM +98。不是 M2a PASS。
+
 复算：`python scripts/lab_v1_cmg_compare_plot.py --case examples/lab_v1/cmg_gem/physical_3d/case.yaml --hidden examples/lab_v1/cmg_gem/physical_3d/export/hidden --out results/lab_v1/cmg_gem_physical_3d_compare --t-end 864`。测试：`tests/physics/test_geomech.py`。

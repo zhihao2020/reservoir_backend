@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from reservoir_backend.comp.properties import flash_state
 from reservoir_backend.comp.wells import well_molar_sources
@@ -34,7 +35,7 @@ def test_pressure_injector_adds_z_inj_not_cell_oil() -> None:
     assert rates["INJ:q_inj"] > 0.0
 
 
-def test_gas_injector_uses_injectate_mobility_on_oil_block() -> None:
+def test_oil_block_injector_uses_cell_mobility_not_co2() -> None:
     from reservoir_backend.comp.wells import _injectate_xi_lam, _wi, perforation_pressures
 
     twin = load_case("examples/lab_v1/cmg_gem/physical_3d/case.yaml")
@@ -43,7 +44,7 @@ def test_gas_injector_uses_injectate_mobility_on_oil_block() -> None:
     rock = Rock.uniform(1, k=1.776e-17, phi=0.0367)
     port = FlowPort(
         "INJ", "injector", "pressure", np.array([0], dtype=np.int64),
-        use_productivity=True, rw_m=0.003, geofac=0.34,
+        use_productivity=True, rw_m=0.003, geofac=0.198,
     )
     p = np.array([4.99e7])
     props = flash_state(spec, p, np.broadcast_to(spec.z_init, (1, spec.nc)).copy())
@@ -55,8 +56,23 @@ def test_gas_injector_uses_injectate_mobility_on_oil_block() -> None:
     q_oil = wi * float(props.lam_l[0]) * float(pw[0] - p[0]) * xi
     q_gas = wi * lam_inj * float(pw[0] - p[0]) * xi
     tot = float(np.sum(q[0]))
-    assert tot > 2.0 * q_oil
-    np.testing.assert_allclose(tot, q_gas, rtol=0.05)
+    np.testing.assert_allclose(tot, q_oil, rtol=0.05)
+    assert tot < 0.5 * q_gas
+
+
+def test_physical_3d_peaceman_matches_gem_connection_pi() -> None:
+    from reservoir_backend.comp.wells import _wi
+    from reservoir_backend.ports.flow import peaceman_wi
+
+    twin = load_case("examples/lab_v1/cmg_gem/physical_3d/case.yaml")
+    inj = next(p for p in twin.ports if p.name == "INJ")
+    assert inj.geofac == pytest.approx(0.198, rel=1e-3)
+    rock = twin.rock_from_theta(np.zeros(twin.parameterization.n_params))
+    wi = _wi(twin.grid, rock, inj, int(inj.cell_ids[0]))
+    # GEM INJ k=11: q=7.358e-8 m3/d, dp=126.78 Pa, oil λ≈915 → WI≈7.3e-18 m3.
+    assert 6.5e-18 < wi < 9.0e-18
+    wi14 = peaceman_wi(twin.grid, int(inj.cell_ids[0]), float(rock.permeability[0]), 0.003, geofac=0.0)
+    np.testing.assert_allclose(wi, wi14, rtol=0.02)
 
 
 def test_co2_injectate_uses_dense_viscosity() -> None:

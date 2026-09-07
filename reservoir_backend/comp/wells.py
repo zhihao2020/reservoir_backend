@@ -245,9 +245,10 @@ def well_molar_sources(
             dp = np.maximum(dp, 0.0) if port.role == "injector" else np.minimum(dp, 0.0)
         if port.role == "injector":
             xi_inj, lam_inj = _injectate_xi_lam(spec, p_wf)
-            # GEM well type "Mob Wtd Gas Inj": injection uses injectate λ.
-            # Reverse flow (if allow_crossflow) uses the oil-block mobility.
-            lam_conn = np.where(dp >= 0.0, lam_inj, lam_t)
+            # Block is oil while sg=0 (GEM 864 s). Injectate λ (~0.06 cP CO2)
+            # collapses BHP-Pblock to ~16 Pa; GEM prints 127 Pa, which matches oil λ.
+            # "Mob Wtd Gas Inj" is injectate composition / rate reporting, not kr/μ.
+            lam_conn = np.where(props.lam_v[cells] > props.lam_l[cells], lam_inj, lam_t)
             q_vol = wi * lam_conn * dp
             n_dot = np.zeros(n_hc)
             inj_vol = 0.0

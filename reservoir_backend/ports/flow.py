@@ -178,7 +178,8 @@ def peaceman_wi(
 
     ``axis`` is the wellbore direction (CMG ``*GEOMETRY *I/*J/*K``). Length is
     the cell size along that axis; ``re`` lives in the perpendicular plane.
-    Default ``re = 0.14 sqrt(a²+b²)``. If ``geofac > 0``, ``re = geofac * sqrt(a b)``.
+    Default ``re = 0.14 sqrt(a²+b²)`` (Peaceman). If ``geofac > 0``,
+    ``re = geofac * sqrt(a b)``. Square cells: Peaceman ``geofac = 0.14*sqrt(2) ≈ 0.198``.
     """
     i, j, k = grid.ijk(int(cell))
     dx, dy, dz = float(grid.dx[i]), float(grid.dy[j]), float(grid.dz[k])

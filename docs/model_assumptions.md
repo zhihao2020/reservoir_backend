@@ -90,7 +90,7 @@ reservoir invert examples/lab/lab_cf.yaml --self-check --output results/cf
 - 杨氏模量、泊松比、Biot 系数是 case 输入：`geomech.E_GPa` / `nu` / `biot`。不进 \(\theta\)。代码不写死 20 GPa；physical_3d 里的 20 只对齐该副 GEM `*ELASTMOD`。
 - 产品 `examples/lab_v1/case.yaml` 写出这些键，默认 `enabled: false`。DPDP 正演若 `enabled: true` 会直接拒绝。
 - 单孔组分 `enabled: true`：Cartesian hex8 线弹性，孔隙体积 \(V_p=\varphi_{\mathrm{ref}}V_{\mathrm{cell}}\exp(c_{\mathrm{por}}\Delta p)\,(1+(\alpha/\varphi)\theta)\)，\(\theta=\nabla\cdot u\)（Biot \(\mathrm{d}V_p=\alpha\,\mathrm{d}V_{\mathrm{bulk}}\)）。`nocouperm: true`（默认）不改渗透率，对齐 GEM `*NOCOUPERM`。
-- 组分 Peaceman 注入井在 \(\Delta p>0\) 时用注入流体流度（对齐 GEM mobility-weighted gas injector）；反向流动仍用格子油流度。
+- 组分 Peaceman：正方形格子 `geofac=0.14\sqrt{2}\approx 0.198` 才是 \(r_e=0.14\sqrt{\mathrm{d}x^2+\mathrm{d}y^2}\)。physical_3d 牌上的 0.34 会把 \(r_e\) 算大、WI 偏小；连接产量反算对齐 0.198。格子仍为油时注入井用油流度（GEM BHP-Pblock ~127 Pa），不是 CO2 流度。
 - `boundary: unconstrained` 对齐 GEM `*GCFACTOR 0`（增量面力 0）。`confined` 把边界位移钉死。
 - 打开力学后不再把标量 \(\alpha^2/K_{\mathrm{dry}}\) 叠进 `*CPOR` 指数。`K_dry_GPa` 只在省略 `E_GPa` 时用来反推模量。
 - 不是塑性、不是网格运动、不是渗透率应力函数。远场仍对不上 GEM 时停止加大 cpor，不把 E 塞进反演。

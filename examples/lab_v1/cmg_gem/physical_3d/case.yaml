@@ -55,7 +55,7 @@ ports:
     allow_crossflow: true    # GEM default; no *NOCROSSFLOW. Stops the box filling to max(p_wf).
     use_productivity: true
     rw_m: 0.003
-    geofac: 0.34
+    geofac: 0.198  # Peaceman 0.14√2; deck 0.34 understates WI vs GEM connection PI
     skin: 0.0
   - name: PROD1
     role: producer
@@ -65,7 +65,7 @@ ports:
     bhp_reference_z_m: 0.29
     use_productivity: true
     rw_m: 0.003
-    geofac: 0.34
+    geofac: 0.198
   - name: PROD2
     role: producer
     control: pressure
@@ -74,7 +74,7 @@ ports:
     bhp_reference_z_m: 0.29
     use_productivity: true
     rw_m: 0.003
-    geofac: 0.34
+    geofac: 0.198
   - name: PROD3
     role: producer
     control: pressure
@@ -83,7 +83,7 @@ ports:
     bhp_reference_z_m: 0.29
     use_productivity: true
     rw_m: 0.003
-    geofac: 0.34
+    geofac: 0.198
   - name: PROD4
     role: producer
     control: pressure
@@ -92,7 +92,7 @@ ports:
     bhp_reference_z_m: 0.09  # GEM first connection k=11
     use_productivity: true
     rw_m: 0.003
-    geofac: 0.34
+    geofac: 0.198
 
 sensors_defaults:
   probe_diameter_m: 0.006
