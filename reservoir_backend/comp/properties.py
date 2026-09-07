@@ -208,17 +208,32 @@ def flash_state(
     bump(n_cells=n_idx, n_warm_start=n_warm, n_warm_fallback=n_fallback)
     global _LAST_FLASH_S
     _LAST_FLASH_S = time.perf_counter() - t_flash
+    if spec.phaseid == "crit":
+        tpc = out.z_flash[idx] @ spec.eos.tc
+        gas = (~np.asarray(out.two_phase[idx], dtype=bool)) & (tpc < t)
+        if np.any(gas):
+            gidx = idx[gas]
+            out.sv[gidx] = 1.0 - out.sw[gidx]
+            out.sl[gidx] = 0.0
+            out.vapor_frac[gidx] = 1.0
+    mu_l = np.full(n_idx, float(spec.mu_liquid))
+    mu_v = np.full(n_idx, float(spec.mu_vapor))
+    if spec.visc_model == "lbc":
+        from reservoir_backend.comp.lbc import lbc_viscosity
+
+        mu_l = lbc_viscosity(spec.eos, t, out.x[idx], out.xi_l[idx])
+        mu_v = lbc_viscosity(spec.eos, t, out.y[idx], out.xi_v[idx])
     if spec.has_water:
-        krw, kro, krg = _corey_three(out.sw, out.sv, spec)
-        out.lam_w = krw / spec.mu_water
-        out.lam_l = kro / spec.mu_liquid
-        out.lam_v = krg / spec.mu_vapor
+        krw, kro, krg = _corey_three(out.sw[idx], out.sv[idx], spec)
+        out.lam_w[idx] = krw / spec.mu_water
+        out.lam_l[idx] = kro / np.maximum(mu_l, 1.0e-12)
+        out.lam_v[idx] = krg / np.maximum(mu_v, 1.0e-12)
     else:
-        kro, krg = _corey_og(out.sv, spec)
-        out.lam_l = kro / spec.mu_liquid
-        out.lam_v = krg / spec.mu_vapor
-        out.lam_w[:] = 0.0
-        out.sw[:] = 0.0
+        kro, krg = _corey_og(out.sv[idx], spec)
+        out.lam_l[idx] = kro / np.maximum(mu_l, 1.0e-12)
+        out.lam_v[idx] = krg / np.maximum(mu_v, 1.0e-12)
+        out.lam_w[idx] = 0.0
+        out.sw[idx] = 0.0
     return out
 
 

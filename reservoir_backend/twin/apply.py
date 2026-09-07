@@ -13,8 +13,7 @@ from numpy.typing import NDArray
 from reservoir_backend.domain.types import ObservationSeries
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.rock import Rock
-from reservoir_backend.twin.offline import DigitalTwin
-from reservoir_backend.synthetic import layered_permeability
+from reservoir_backend.twin.offline import DigitalTwin, encode_physical_theta
 
 
 def demo_sample_times(twin: DigitalTwin, *, n_hist: int = 5, n_fc: int = 2) -> NDArray[np.float64]:
@@ -34,54 +33,6 @@ def demo_sample_times(twin: DigitalTwin, *, n_hist: int = 5, n_fc: int = 2) -> N
     return np.unique(hist)
 
 
-def attach_two_layer_demo(
-    twin: DigitalTwin,
-    *,
-    k_lo: float = 2.0e-13,
-    k_hi: float = 2.0e-12,
-    seed: int = 3,
-    holdout: list[str] | tuple[str, ...] | None = None,
-) -> NDArray[np.float64]:
-    """Fill empty observations from H(F(known-structure truth)) on this case's grid.
-
-    If the case already has a 0/1 region map (layers or a channel), that map is
-    the truth. Otherwise fall back to a mid-plane z split.
-    """
-    grid = twin.grid
-    rid = getattr(twin.parameterization, "region_id", None)
-    if rid is not None and int(np.max(rid)) >= 1:
-        k_true = np.full(grid.n_cells, float(k_lo), dtype=float)
-        k_true[np.asarray(rid, dtype=np.int64).ravel() == 1] = float(k_hi)
-    else:
-        z_cut = grid.origin[2] + 0.5 * grid.size_m()[2]
-        k_true = layered_permeability(grid, k_lo, k_hi, z_cut)
-    phi = float(getattr(twin.parameterization, "phi", 0.20))
-    times = demo_sample_times(twin)
-    t_end = float(times[-1])
-    traj = twin.simulate(Rock(k_true, np.full(grid.n_cells, phi)), t_end=t_end, report_times=times)
-    rng = np.random.default_rng(seed)
-    names = set(holdout or ())
-    obs = []
-    for s in twin.experiment.sensors:
-        vals = []
-        for i, t in enumerate(traj.times_s):
-            rates, bhp = traj.rates_and_bhp_at(float(t))
-            vals.append(twin.operator.sample(s, traj.state_at(float(t)), port_rates=rates, port_bhp=bhp))
-        va = np.asarray(vals, dtype=float) + rng.normal(0.0, max(s.sigma, 1.0e-12), size=len(vals))
-        obs.append(
-            ObservationSeries(
-                s.name,
-                s.kind,
-                np.asarray(traj.times_s, dtype=float),
-                va,
-                np.full(len(vals), max(s.sigma, 1.0e-12)),
-                s.name in names,
-            )
-        )
-    twin.experiment.observations = obs
-    return k_true
-
-
 def attach_cf_demo(
     twin: DigitalTwin,
     *,
@@ -89,8 +40,8 @@ def attach_cf_demo(
     seed: int = 3,
     holdout: list[str] | tuple[str, ...] | None = None,
 ) -> NDArray[np.float64]:
-    """Fill empty observations from H(F(C_f^true)) for the DPDP apply path."""
-    theta_true = twin.parameterization.encode(np.array([float(cf_true)], dtype=float))
+    """Fill empty observations from H(F(C_f^true, T_mf^true)) for the DPDP apply path."""
+    theta_true = encode_physical_theta(twin.parameterization, cf_m2=float(cf_true), tmf_multiplier=1.0)
     k_true = np.asarray(twin.parameterization.expand(theta_true), dtype=float).ravel()
     times = demo_sample_times(twin)
     t_end = float(times[-1])
@@ -184,7 +135,9 @@ def accept_demo(twin: DigitalTwin, posterior, k_true: NDArray[np.float64]) -> di
     t_end = float(times[-1])
     phi = float(getattr(twin.parameterization, "phi", 0.20))
     if twin.uses_dpdp():
-        theta_true = twin.parameterization.encode(np.array([float(np.mean(k_true))], dtype=float))
+        theta_true = encode_physical_theta(
+            twin.parameterization, cf_m2=float(np.mean(k_true)), tmf_multiplier=1.0
+        )
         true_hist = twin.simulate(parameters=theta_true, t_end=t_end, report_times=times)
         post_hist = twin.simulate(parameters=posterior.theta, t_end=t_end, report_times=times)
     else:

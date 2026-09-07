@@ -251,6 +251,10 @@ def _single_arrays(
     vol = zz * R_GAS * float(temperature) / np.maximum(pressure, 1.0e-12)
     v_liq = zl * R_GAS * float(temperature) / np.maximum(pressure, 1.0e-12)
     v_vap = zv * R_GAS * float(temperature) / np.maximum(pressure, 1.0e-12)
+    shift = eos.peneloux_shift_batch(z, temperature)
+    vol = np.maximum(vol - shift, 1.0e-12)
+    v_liq = np.maximum(v_liq - shift, 1.0e-12)
+    v_vap = np.maximum(v_vap - shift, 1.0e-12)
     v_liq = np.where(vapor, v_liq, vol)
     v_vap = np.where(vapor, vol, v_vap)
     return zl, zv, v_liq, v_vap, np.where(vapor, 1.0, 0.0)
@@ -404,8 +408,14 @@ def flash_batch(
             out_y[im] = ya[mid]
             out_zl[im] = zl
             out_zv[im] = zv
-            out_vl[im] = zl * R_GAS * t / np.maximum(p[im], 1.0e-12)
-            out_vv[im] = zv * R_GAS * t / np.maximum(p[im], 1.0e-12)
+            out_vl[im] = np.maximum(
+                zl * R_GAS * t / np.maximum(p[im], 1.0e-12) - eos.peneloux_shift_batch(xa[mid], t),
+                1.0e-12,
+            )
+            out_vv[im] = np.maximum(
+                zv * R_GAS * t / np.maximum(p[im], 1.0e-12) - eos.peneloux_shift_batch(ya[mid], t),
+                1.0e-12,
+            )
             two_phase[im] = True
             e_m = erra[mid]
             conv[im] = np.isfinite(e_m) & (e_m < float(tol))

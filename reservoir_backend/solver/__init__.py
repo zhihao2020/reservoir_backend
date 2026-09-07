@@ -1,3 +1,3 @@
-from reservoir_backend.solver.impes import Trajectory, simulate
+from reservoir_backend.solver.trajectory import MassBalance, StepReport, Trajectory
 
-__all__ = ["Trajectory", "simulate"]
+__all__ = ["MassBalance", "StepReport", "Trajectory"]

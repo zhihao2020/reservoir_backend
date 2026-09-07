@@ -30,6 +30,40 @@ class CellThermoJac:
     dy: NDArray[np.float64]
 
 
+def _thermo_one_slot(
+    spec: CompSpec,
+    p: NDArray[np.float64],
+    n: NDArray[np.float64],
+    props: PhaseProps,
+    slot: int,
+    nc: int,
+    eps_n: float,
+    eps_p: float,
+) -> tuple[int, dict[str, NDArray[np.float64]], float]:
+    n2 = n.copy()
+    p2 = p.copy()
+    eps = eps_n if slot < nc else eps_p
+    if slot < nc:
+        n2[:, slot] = n2[:, slot] + eps
+    else:
+        p2 = p2 + eps
+    trial = flash_state(spec, p2, n2)
+    inv = 1.0 / eps
+    pack = {
+        "dv_mix": (trial.v_mix - props.v_mix) * inv,
+        "dvw": (trial.vw - props.vw) * inv,
+        "dlam_l": (trial.lam_l - props.lam_l) * inv,
+        "dlam_v": (trial.lam_v - props.lam_v) * inv,
+        "dlam_w": (trial.lam_w - props.lam_w) * inv,
+        "dxi_l": (trial.xi_l - props.xi_l) * inv,
+        "dxi_v": (trial.xi_v - props.xi_v) * inv,
+        "dxi_w": (trial.xi_w - props.xi_w) * inv,
+        "dx": (trial.x - props.x) * inv,
+        "dy": (trial.y - props.y) * inv,
+    }
+    return slot, pack, last_flash_seconds()
+
+
 def cell_thermo_fd(
     spec: CompSpec,
     pressure: NDArray[np.float64],
@@ -38,7 +72,9 @@ def cell_thermo_fd(
     n_scale: float,
     p_scale: float,
 ) -> tuple[CellThermoJac, float]:
-    """One slot at a time over the whole grid. Reuses K from ``props``."""
+    """One slot at a time over the whole grid. Independent slots may run in parallel."""
+    from reservoir_backend.eos.threads import jacobian_threads
+
     p = np.asarray(pressure, dtype=float).ravel()
     n = np.asarray(moles, dtype=float)
     n_cells, nc = n.shape
@@ -56,29 +92,38 @@ def cell_thermo_fd(
     dxi_w = np.zeros((n_cells, nu))
     dx = np.zeros((n_cells, n_hc, nu))
     dy = np.zeros((n_cells, n_hc, nu))
+
+    def _apply(slot: int, pack: dict[str, NDArray[np.float64]]) -> None:
+        dv_mix[:, slot] = pack["dv_mix"]
+        dvw[:, slot] = pack["dvw"]
+        dlam_l[:, slot] = pack["dlam_l"]
+        dlam_v[:, slot] = pack["dlam_v"]
+        dlam_w[:, slot] = pack["dlam_w"]
+        dxi_l[:, slot] = pack["dxi_l"]
+        dxi_v[:, slot] = pack["dxi_v"]
+        dxi_w[:, slot] = pack["dxi_w"]
+        dx[:, :, slot] = pack["dx"]
+        dy[:, :, slot] = pack["dy"]
+
     t_flash = 0.0
-    for slot in range(nu):
-        n2 = n.copy()
-        p2 = p.copy()
-        eps = eps_n if slot < nc else eps_p
-        if slot < nc:
-            n2[:, slot] = n2[:, slot] + eps
-        else:
-            p2 = p2 + eps
-        # Same flash map as the residual (Wilson). Reusing K here makes J ≠ dR.
-        trial = flash_state(spec, p2, n2)
-        t_flash += last_flash_seconds()
-        inv = 1.0 / eps
-        dv_mix[:, slot] = (trial.v_mix - props.v_mix) * inv
-        dvw[:, slot] = (trial.vw - props.vw) * inv
-        dlam_l[:, slot] = (trial.lam_l - props.lam_l) * inv
-        dlam_v[:, slot] = (trial.lam_v - props.lam_v) * inv
-        dlam_w[:, slot] = (trial.lam_w - props.lam_w) * inv
-        dxi_l[:, slot] = (trial.xi_l - props.xi_l) * inv
-        dxi_v[:, slot] = (trial.xi_v - props.xi_v) * inv
-        dxi_w[:, slot] = (trial.xi_w - props.xi_w) * inv
-        dx[:, :, slot] = (trial.x - props.x) * inv
-        dy[:, :, slot] = (trial.y - props.y) * inv
+    workers = jacobian_threads(nu) if n_cells >= 32 else 1
+    if workers <= 1:
+        for slot in range(nu):
+            slot, pack, dt_f = _thermo_one_slot(spec, p, n, props, slot, nc, eps_n, eps_p)
+            t_flash += dt_f
+            _apply(slot, pack)
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [
+                pool.submit(_thermo_one_slot, spec, p, n, props, slot, nc, eps_n, eps_p)
+                for slot in range(nu)
+            ]
+            for fut in futs:
+                slot, pack, dt_f = fut.result()
+                t_flash += dt_f
+                _apply(slot, pack)
     return (
         CellThermoJac(dv_mix, dvw, dlam_l, dlam_v, dlam_w, dxi_l, dxi_v, dxi_w, dx, dy),
         t_flash,
@@ -356,6 +401,53 @@ def assemble_block_jacobian(
     data = np.concatenate(parts_d)
     jac = _csc_cached(rows, cols, data, n_u)
     return jac, fl_f + fl_m
+
+
+def assemble_single_jacobian(
+    grid: CartesianGrid,
+    spec: CompSpec,
+    moles: NDArray[np.float64],
+    pressure: NDArray[np.float64],
+    props: PhaseProps,
+    dt: float,
+    t_geom: tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]],
+    n_scale: float,
+    p_scale: float,
+) -> tuple[sparse.csc_matrix, float]:
+    """Single-porosity accumulation + TPFA. Local flash FD, analytic faces.
+
+    Same residual as ``coupled_residual``. Wells are added by the caller.
+    """
+    n_cells = grid.n_cells
+    nc = spec.nc
+    nu = nc + 1
+    n_u = n_cells * nu
+    th, fl = cell_thermo_fd(spec, pressure, moles, props, n_scale, p_scale)
+    parts_r: list[NDArray[np.int64]] = []
+    parts_c: list[NDArray[np.int64]] = []
+    parts_d: list[NDArray[np.float64]] = []
+    acc = _acc_coo(0, moles, props, th, spec, n_cells)
+    parts_r.append(acc[0])
+    parts_c.append(acc[1])
+    parts_d.append(acc[2])
+    face_pairs = _faces(grid)
+    axes: list[NDArray[np.float64]] = []
+    tx, ty, tz = t_geom
+    if grid.nx > 1:
+        axes.append(np.asarray(tx, dtype=float).ravel())
+    if grid.ny > 1:
+        axes.append(np.asarray(ty, dtype=float).ravel())
+    if grid.nz > 1:
+        axes.append(np.asarray(tz, dtype=float).ravel())
+    for (left, right), tf in zip(face_pairs, axes):
+        fr = _faces_coo(0, left, right, tf, pressure, props, th, spec, n_cells, dt)
+        parts_r.append(fr[0])
+        parts_c.append(fr[1])
+        parts_d.append(fr[2])
+    rows = np.concatenate(parts_r)
+    cols = np.concatenate(parts_c)
+    data = np.concatenate(parts_d)
+    return _csc_cached(rows, cols, data, n_u), fl
 
 
 _JAC_CACHE: dict[tuple[int, int], tuple] = {}

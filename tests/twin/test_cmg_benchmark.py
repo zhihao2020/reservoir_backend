@@ -298,15 +298,67 @@ def test_parse_gem_out_pressure_planes(tmp_path: Path) -> None:
 
 
 def test_parse_physical_3d_gem_out_if_present() -> None:
-    from reservoir_backend.twin.cmg_benchmark import parse_gem_out_maps
+    from reservoir_backend.twin.cmg_benchmark import gem_kdir_down, parse_gem_out_maps
 
     path = Path("results/lab_v1/cmg_gem_physical_3d/sanwei_co2.out")
     if not path.is_file():
         pytest.skip("local GEM physical_3d out not present")
-    truth = parse_gem_out_maps(path, nx=15, ny=15, nz=15)
+    case = Path("examples/lab_v1/cmg_gem/physical_3d/case.yaml")
+    truth = parse_gem_out_maps(
+        path, nx=15, ny=15, nz=15, kdir_down=gem_kdir_down(case)
+    )
     assert truth.pressure.shape[1] == 15 * 15 * 15
     assert truth.pressure.shape[0] >= 2
     assert np.isfinite(truth.pressure).all()
+    t = np.asarray(truth.times_s, dtype=float)
+    assert t[0] == pytest.approx(0.0)
+    # ASCII maps follow *TIME 0.01 / 0.14 / 1 / 3 d, not a 1e-4 d phantom.
+    assert not np.any(np.isclose(t, 8.64, atol=0.5))
+    pos = t[t > 1.0]
+    assert pos.size
+    assert pos[0] == pytest.approx(864.0, rel=1.0e-3)
+    span = float(truth.pressure[1].max() - truth.pressure[1].min())
+    assert span < 5.0e3  # GEM header ~1.5 kPa; 0.45 MPa cones are a bad pack
+    assert truth.sg is not None
+    assert truth.so is not None
+    assert truth.sw is not None
+    assert np.isfinite(truth.sg).all()
+    assert np.isfinite(truth.so).all()
+    assert np.isfinite(truth.sw).all()
+    assert float(np.max(truth.sg)) == pytest.approx(0.0, abs=1.0e-12)
+    np.testing.assert_allclose(truth.so + truth.sg + truth.sw, 1.0, atol=1.0e-5)
+
+
+def test_parse_gem_out_plane_all_values_and_kdir_down(tmp_path: Path) -> None:
+    from reservoir_backend.twin.cmg_benchmark import parse_gem_out_maps
+
+    snippet = """
+ Time = 0                     Gas Saturation
+ Plane K = 1                                           All values are  0.000
+ Plane K = 2
+      I =  1        2
+ J=  1  0.000    1.000
+ Time = 0                     Pressure  ( kpa)
+ Plane K = 1
+      I =  1        2
+ J=  1  50000.0  49900.0
+ Plane K = 2
+      I =  1        2
+ J=  1  49800.0  49700.0
+"""
+    path = tmp_path / "mix.out"
+    path.write_text(snippet, encoding="utf-8")
+    up = parse_gem_out_maps(path, nx=2, ny=1, nz=2, kdir_down=False)
+    assert up.sg is not None
+    assert np.isfinite(up.sg).all()
+    assert up.sg[0].tolist() == pytest.approx([0.0, 0.0, 0.0, 1.0])
+    assert up.pressure[0, 0] == pytest.approx(5.0e7)
+    down = parse_gem_out_maps(path, nx=2, ny=1, nz=2, kdir_down=True)
+    assert down.sg is not None
+    # GEM K=1 (top, all 0) -> our k=1; GEM K=2 (bottom, 0/1) -> our k=0.
+    assert down.sg[0].tolist() == pytest.approx([0.0, 1.0, 0.0, 0.0])
+    assert down.pressure[0, 0] == pytest.approx(49800.0e3)
+    assert down.pressure[0, 2] == pytest.approx(5.0e7)
 
 
 def test_parse_gem_out_single_porosity_all_values(tmp_path: Path) -> None:
@@ -353,6 +405,29 @@ def test_parse_gem_out_keeps_two_report_times(tmp_path: Path) -> None:
     assert truth.times_s[1] == pytest.approx(60.0, rel=1e-3)
     assert truth.pressure[0, 0] == pytest.approx(1.2e7)
     assert truth.pressure[1, 0] == pytest.approx(1.18002e7)
+
+
+def test_parse_gem_out_ignores_timestep_table_times(tmp_path: Path) -> None:
+    from reservoir_backend.twin.cmg_benchmark import parse_gem_out_maps
+
+    snippet = """
+ Time = 0                     **********************************************************************
+                                                          Pressure  ( kpa)
+                                                       All values are  50000.0
+     Time Step            Time                            Maximum Changes
+    1  1.0e-6   2  1.0e-6 2026.01.01   8,8,11  7.2e-2
+    5  8.1e-5   1  1.2e-4 2026.01.01   8,8,11  .2088
+ Time = 1.0E-2                **********************************************************************
+                                                          Pressure  ( kpa)
+                                                       All values are  50000.1
+"""
+    path = tmp_path / "steps.out"
+    path.write_text(snippet, encoding="utf-8")
+    truth = parse_gem_out_maps(path, nx=2, ny=1, nz=1)
+    assert truth.pressure.shape[0] == 2
+    assert truth.times_s[0] == pytest.approx(0.0)
+    assert truth.times_s[1] == pytest.approx(864.0)
+    assert not np.any(np.isclose(truth.times_s, 8.64, atol=0.5))
 
 
 def test_spec_fluid_uses_published_opm_vcrit() -> None:

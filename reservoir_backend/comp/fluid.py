@@ -19,6 +19,8 @@ class CompSpec:
     temperature_k: float = 350.0
     mu_liquid: float = 3.0e-4
     mu_vapor: float = 2.0e-5
+    visc_model: str = "constant"
+    phaseid: str = "density"
     sorg: float = 0.15
     sgr: float = 0.02
     kro0: float = 1.0
@@ -42,6 +44,24 @@ class CompSpec:
         self.z_inj = _frac(self.z_inj, self.eos.nc)
         if self.temperature_k <= 0.0:
             raise ValueError("temperature_k must be positive")
+        model = str(self.visc_model).strip().lower()
+        if model in {"lbc", "hzyt", "lohrenz"}:
+            model = "lbc"
+        elif model in {"constant", "const", "fixed"}:
+            model = "constant"
+        else:
+            raise ValueError(f"unknown visc_model {self.visc_model!r}; use constant or lbc")
+        self.visc_model = model
+        if model == "lbc" and self.eos.vcrit is None:
+            raise ValueError("visc_model=lbc needs vcrit on the EOS card")
+        pid = str(self.phaseid).strip().lower()
+        if pid in {"crit", "critical", "phaseid_crit"}:
+            pid = "crit"
+        elif pid in {"density", "oil", "default", ""}:
+            pid = "density"
+        else:
+            raise ValueError(f"unknown phaseid {self.phaseid!r}; use density or crit")
+        self.phaseid = pid
         if min(self.mu_liquid, self.mu_vapor, self.kro0, self.krg0) <= 0.0:
             raise ValueError("viscosities and kr endpoints must be positive")
         if self.has_water:

@@ -115,10 +115,10 @@ def test_six_mm_probe_matches_center_on_linear_field() -> None:
     assert abs(pred - truth) < 2.0e-4
 
 
-def test_lab_30cm_is_two_region_with_6mm_probes() -> None:
+def test_lab_v1_has_joint_cf_tmf_and_6mm_probes() -> None:
     from reservoir_backend.io.case import load_case
 
-    twin = load_case("examples/lab/lab_30cm.yaml")
+    twin = load_case("examples/lab_v1/case.yaml")
     assert twin.parameterization.n_params == 2
     assert all(abs(s.probe_diameter_m - 0.006) < 1e-12 for s in twin.experiment.sensors)
 

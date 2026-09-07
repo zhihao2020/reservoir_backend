@@ -9,10 +9,11 @@ from numpy.typing import NDArray
 
 from reservoir_backend.comp.dual_state import DualCompositionalState
 from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor, State
-from reservoir_backend.exceptions import TimeStepUnderflow
+
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.inverse.lm import LMResult, identifiability, run_lm, should_run_ensemble
 from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble, sample_posterior_ensemble
+from reservoir_backend.inverse.log_cf_tmf import LogCfTmfParameterization
 from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
 from reservoir_backend.inverse.parameterization import (
     ContrastParameterization,
@@ -20,11 +21,10 @@ from reservoir_backend.inverse.parameterization import (
 )
 from reservoir_backend.observation.operator import ObservationOperator
 from reservoir_backend.physics.capillary import NoCapillary
-from reservoir_backend.physics.pvt import BlackOilPVT
 from reservoir_backend.physics.relperm import CoreyThreePhase, CoreyTwoPhase, TableThreePhase
 from reservoir_backend.physics.rock import Rock
 from reservoir_backend.ports.flow import FlowPort, validate_port_controls
-from reservoir_backend.solver.impes import Trajectory, simulate, water_mass
+from reservoir_backend.solver.trajectory import Trajectory
 
 
 @dataclass
@@ -55,7 +55,7 @@ class PhysicsSpec:
     relperm: CoreyTwoPhase = field(default_factory=CoreyTwoPhase)
     three_phase: CoreyThreePhase | TableThreePhase | None = None
     capillary: object = field(default_factory=NoCapillary)
-    pvt: BlackOilPVT = field(default_factory=BlackOilPVT.incompressible)
+    pvt: object | None = None
     gravity: float = 0.0
     kz_over_kx: float = 1.0
     single_phase: bool = False
@@ -76,7 +76,7 @@ class PhysicsSpec:
     fully_implicit: bool = True
     max_steps: int = 12000
     hydrostatic_init: bool = False
-    model: str = "two_phase_immiscible"
+    model: str = "compositional_dpdp"
     fluid: object | None = None
     temperature_k: float = 350.0
     z_init: NDArray[np.float64] | None = None
@@ -86,30 +86,32 @@ class PhysicsSpec:
 
 
 def physical_from_theta(parameterization, theta: NDArray[np.float64]) -> dict[str, float]:
-    """Decode θ to C_f and β_mf. One-parameter C_f models keep β_mf = 1."""
+    """Decode θ to C_f / k and β_mf. One-parameter models keep β_mf = 1.
+
+    Single-porosity ``log_permeability`` uses the same latent as scalar C_f;
+    ``k_m2`` is the product name, ``cf_m2`` stays for DPDP reports.
+    """
     decode_phys = getattr(parameterization, "decode_physical", None)
     if callable(decode_phys):
-        return dict(decode_phys(theta))
+        out = dict(decode_phys(theta))
+        if "k_m2" not in out and "cf_m2" in out:
+            out["k_m2"] = float(out["cf_m2"])
+        if "cf_m2" not in out and "k_m2" in out:
+            out["cf_m2"] = float(out["k_m2"])
+        out.setdefault("tmf_multiplier", 1.0)
+        return out
     phys = np.asarray(parameterization.decode(theta), dtype=float).ravel()
     cf = float(phys[0])
     beta = float(phys[1]) if phys.size > 1 else 1.0
-    return {"cf_m2": cf, "tmf_multiplier": beta}
+    return {"cf_m2": cf, "k_m2": cf, "tmf_multiplier": beta}
 
 
-def three_phase_for_fim(relperm, existing=None):
-    # Dead-oil wrapper so invert FIM actually enters solve_fi_step.
-    if existing is not None:
-        return existing
-    from reservoir_backend.physics.relperm import CoreyThreePhase
-
-    mu_w = float(getattr(relperm, "mu_w", 1.0e-3))
-    mu_o = float(getattr(relperm, "mu_o", 5.0e-3))
-    mu_g = float(getattr(relperm, "mu_g", 2.0e-5))
-    swi = float(getattr(relperm, "swi", 0.20))
-    sor = float(getattr(relperm, "sor", 0.15))
-    if swi + sor >= 0.99:
-        sor = max(0.0, 0.98 - swi)
-    return CoreyThreePhase(swi=swi, sor=sor, sgr=0.0, mu_w=mu_w, mu_o=mu_o, mu_g=mu_g)
+def encode_physical_theta(parameterization, *, cf_m2: float, tmf_multiplier: float = 1.0):
+    """Encode C_f (and T_mf multiplier if the parameterization has two parameters)."""
+    n = int(getattr(parameterization, "n_params", 1))
+    if n >= 2:
+        return parameterization.encode(np.array([float(cf_m2), float(tmf_multiplier)], dtype=float))
+    return parameterization.encode(float(cf_m2))
 
 
 @dataclass
@@ -269,7 +271,12 @@ class DigitalTwin:
     experiment: Experiment
     ports: list[FlowPort]
     physics: PhysicsSpec
-    parameterization: RegionParameterization | ContrastParameterization | LogConductivityParameterization
+    parameterization: (
+        RegionParameterization
+        | ContrastParameterization
+        | LogConductivityParameterization
+        | LogCfTmfParameterization
+    )
     face_dirichlet: dict[str, float] | None = None
     face_mult_x: NDArray[np.float64] | None = None
     face_mult_y: NDArray[np.float64] | None = None
@@ -384,34 +391,9 @@ class DigitalTwin:
             phi = float(getattr(self.parameterization, "phi", 0.20))
             rock0 = Rock(np.full(n, 1.0e-12), np.full(n, phi))
             return initialize_state(self.grid, rock0, self.physics.fluid, float(self.physics.p_init))
-        sg = None
-        if self.physics.three_phase is not None or bool(self.physics.fully_implicit):
-            sg = np.full(n, float(self.physics.sg_init))
-        pressure = np.full(n, float(self.physics.p_init))
-        if self.physics.hydrostatic_init and self.physics.gravity > 0.0:
-            z = self.grid.cell_centers()[:, 2]
-            sw0 = float(self.physics.sw_init)
-            sg0 = float(self.physics.sg_init) if self.physics.three_phase is not None else 0.0
-            so0 = max(0.0, 1.0 - sw0 - sg0)
-            pvt = self.physics.pvt
-            b_w = float(np.asarray(pvt.b_w(self.physics.p_init)))
-            b_o = float(np.asarray(pvt.b_o(self.physics.p_init)))
-            b_g = float(np.asarray(pvt.b_g(self.physics.p_init)))
-            rho = (
-                sw0 * pvt.rho_w_sc * b_w
-                + so0 * pvt.rho_o_sc * b_o
-                + sg0 * pvt.rho_g_sc * b_g
-            )
-            pressure = pressure - rho * float(self.physics.gravity) * (z - float(np.mean(z)))
-        rs = None
-        if self.physics.pvt.has_live_oil():
-            rs = np.asarray(self.physics.pvt.rs(pressure), dtype=float).ravel()
-        return State(
-            pressure=pressure,
-            sw=np.full(n, float(self.physics.sw_init)),
-            sg=sg,
-            rs=rs,
-            time_s=0.0,
+        raise ValueError(
+            "forward model must be compositional_dpdp or compositional; "
+            f"got {self.physics.model!r}"
         )
 
     def rock_from_k(self, k: NDArray[np.float64]) -> Rock:
@@ -534,59 +516,37 @@ class DigitalTwin:
                 max_steps=int(self.physics.max_steps),
                 report_times=report_times,
             )
-        fim = bool(self.physics.fully_implicit)
-        implicit = bool(self.physics.implicit_transport or fim)
-        three = three_phase_for_fim(self.physics.relperm, self.physics.three_phase) if fim else self.physics.three_phase
-        # max_steps is a safety fuse, not an explicit-CFL step budget.
-        # FIM Δt is Newton-count; do not inflate the fuse here.
-        nstep = int(self.physics.max_steps)
-        try:
-            return simulate(
-                self.grid,
-                rock,
-                self.physics.relperm,
-                self.ports,
-                controls,
-                state0 or self.initial_state(),
-                float(t_end),
-                capillary=self.physics.capillary,
-                face_dirichlet=self.face_dirichlet,
-                pvt=self.physics.pvt,
-                gravity=self.physics.gravity,
-                face_mult_x=self.face_mult_x,
-                face_mult_y=self.face_mult_y,
-                face_mult_z=self.face_mult_z,
-                implicit=implicit,
-                sfi_outer=int(self.physics.sfi_outer),
-                reupdate_pressure=bool(self.physics.reupdate_pressure),
-                upwind_type=str(self.physics.upwind_type),
-                fully_implicit=fim,
-                single_phase=self.physics.single_phase,
-                mu_single=self.physics.mu_single,
-                dt_init=self.physics.dt_init,
-                dt_min=floor,
-                dt_max=self.physics.dt_max,
-                max_cfl=self.physics.max_cfl,
-                max_ds=self.physics.max_ds,
-                max_steps=nstep,
-                report_times=report_times,
-                three_phase=three,
-            )
-        except TimeStepUnderflow as exc:
-            msg = str(exc)
-            if "more than" in msg and "steps" in msg:
-                raise
-            nxt = max(floor * 0.1, 1.0e-4)
-            if nxt >= floor - 1.0e-15:
-                raise
+        raise ValueError(
+            "forward model must be compositional_dpdp or compositional; "
+            f"got {self.physics.model!r}"
+        )
+
+    def forward_from_posterior(
+        self,
+        posterior: Posterior,
+        *,
+        t_end: float | None = None,
+        report_times: NDArray[np.float64] | None = None,
+        controls: list[ControlSeries] | None = None,
+    ) -> Trajectory:
+        """Freeze θ and run compositional F from t=0 over the well-control schedule."""
+        controls = list(self.experiment.controls if controls is None else controls)
+        if t_end is None:
+            times = [float(c.times_s[-1]) for c in controls if c.times_s.size]
+            times += [float(o.times_s[-1]) for o in self.experiment.observations if o.times_s.size]
+            t_end = max(times) if times else 1.0
+        if report_times is None:
+            report_times = self.experiment.all_times_s()
+        if self.uses_dpdp():
             return self.simulate(
-                rock,
-                controls=controls,
-                t_end=t_end,
-                report_times=report_times,
-                state0=state0,
-                dt_min=nxt,
+                parameters=posterior.theta, controls=controls, t_end=float(t_end), report_times=report_times
             )
+        return self.simulate(
+            self.rock_from_theta(posterior.theta),
+            controls=controls,
+            t_end=float(t_end),
+            report_times=report_times,
+        )
 
     def inflate_observations(
         self,
@@ -938,9 +898,7 @@ class DigitalTwin:
         }
 
 
-def mass_report(grid: CartesianGrid, rock: Rock, traj: Trajectory, pvt: BlackOilPVT | None = None) -> dict[str, float]:
-    if not traj.reports:
-        st = traj.states[0]
-        m = water_mass(grid, rock, st.sw, pressure=st.pressure, pvt=pvt)
-        return {"initial_mass": m, "final_mass": m, "relative_balance_error": 0.0}
-    return traj.reports[-1].mass.as_dict()
+def mass_report(grid: CartesianGrid, rock: Rock, traj: Trajectory, pvt=None) -> dict[str, float]:
+    if traj.reports:
+        return traj.reports[-1].mass.as_dict()
+    return {"n_states": float(len(traj.states))}

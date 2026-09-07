@@ -1,0 +1,40 @@
+[
+  {
+    "gate": "dpdp_scale_gate",
+    "grid": [
+      30,
+      30,
+      30
+    ],
+    "n_cells": 27000,
+    "n_unknowns": 162000,
+    "nnz": 3790800,
+    "t_end_s": 0.05,
+    "max_steps": 1,
+    "dt_init_s": 0.05,
+    "controls": [],
+    "wall_s": 86.01254330000666,
+    "jac_s": 9.0359,
+    "solve_s": 65.2452,
+    "resid_s": 4.7732,
+    "flash_s": 6.8993,
+    "flash_main_s": 6.8993,
+    "flash_jacobian_s": 6.9581,
+    "n_accept": 1,
+    "n_reject": 0,
+    "newton_its": [
+      2
+    ],
+    "mass_rel": 3.5638306886736897e-13,
+    "peak_mib": 520.3839178085327,
+    "threads": 1,
+    "cpu": "AMD64 Family 25 Model 116 Stepping 1, AuthenticAMD",
+    "python": "3.12.8",
+    "numpy": "2.3.5",
+    "scipy": "1.16.3",
+    "commit": "7eab4ff9534b5de49fe4cc6fa2261252eba779c4",
+    "flash_backend": "fast",
+    "linear_backend": "auto",
+    "ok": true
+  }
+]

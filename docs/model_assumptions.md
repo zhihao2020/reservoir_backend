@@ -8,36 +8,30 @@ The lab backend ingests \(Q_{inj}(t)\), \(P_{prod}(t)\), \(P_{obs}\), \(S_{obs}(
 
 M1 used self-consistent synthetic truth to prove the inverse machinery. **M2 product acceptance is a CMG-GEM cross-simulator field reconstruction** (`examples/lab_v1/cmg_gem/`). Inversion must not see the CMG 3-D field. Default invert is LM (`algorithm: auto`); ES-MDA runs only if identifiability or hold-out is weak, or `uq: true`. Parameter EnKF / UDP wait for M3.
 
-V1 明确不做：Archie / EM / acoustic inversion、PINN、SRV、DFM/EDFM、AMR、thermal、zonal \(C_f\)、逐格 \(K\)、裂缝半长反演。产品 Case 是 `examples/lab_v1/`，不是 `lab_apply.yaml`。
+V1 明确不做：Archie / EM / acoustic inversion、PINN、SRV、DFM/EDFM、AMR、thermal、zonal \(C_f\)、逐格 \(K\)、裂缝半长反演。产品 Case 是 `examples/lab_v1/`。
 
 ## 当前相位
 
-- 正演 \(F\) 默认仍是顺序黑油：TPFA 压力 + 后向 Euler 隐式饱和度。守恒仍是 \(\partial_t(\varphi b_\alpha S_\alpha)+\nabla\cdot(b_\alpha v_\alpha)=q_\alpha^s\)
-- 实验室物理实验默认 \(B=1,c=0\)（同一套方程的不可压特例）
-- CMG 虚拟实验用牌组同款 PVT（`BlackOilPVT.cmg_seawater`：`*BWI/*CW/*CO/*CPOR`，泡点下未饱和 \(B_o\)）
-- 三相：`*SWT`+`*SLT` 表 + Stone II。默认是顺序黑油：冻 \(v_T\)，耦合隐式 \((S_w,S_g)\)，守恒 **油 + 地面气**；油表面通量用面上迎风 \(b_o\)。输运 extras 默认 **势迎风**（Brenier–Jaffré 含 \(v_T\)，顺序黑油默认）；`upwind_type=hybrid` 才把粘性和重力拆开。牛顿过残余饱和度截断。活油在闪蒸后和步末更新压力时按增量容差迭代。步末 P→T→P。`fully_implicit` 才走耦合牛顿，活油主变量是 \((p,S_w,x)\)：无游离气时 \(x=R_s\)，油气两相时 \(x=S_g\)（一次切换 `switch_live_oil_unknown` + 步末可选 `liberate_excess_gas`，见 `docs/fim_name_map.md`）。失败砍步，不退回顺序。放气尺子闸门（约 ≤6.5 psi 且均 \(S_g\) 贴近顺序）未过前，产品默认仍关 FIM。格子级 AIM 还没接。
-- 活油：`BlackOilPVT.cmg_seawater` 带牌组 \(R_s,B_o,E_g,\mu_o,\mu_g\) 表。地面气 \(G^s=\varphi(b_g S_g+R_s b_o S_o)\)，通量带油相溶解气。\(p\ge p_b\) 时 \(R_s\) 封顶、\(B_o\) 用 `*CO`、\(dR_s/dp=0\)；\(p<p_b\) 时饱和插值，压力存储加 \(S_o(b_o/b_g)\,dR_s/dp\)。压力步后先闪蒸再算相通量，输运后再按总气量闪蒸。不是全隐式组分闪蒸。
-- \(\theta\) 只有岩石（log \(K\)）。PVT 是实验已知流体，不反演。Case 入口：`physics.pvt` → `io.pvt_cfg.pvt_from_cfg`；相对渗透率 \(\mu\) 从同一份盖章
-- 组分 EXAMPLE（可选 \(F\)，`physics.model: compositional`）：等温两相气–油，Peng–Robinson + PT 闪蒸，主变量 \((n_i,p)\)。流体是公开 C1–nC10（Reid/Prausnitz/Poling 临界参数，Katz–Firoozabadi \(k_{ij}\)），常数 \(\mu\)。无水、无热、不编造济阳 Tc/Pc。饱和度由闪蒸摩尔体积得到，不走黑油 \(S_g\leftrightarrow R_s\)。接线在 `solver/fi_comp.py`，不改 `solver/fi.py`。入口 `examples/compositional/comp_example.yaml`。定流量井的井底压 \(p_{\mathrm{wf}}\) 是观测（控制是率）。有 \(H=p_{\mathrm{wf}}\) 后高渗带 \(K\) 可收回；低渗带对比度有阻尼。无井底压时并联两带的压力场几乎看不见绝对 \(K\)。Jacobian 的 coloring FD 不算观测用 \(p_{\mathrm{wf}}\)；报告时刻取最近接受步。Immiscible 水相可选：`physics.has_water: true`，未知量多 \(n_w\)，水不进 PR 闪蒸；EXAMPLE 孪生可带 \(S_w\) 观测做 2-region LM（`tests/cases/test_comp_water.py`）。公开 PR 牌：`physics.fluid.file`（YAML 或 Eclipse `TCRIT`/`PCRIT`/`ACF`/`MW`/`BIC`），缺文件或缺临界量则拒绝，不编造济阳 Tc/Pc。
+- 正演 \(F\) 默认是组分 DPDP 全隐式（`physics.model: compositional_dpdp`）：两套 TPFA + 组分 transfer，主变量 \((n_f,p_f,n_m,p_m)\)。单孔组分 `compositional` 可选。黑油已删除。
+- 反演 \(\theta=(\log C_f,\log T_{mf})\)。\(C_f=k_f b_f\) 管裂缝沿程传输，\(T_{mf}=\beta_{mf} T_{mf}^{ref}\) 管基质补给。\(k_m,\varphi_m,\varphi_f\) 和 PVT 固定，不进 \(\theta\)。产品 invert 默认 ES-MDA。
+- 工作流：用 \([0, T_{\mathrm{hist}}]\) 观测反演，冻结 \(\theta\)，用整段井控做一次组分正演。
+- 配置合同：`case.yaml` + `pvt.yaml` + `wells.yaml` + `controls.csv` + `observations.csv`。
+- 黑油已删除。可选单孔组分：`physics.model: compositional`，入口 `examples/compositional/comp_example.yaml`。公开 PR 牌：`physics.fluid.file`；缺文件或缺临界量拒绝。
 
 ## 开源改编（FIM）
 
-已获许可可改编 OPM/GEOS 算法进 `reservoir_backend/solver/fi.py`；**禁止同名**。对照表：`docs/fim_name_map.md`。`references/` 只读，产品不 `import` 上游。
+已获许可可改编 OPM/GEOS 算法进 `reservoir_backend/solver/fi_comp.py` / `fi_comp_dual.py`；**禁止同名**。对照表：`docs/fim_name_map.md`。`references/` 只读，产品不 `import` 上游。
 
 ## 可压缩性 / PVT
 
-- `physics.pvt: incompressible | slightly_compressible | cmg_seawater`（别名 `cmg` / `black_oil`）。也可写成 mapping：`pvt: {preset: cmg_seawater, mu_w: ...}`——标量 \(\mu\) 仅覆盖死油/不可压常数场；活油表 \(\mu(p)\) 仍优先。用户可在同一 mapping 里给 SI 表 `p`/`p_tab`、`rs`/`rs_tab`、`bo`/`bo_tab`、`eg`/`eg_tab`（或 `bg`/`bg_tab`，写入 \(E_g=1/B_g\)）、`muo`/`muo_tab`、`mug`/`mug_tab`；有表的列覆盖 preset。可选 `file` / `pvto` 指向同格式 YAML/JSON sidecar（相对 case YAML 目录），或 CMG/IMEX `*PVTO`/`*PVTW`/`*PVDG`/`*PVT` 文本（默认 field：psi、scf/stb、cP，与 `cmg_seawater` 相同，换算进 SI；`*INUNIT *SI` 为 kPa + sm3/sm3 + cP）。水默认仍是线性 \(b_w\)；给了 `p_w`/`bw` 才按表插值 \(B_w\)。YAML 里 `compressibility: <ct>` 仍可生成均匀岩石 \(c_r\)（无 `pvt` 时等价 `slightly_compressible`）
-- 工厂：`io.pvt_cfg.pvt_from_cfg`。相对渗透率 \(\mu\) 从同一份 PVT 盖章。\(\theta\) 不含黏度
-- \(b_W=(1+c_w(p-p_{\mathrm{ref}}))/B_{W,\mathrm{ref}}\)，油相同；\(\varphi(p)=\varphi_{\mathrm{ref}}(1+c_r(p-p_{\mathrm{ref}}))\)
-- 定流量是地面流量。压力方程右端是 \(q^s/b\)。不可压全流量系统才钉压力基准；有存储项时不钉（否则均值压升被抽掉）
-- 活油守恒 + 表黏度已进三相 \(F\)。`*PVT` 的 \(E_g\)（scf/RB）和 \(R_s\) 一样乘 \(0.178\) 进 SI，否则气密度会被算成原油量级、放气偏少。气相压缩用 \(E_g\) 表导数。压力步闪蒸后用新 \(\lambda,c_t\) 再解一次压力。
+- 产品流体是组分 EOS 牌：`physics.fluid.file`（如 `pvt.yaml`）。Tc/Pc/ω/Mw/kij 从文件读；缺文件或缺临界量拒绝。
+- 黏度、相对渗透率写在同一份 PVT sidecar，**不进** \(\theta\)。
+- \(\theta=(\log C_f,\log T_{mf})\)。\(k_m,\varphi_m,\varphi_f\) 在 `rock` / `physics` 里固定。
 
 ## 毛管
 
-- 实验室 30 cm case 默认 Brooks–Corey
-- 必须在配置里写 `capillary: brooks_corey | van_genuchten | none`
-- 禁止静默 Pc=0 还声称实验室物理完整
-- 毛管进水相势：\(\Phi_w=p-P_{cow}(S_w)+\rho_w g z\)。压力方程和相通量都用它。隐式输运冻住 \(v_T\)，并加上旧步分异 \(v_w-f_w v_T\)
+- 产品 DPDP case 显式写 `capillary: none`
+- YAML 必须写 `capillary: brooks_corey | van_genuchten | none`，禁止静默省略
 
 ## 重力
 
@@ -106,7 +100,7 @@ reservoir invert examples/lab/lab_cf.yaml --self-check --output results/cf
 
 产品 invert 对比是 \(F(m_{\mathrm{post}})\) 对 \(F(m_{\mathrm{true}})\) 的饱和度场与压力场 nRMSE。**不是** CMG 格子场。尺度放大不进 inversion core。
 
-测点坐标来自 `examples/lab/concept_probes.csv`（从 `测点.xlsx` 抄入 SI 米）：电阻率 75（底面/界面/顶面）+ 新增 7.5 cm 共 16。声波 12 / 电磁 8 在 `测点位置.pptx` 只有个数与 75 mm 间距，没有 xyz 表，不编造。
+测点坐标由 case `sensors.csv` 给出。声波 / 电磁原始反演不在本仓库。
 
 页岩 IMEX 缝长/SRV/\(k_m\) 反演与济阳矿场吞吐已移出产品。
 

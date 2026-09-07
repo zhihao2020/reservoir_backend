@@ -14,6 +14,8 @@ from scipy.sparse.linalg import LinearOperator
 from reservoir_backend.exceptions import PhysicsConvergenceError
 
 _DIRECT_MAX = 2000
+# Single-porosity 15³×(nc+1) ≈ 3e4; SuperLU is cheaper than stalled GMRES.
+_SINGLE_DIRECT_MAX = 120000
 _PREC_CACHE: dict = {"mat": None, "kind": None, "prec": None}
 
 
@@ -99,8 +101,14 @@ class GMRESILUSolver(LinearSolver):
         )
 
 
-def _pressure_dofs(n_unknowns: int, n_comp: int) -> NDArray[np.int64]:
+def _pressure_dofs(n_unknowns: int, n_comp: int, continua: int = 2) -> NDArray[np.int64]:
     nu = int(n_comp) + 1
+    n_c = int(continua)
+    if n_c == 1:
+        if n_unknowns % nu != 0:
+            raise ValueError("unknown count is not n_cells (nc+1)")
+        n_cells = n_unknowns // nu
+        return np.arange(n_cells, dtype=np.int64) * nu + int(n_comp)
     if n_unknowns % (2 * nu) != 0:
         raise ValueError("unknown count is not 2 n_cells (nc+1)")
     n_cells = n_unknowns // (2 * nu)
@@ -112,8 +120,9 @@ def _pressure_dofs(n_unknowns: int, n_comp: int) -> NDArray[np.int64]:
 class CPRLikeSolver(LinearSolver):
     """Pressure-block ILU + Jacobi global correction. No full-system ILU."""
 
-    def __init__(self, n_comp: int = 2):
+    def __init__(self, n_comp: int = 2, continua: int = 2):
         self.n_comp = int(n_comp)
+        self.continua = int(continua)
 
     def solve(self, jacobian: sparse.spmatrix, rhs: NDArray[np.float64]) -> LinearSolveResult:
         rhs = np.asarray(rhs, dtype=float).ravel()
@@ -123,7 +132,7 @@ class CPRLikeSolver(LinearSolver):
         t0 = time.perf_counter()
         try:
             def _fact():
-                pdofs = _pressure_dofs(n, self.n_comp)
+                pdofs = _pressure_dofs(n, self.n_comp, continua=self.continua)
                 jpp, _ = _schur_pressure(j, pdofs)
                 diag = np.asarray(j.diagonal(), dtype=float)
                 diag = np.where(np.abs(diag) < 1.0e-30, 1.0, diag)
@@ -198,25 +207,31 @@ def solve_newton_system(
     rhs: NDArray[np.float64],
     *,
     n_comp: int | None = None,
+    continua: int = 2,
     backend: str | None = None,
 ) -> LinearSolveResult:
     import os
 
     n = int(np.asarray(rhs).size)
     name = (backend or os.environ.get("RESERVOIR_LINEAR") or "").strip().lower()
+    n_c = int(continua)
     if name in {"cpr", "cprlike"} and n_comp is not None:
-        solver: LinearSolver = CPRLikeSolver(n_comp=n_comp)
+        solver: LinearSolver = CPRLikeSolver(n_comp=n_comp, continua=n_c)
     elif name in {"gmres", "gmres_ilu"}:
         solver = GMRESILUSolver()
     elif name in {"direct", "spsolve"} or n <= _DIRECT_MAX:
         solver = SparseDirectSolver()
+    elif n_c == 1 and n <= _SINGLE_DIRECT_MAX:
+        solver = SparseDirectSolver()
     elif n_comp is not None and n > 20000:
-        solver = CPRLikeSolver(n_comp=n_comp)
+        solver = CPRLikeSolver(n_comp=n_comp, continua=n_c)
     else:
         solver = GMRESILUSolver()
     try:
         return solver.solve(jacobian, rhs)
     except Exception:
+        if n_c == 1 and n <= _SINGLE_DIRECT_MAX and not isinstance(solver, SparseDirectSolver):
+            return SparseDirectSolver().solve(jacobian, rhs)
         if n <= _DIRECT_MAX:
             return GMRESILUSolver().solve(jacobian, rhs)
         raise

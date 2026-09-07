@@ -62,6 +62,30 @@ def _surface_oil_gas(spec: CompSpec, n_dot: NDArray[np.float64]) -> tuple[float,
         return q_oil, q_gas
 
 
+def _injectate_xi_lam(spec: CompSpec, p_wf: float) -> tuple[float, float]:
+    """Molar density and total mobility of the wellbore injectate at p_wf.
+
+    Dense supercritical CO2 is not assigned ``mu_vapor`` (0.02 cP). Prefer LBC
+    when the card has VCRIT, otherwise the liquid constant.
+    """
+    z = np.asarray(spec.z_inj, dtype=float).ravel()
+    z = z / max(float(np.sum(z)), 1.0e-18)
+    fl = flash_tp(spec.eos, float(p_wf), float(spec.temperature_k), z)
+    xi = 1.0 / max(float(fl.v_mix), 1.0e-12)
+    vap = float(fl.vapor_frac) >= 0.5
+    if spec.phaseid == "crit":
+        vap = float(np.dot(z[: spec.eos.nc], spec.eos.tc)) < float(spec.temperature_k)
+    mu = spec.mu_liquid
+    if spec.eos.vcrit is not None:
+        from reservoir_backend.comp.lbc import lbc_viscosity
+
+        xph = fl.y if vap else fl.x
+        mu = float(lbc_viscosity(spec.eos, float(spec.temperature_k), xph, np.array([xi]))[0])
+    elif vap and spec.visc_model != "lbc":
+        mu = spec.mu_liquid
+    return xi, 1.0 / max(float(mu), 1.0e-12)
+
+
 def _wi(grid: CartesianGrid, rock: Rock, port: FlowPort, cell: int) -> float:
     k = float(rock.permeability[int(cell)])
     if port.use_productivity:
@@ -175,6 +199,34 @@ def well_molar_sources(
                 bhp[port.name] = float(np.average(p[cells], weights=w))
             continue
         p_wf = ctrl(port, "pressure")
+        if port.role == "injector":
+            xi_inj, lam_inj = _injectate_xi_lam(spec, p_wf)
+            q_vol = wi * lam_inj * (p_wf - p[cells])
+            n_dot = np.zeros(n_hc)
+            inj_vol = 0.0
+            for i, c in enumerate(cells):
+                qv = float(q_vol[i])
+                if qv >= 0.0:
+                    qm = qv * xi_inj
+                    q[int(c), :n_hc] += qm * z_inj[:n_hc]
+                    n_dot += qm * z_inj[:n_hc]
+                    inj_vol += qv
+                else:
+                    q_l = wi[i] * props.lam_l[int(c)] * (p_wf - p[int(c)])
+                    q_v = wi[i] * props.lam_v[int(c)] * (p_wf - p[int(c)])
+                    src_b = (
+                        props.xi_l[int(c)] * props.x[int(c)] * q_l
+                        + props.xi_v[int(c)] * props.y[int(c)] * q_v
+                    )
+                    q[int(c), :n_hc] += src_b
+                    n_dot += src_b
+            rates[port.name] = float(np.sum(n_dot))
+            q_oil, q_gas = _surface_oil_gas(spec, n_dot)
+            rates[port.name + ":q_oil"] = q_oil
+            rates[port.name + ":q_gas"] = q_gas
+            rates[port.name + ":q_inj"] = float(inj_vol)
+            bhp[port.name] = float(p_wf)
+            continue
         q_l = wi * props.lam_l[cells] * (p_wf - p[cells])
         q_v = wi * props.lam_v[cells] * (p_wf - p[cells])
         xi_l = props.xi_l[cells]

@@ -4,11 +4,11 @@ import pytest
 from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
 from reservoir_backend.physics.conductivity import FractureConductivityModel
 from reservoir_backend.solver.forward_adapter import TwinForwardAdapter
-from reservoir_backend.synthetic import make_two_layer_waterflood
+from reservoir_backend.synthetic import make_scalar_cf_twin
 
 
 def test_adapter_run_on_existing_twin() -> None:
-    case = make_two_layer_waterflood(n=(4, 3, 2), n_times=3, t_end=40.0)
+    case = make_scalar_cf_twin(n_times=3, t_end=2.0)
     adapter = TwinForwardAdapter(case.twin)
     adapter.initialize(case.twin)
     traj = adapter.run(case.twin, case.theta_true, observation_times=case.twin.experiment.all_times_s())
@@ -18,18 +18,18 @@ def test_adapter_run_on_existing_twin() -> None:
 
 
 def test_adapter_step_advances_time() -> None:
-    case = make_two_layer_waterflood(n=(4, 3, 2), n_times=3, t_end=40.0)
+    case = make_scalar_cf_twin(n_times=3, t_end=2.0)
     adapter = TwinForwardAdapter(case.twin)
     adapter.initialize()
     adapter._rock = case.twin.rock_from_k(case.k_true)
     s0 = case.twin.initial_state()
-    s1 = adapter.step(s0, case.twin.experiment.controls, dt=5.0)
-    assert s1.time_s == pytest.approx(5.0)
+    s1 = adapter.step(s0, case.twin.experiment.controls, dt=0.5)
+    assert s1.time_s == pytest.approx(0.5)
     assert np.all(np.isfinite(s1.pressure))
 
 
 def test_adapter_cf_path_updates_fracture_dual_rock() -> None:
-    case = make_two_layer_waterflood(n=(4, 3, 2), n_times=2, t_end=20.0)
+    case = make_scalar_cf_twin(n_times=2, t_end=2.0)
     mask = np.ones(case.grid.n_cells, dtype=bool)
     km = 1.0e-15
     cond = FractureConductivityModel(n_cells=case.grid.n_cells, fracture_mask=mask, k_matrix_m2=km)

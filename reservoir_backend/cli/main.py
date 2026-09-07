@@ -10,10 +10,9 @@ import numpy as np
 
 from reservoir_backend.cli.reporting import emit_invert_artifacts
 from reservoir_backend.io.case import load_case
-from reservoir_backend.physics.rock import Rock
-from reservoir_backend.twin.offline import mass_report
+from reservoir_backend.twin.offline import Posterior, mass_report
 from reservoir_backend.twin.run_report import build_forecast_report, write_run_report
-from reservoir_backend.synthetic import evaluate_synthetic, make_two_layer_waterflood
+from reservoir_backend.solver.trajectory import Trajectory
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -58,11 +57,27 @@ def cmd_validate(case: Path, output: Path | None) -> int:
     return 0
 
 
+def _prior_theta(twin) -> np.ndarray:
+    theta = np.asarray(getattr(twin.parameterization, "prior_mean", twin.inverse.prior_mean), dtype=float).ravel()
+    n = int(twin.parameterization.n_params)
+    if theta.size == n:
+        return theta
+    if theta.size == 1 and n == 1:
+        return theta
+    out = np.zeros(n, dtype=float)
+    out[: min(n, theta.size)] = theta[: min(n, theta.size)]
+    return out
+
+
 def cmd_simulate(case: Path, output: Path | None) -> int:
     twin = load_case(case)
-    k0 = 1.0e-12
-    rock = Rock.uniform(twin.grid.n_cells, k=k0, phi=float(getattr(twin.parameterization, "phi", 0.2)))
-    traj = twin.simulate(rock)
+    theta = _prior_theta(twin)
+    if twin.uses_dpdp():
+        traj = twin.simulate(parameters=theta)
+        rock = twin.rock_from_theta(theta)
+    else:
+        rock = twin.rock_from_theta(theta)
+        traj = twin.simulate(rock)
     mb = mass_report(twin.grid, rock, traj)
     last = traj.states[-1]
     payload = {
@@ -72,6 +87,7 @@ def cmd_simulate(case: Path, output: Path | None) -> int:
         "sw_final_mean": float(np.mean(last.sw)),
         "p_final_mean": float(np.mean(last.pressure)),
         "so_final_mean": float(np.mean(last.so())),
+        "theta": theta.tolist(),
     }
     print(json.dumps(payload, indent=2))
     if output:
@@ -101,9 +117,9 @@ def cmd_invert(
     if not twin.experiment.observations:
         if not self_check:
             raise SystemExit("invert needs experiment.observations (or use --self-check)")
-        from reservoir_backend.twin.apply import attach_two_layer_demo
+        from reservoir_backend.twin.apply import attach_cf_demo
 
-        k_true = attach_two_layer_demo(twin)
+        k_true = attach_cf_demo(twin)
     post = twin.calibrate(time_limit_s=time_limit)
     t_rec = float(post.history.times_s[-1])
     fields = twin.reconstruct(post, t_rec)
@@ -118,11 +134,13 @@ def cmd_invert(
         stacked = stack_observations(series)
         times = np.unique(np.concatenate([o.times_s for o in series]))
         t_end = float(times[-1])
-        true_hist = twin.simulate(
-            Rock(k_true, np.full(twin.grid.n_cells, float(getattr(twin.parameterization, "phi", 0.2)))),
-            t_end=t_end, report_times=times,
+        from reservoir_backend.twin.offline import encode_physical_theta
+
+        theta_true = encode_physical_theta(
+            twin.parameterization, cf_m2=float(np.mean(k_true)), tmf_multiplier=1.0
         )
-        post_hist = twin.simulate(twin.rock_from_theta(post.theta), t_end=t_end, report_times=times)
+        true_hist = twin.simulate(parameters=theta_true, t_end=t_end, report_times=times)
+        post_hist = twin.simulate(parameters=post.theta, t_end=t_end, report_times=times)
         d_true = predict_from_trajectory(twin.operator, twin.experiment, true_hist, series)
         d_post = predict_from_trajectory(twin.operator, twin.experiment, post_hist, series)
         extra["self_check"] = {
@@ -189,16 +207,42 @@ def cmd_reconstruct(
     return 0
 
 
-def cmd_forecast(case: Path, output: Path | None) -> int:
+def _theta_from_posterior(path: Path) -> np.ndarray:
+    suffix = path.suffix.lower()
+    if suffix == ".npy":
+        return np.asarray(np.load(path), dtype=float).ravel()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    post = payload.get("posterior") or payload
+    if "theta" not in post:
+        raise SystemExit(f"{path} has no posterior.theta")
+    return np.asarray(post["theta"], dtype=float).ravel()
+
+
+def cmd_forecast(case: Path, output: Path | None, *, posterior: Path | None = None) -> int:
     twin = load_case(case)
-    if not twin.experiment.observations:
-        raise SystemExit("forecast needs experiment.observations")
-    post = twin.calibrate()
-    traj = twin.forecast(post)
+    if posterior is None:
+        raise SystemExit(
+            "forecast does not invert; pass --posterior invert.json (or theta.npy) from apply/invert"
+        )
+    theta = _theta_from_posterior(posterior)
+    dummy = Posterior(
+        theta=theta,
+        k=twin.parameterization.expand(theta),
+        theta_std=np.zeros_like(theta),
+        assimilate_rmse=float("nan"),
+        holdout_rmse=float("nan"),
+        forecast_rmse=None,
+        identifiability=np.zeros_like(theta),
+        history=Trajectory(np.array([0.0]), [], [], []),
+        notes=["forecast from frozen posterior; no invert"],
+        n_forward=0,
+        misfit=[],
+    )
+    traj = twin.forward_from_posterior(dummy)
     score = twin.score_forecast(traj)
-    post.forecast_rmse = score
+    dummy.forecast_rmse = score
     last = traj.states[-1]
-    report = build_forecast_report(twin, post, forecast_rmse=score, case_path=case, traj=traj)
+    report = build_forecast_report(twin, dummy, forecast_rmse=score, case_path=case, traj=traj)
     print(json.dumps(report, indent=2))
     if output:
         _save_fields(output, {"forecast_pressure": last.pressure, "forecast_sw": last.sw, "forecast_so": last.so()})
@@ -213,7 +257,6 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
     from reservoir_backend.twin.apply import (
         accept_demo,
         attach_cf_demo,
-        attach_two_layer_demo,
         plot_posterior_fields,
         write_observation_csv,
     )
@@ -230,27 +273,30 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
                 "no observations in the case. Put a CSV in experiment.observations "
                 "(see examples/lab/observations_template.csv), "
                 "or run: reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab "
-                "(V1 log Cf + DPDP) or examples/lab/lab_apply.yaml --demo (legacy two-region log K)"
+                "(compositional DPDP: examples/lab_v1/case_dev.yaml --demo)"
             )
-        if twin.uses_dpdp():
-            k_true = attach_cf_demo(twin, holdout=hold)
-        else:
-            k_true = attach_two_layer_demo(twin, holdout=hold)
+        k_true = attach_cf_demo(twin, holdout=hold)
         write_observation_csv(output / "observations.csv", twin)
     post = twin.calibrate()
-    t_rec = float(post.history.times_s[-1])
-    fields = twin.reconstruct(post, t_rec)
-    forecast = twin.forecast(post)
-    post.forecast_rmse = twin.score_forecast(forecast)
-    last = forecast.states[-1]
-    fields["forecast_pressure"] = last.pressure
-    fields["forecast_sw"] = last.sw
-    fields["forecast_so"] = last.so()
+    traj = twin.forward_from_posterior(post)
+    post.forecast_rmse = twin.score_forecast(traj)
+    last = traj.states[-1]
+    sg = np.zeros_like(last.sw) if last.sg is None else last.sg
+    fields = {
+        "k": np.asarray(post.k, dtype=float),
+        "pressure": np.asarray(last.pressure, dtype=float),
+        "sw": np.asarray(last.sw, dtype=float),
+        "so": np.asarray(1.0 - last.sw - sg, dtype=float),
+        "sg": np.asarray(sg, dtype=float),
+        "forecast_pressure": last.pressure,
+        "forecast_sw": last.sw,
+        "forecast_so": last.so(),
+    }
     if k_true is not None:
         fields["k_true"] = k_true
     plots = plot_posterior_fields(twin.grid, fields, output / "figures", k_true=k_true)
     extra = {
-        "use": "lab 300 mm invert — posterior K and F(m_post) fields, not CMG cell maps",
+        "use": "history invert (log Cf, log Tmf) then compositional DPDP forward; not a CMG cell map",
         "demo": bool(demo and k_true is not None),
         "n_theta": int(twin.parameterization.n_params),
         "parameterization": type(twin.parameterization).__name__,
@@ -272,33 +318,25 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
     return 0
 
 
-def cmd_synthetic(output: Path | None) -> int:
-    case = make_two_layer_waterflood()
-    post = case.twin.calibrate()
-    fc = case.twin.forecast(post)
-    post.forecast_rmse = case.twin.score_forecast(fc)
-    metrics = evaluate_synthetic(case, post)
-    metrics["forecast_rmse"] = float(post.forecast_rmse)
-    fields = case.twin.reconstruct(post, float(post.history.times_s[-1]))
-    print(json.dumps(metrics, indent=2))
-    if output:
-        _write_json(output / "synthetic.json", metrics)
-        _save_fields(output, {"k_true": case.k_true, **fields})
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="reservoir", description="Laboratory multiphase inverse twin")
+    parser = argparse.ArgumentParser(
+        prog="reservoir",
+        description="Lab compositional DPDP twin: invert history, then forward F(θ)",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("validate", "simulate", "forecast"):
+    for name in ("validate", "simulate"):
         p = sub.add_parser(name)
         p.add_argument("case", type=Path)
         p.add_argument("--output", type=Path, default=None)
+    fc_p = sub.add_parser("forecast", help="freeze θ from --posterior and run compositional F")
+    fc_p.add_argument("case", type=Path)
+    fc_p.add_argument("--output", type=Path, default=None)
+    fc_p.add_argument("--posterior", type=Path, default=None, help="invert.json or theta.npy; does not invert")
     inv_p = sub.add_parser("invert")
     inv_p.add_argument("case", type=Path)
     inv_p.add_argument("--output", type=Path, default=None)
     inv_p.add_argument("--time-limit", type=float, default=None, help="seconds; stops LM / ES-MDA")
-    inv_p.add_argument("--self-check", action="store_true", help="with no observations, generate a two-layer demo and verify inversion")
+    inv_p.add_argument("--self-check", action="store_true", help="with no observations, generate a DPDP demo and verify inversion")
     inv_p.add_argument(
         "--write-field",
         action="store_true",
@@ -311,12 +349,10 @@ def main(argv: list[str] | None = None) -> int:
     rec_p.add_argument("--probes", type=Path, default=None, help="probe CSV: name,x,y,z")
     rec_p.add_argument("--k", dest="k_path", type=Path, default=None, help="cell K .npy; skip invert")
     rec_p.add_argument("--report-times", dest="report_times", type=Path, default=None, help="times .npy/.csv")
-    ap = sub.add_parser("apply", help="lab invert: demo or observations CSV → posterior fields")
+    ap = sub.add_parser("apply", help="history invert then compositional forward of the full schedule")
     ap.add_argument("case", type=Path)
     ap.add_argument("--output", type=Path, default=None)
-    ap.add_argument("--demo", action="store_true", help="if no observations, generate lab-consistent two-layer data")
-    p = sub.add_parser("synthetic")
-    p.add_argument("--output", type=Path, default=None)
+    ap.add_argument("--demo", action="store_true", help="if no observations, generate DPDP-consistent synthetic gauges")
     rp = sub.add_parser("replay", help="replay experiments/EXP00N controls and sensors (no UDP)")
     rp.add_argument("experiment", type=Path)
     rp.add_argument("--output", type=Path, default=None)
@@ -343,11 +379,9 @@ def main(argv: list[str] | None = None) -> int:
             probes=args.probes,
         )
     if args.cmd == "forecast":
-        return cmd_forecast(args.case, args.output)
+        return cmd_forecast(args.case, args.output, posterior=args.posterior)
     if args.cmd == "apply":
         return cmd_apply(args.case, args.output, demo=args.demo)
-    if args.cmd == "synthetic":
-        return cmd_synthetic(args.output)
     if args.cmd == "replay":
         from reservoir_backend.runtime.replay import replay_experiment
 

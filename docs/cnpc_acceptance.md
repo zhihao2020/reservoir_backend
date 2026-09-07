@@ -6,9 +6,8 @@
 ## 1. 交付物
 
 - 源代码与可安装 Python 包（`reservoir` CLI）
-- 30 cm 算例：`examples/lab/lab_30cm.yaml`、`examples/lab/lab_apply.yaml`
-- 测点 CSV 模板：`examples/lab/observations_template.csv`
-- 已知通道填砂算例：`examples/lab/lab_channel.yaml`
+- 30 cm 算例：`examples/lab_v1/case.yaml`、`examples/lab_v1/case_dev.yaml`
+- 粗网格夹具：`examples/lab/lab_cf.yaml`
 - 本文件：验收口径（签字用）
 
 ## 2. 验收通过（必须同时满足）
@@ -17,14 +16,14 @@
 
 ```text
 python -m pip install -e .
-reservoir validate examples/lab/lab_30cm.yaml
-reservoir apply examples/lab/lab_apply.yaml --demo --output results/lab
+reservoir validate examples/lab_v1/case_dev.yaml
+reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab
 pytest -q
 ```
 
 自洽演示（`--demo`，观测由本正演 F 生成）须达到：
 
-- `n_theta = 2`（两区渗透率，不是逐格 K）
+- `n_theta = 2`（\(\log C_f,\log T_{mf}\)，不是逐格 K）
 - `forward_match_nrmse` = nRMSE(F(m_post), F(m_true)) 小于 0.30
 - 后验对比度与真值同量级（真值 10 时，后验约 8–12）
 - 报告的 K 等于 expand(theta_mean)，不得另掺格子场
@@ -35,8 +34,8 @@ pytest -q
 
 1. 按 `examples/lab/observations_template.csv` 填时间、传感器、压力(Pa)或饱和度(0–1)、sigma
 2. 在 YAML 的 `experiment.observations` 指向该 CSV
-3. 去掉 `--demo`，执行 `reservoir apply examples/lab/lab_apply.yaml --output results/lab`
-4. 分区与岩样一致：层状用 `region_axis: z`；已知通道用 `lab_channel.yaml` 的 `region_map`
+3. 去掉 `--demo`，执行 `reservoir apply examples/lab_v1/case_dev.yaml --output results/lab`
+4. 流体/井控用 `pvt.yaml`、`wells.yaml`、`controls.csv`；不要把 \(k_m,\varphi\) 放进 \(\theta\)
 5. 探头直径默认 6 mm；sigma 用该探头重复性，不要沿用模板里的 2 kPa / 0.04
 
 ## 4. 明确不验收

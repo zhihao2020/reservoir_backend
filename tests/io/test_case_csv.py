@@ -32,7 +32,7 @@ def test_load_controls_and_observations_from_csv(tmp_path: Path) -> None:
             {
                 "geometry": {"size_m": [0.16, 0.08, 0.08]},
                 "grid": {"spacing_m": 0.04},
-                "physics": {"model": "two_phase_immiscible", "capillary": "none"},
+                "physics": {"model": "compositional_dpdp", "fluid": "example", "capillary": "none"},
                 "ports": [
                     {"name": "INJ", "role": "injector", "control": "rate", "x": 0.02, "y": 0.04, "z": 0.04},
                     {"name": "PROD", "role": "producer", "control": "pressure", "x": 0.14, "y": 0.04, "z": 0.04},
@@ -41,7 +41,7 @@ def test_load_controls_and_observations_from_csv(tmp_path: Path) -> None:
                     {"name": "P1", "kind": "pressure", "x": 0.06, "y": 0.04, "z": 0.04, "sigma": 2000},
                     {"name": "S1", "kind": "saturation", "x": 0.10, "y": 0.04, "z": 0.04, "sigma": 0.04},
                 ],
-                "inverse": {"parameterization": "region", "n_regions": 2, "max_iter": 6},
+                "inverse": {"parameterization": "log_cf_tmf", "max_iter": 6},
                 "experiment": {
                     "controls": "controls.csv",
                     "observations": "observations.csv",

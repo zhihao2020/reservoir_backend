@@ -51,7 +51,13 @@ def _from_mapping(data: dict) -> PengRobinson:
         if tc is None:
             raise ValueError("EOS card missing names and Tc")
         names = tuple(f"C{i+1}" for i in range(tc.size))
-    return _build(names, tc, pc, omega, mw, data.get("kij") or data.get("BIC"))
+    vcrit = _arr(data, ("vcrit_m3_mol", "vcrit"))
+    if vcrit is None:
+        vcrit_kmol = _arr(data, ("vcrit_m3_kmol", "VCRIT"))
+        if vcrit_kmol is not None:
+            vcrit = vcrit_kmol * 1.0e-3
+    vshift = _arr(data, ("vshift", "VSHIFT"))
+    return _build(names, tc, pc, omega, mw, data.get("kij") or data.get("BIC"), vcrit=vcrit, vshift=vshift)
 
 
 def _arr(data: dict, keys: tuple[str, ...]) -> np.ndarray | None:
@@ -122,7 +128,7 @@ def _eat_nums(blocks: dict[str, list[float]], key: str, tokens: list[str]) -> No
     blocks.setdefault(key, []).extend(vals)
 
 
-def _build(names, tc, pc, omega, mw, kij_raw) -> PengRobinson:
+def _build(names, tc, pc, omega, mw, kij_raw, vcrit=None, vshift=None) -> PengRobinson:
     if tc is None or pc is None or omega is None or mw is None:
         raise ValueError("EOS card needs Tc, Pc, acentric factor, and Mw; refuse invented values")
     tc = np.asarray(tc, dtype=float).ravel()
@@ -138,7 +144,9 @@ def _build(names, tc, pc, omega, mw, kij_raw) -> PengRobinson:
     if len(names) != n:
         names = tuple(names) + tuple(f"C{i+1}" for i in range(len(names), n))
         names = names[:n]
-    return PengRobinson(tc=tc, pc=pc, omega=omega, mw=mw, kij=kij, names=tuple(names))
+    return PengRobinson(
+        tc=tc, pc=pc, omega=omega, mw=mw, kij=kij, names=tuple(names), vcrit=vcrit, vshift=vshift
+    )
 
 
 def _kij_square(n: int, raw) -> np.ndarray:

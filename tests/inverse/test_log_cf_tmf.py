@@ -45,7 +45,7 @@ def test_member_transfer_differs_with_theta() -> None:
     cond = FractureConductivityModel(n_cells=grid.n_cells, fracture_mask=np.ones(grid.n_cells, dtype=bool), k_matrix_m2=1e-15)
     param = LogCfTmfParameterization(conductivity=cond, c_ref_m2=1e-12)
     spec = inverse_spec_from_cfg({"parameterization": "log_cf_tmf", "prior_mean": [0.0, 0.0]})
-    assert spec.algorithm == "auto"
+    assert spec.algorithm == "esmda"
     cfg = {
         "inverse": {"parameterization": "log_cf_tmf", "prior_mean": [0.0, 0.0], "prior_std": [0.8, 0.5]},
         "rock": {"porosity": 0.08, "k_matrix_m2": 1e-15},
@@ -54,3 +54,16 @@ def test_member_transfer_differs_with_theta() -> None:
     got = parameterization_from_cfg(grid, cfg, ".")
     assert got.n_params == 2
     _ = param
+
+
+def test_decode_physical_keeps_km_out_of_theta() -> None:
+    cond = FractureConductivityModel(
+        n_cells=4, fracture_mask=np.ones(4, dtype=bool), k_matrix_m2=1.0e-15
+    )
+    param = LogCfTmfParameterization(conductivity=cond, c_ref_m2=1e-12, tmf_multiplier_ref=1.0)
+    th = param.encode(np.array([2.0e-12, 3.0]))
+    phys = param.decode_physical(th)
+    assert phys["cf_m2"] == pytest.approx(2.0e-12)
+    assert phys["tmf"] == pytest.approx(3.0)
+    rock = param.dual_rock(th)
+    assert np.allclose(rock.matrix.permeability, 1.0e-15)

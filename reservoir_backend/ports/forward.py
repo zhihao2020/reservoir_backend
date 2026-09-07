@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from reservoir_backend.domain.types import ControlSeries, State
-from reservoir_backend.solver.impes import Trajectory
+from reservoir_backend.solver.trajectory import Trajectory
 
 
 class ForwardModel(Protocol):

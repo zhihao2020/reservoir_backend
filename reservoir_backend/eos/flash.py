@@ -99,6 +99,7 @@ def _single(eos: PengRobinson, pressure: float, temperature: float, z: NDArray[n
     zl, zv = eos.z_roots(pressure, temperature, z)
     zz = zv if vapor else zl
     vol = zz * R_GAS * float(temperature) / max(float(pressure), 1.0e-12)
+    vol = max(vol - eos.peneloux_shift(z, temperature), 1.0e-12)
     vfrac = 1.0 if vapor else 0.0
     return FlashResult(
         vapor_frac=vfrac,
@@ -193,8 +194,8 @@ def flash_tp(
         return fl
     zl, _ = eos.z_roots(p, t, x)
     _, zv = eos.z_roots(p, t, y)
-    v_liq = zl * R_GAS * t / max(p, 1.0e-12)
-    v_vap = zv * R_GAS * t / max(p, 1.0e-12)
+    v_liq = max(zl * R_GAS * t / max(p, 1.0e-12) - eos.peneloux_shift(x, t), 1.0e-12)
+    v_vap = max(zv * R_GAS * t / max(p, 1.0e-12) - eos.peneloux_shift(y, t), 1.0e-12)
     ok = bool(np.isfinite(err) and err < float(tol))
     return FlashResult(
         vapor_frac=v,

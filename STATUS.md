@@ -1,6 +1,6 @@
 # 项目状态
 
-主线：30 cm 页岩油实验数字孪生。V1 产品 Case 是 `examples/lab_v1/`（30³ 组分 DPDP + 面注采 + \(\theta=(\log C_f,\log\beta_{mf})\) + ES-MDA）。**M2 是 CMG-GEM cross-simulator validation**，不是 Parameter EnKF；online / UDP / 30³ ensemble 冻结到 M3。饱和度由上游给出 \(S,\sigma\)。`examples/lab/lab_cf.yaml` 是粗网格开发夹具；`lab_apply.yaml` 是遗留两区水驱演示。
+主线：30 cm 页岩油实验数字孪生。V1 产品 Case 是 `examples/lab_v1/`（组分 DPDP FIM + 面注采 + \(\theta=(\log C_f,\log T_{mf})\) + ES-MDA）。历史窗反演后冻结 \(\theta\)，再正演整段井控。\(k_m,\varphi_m,\varphi_f\)、PVT 固定。**M2 是 CMG-GEM 尺子**，不是用户入口。online / UDP / 30³ ensemble 冻结到 M3。`examples/lab/lab_cf.yaml` 是粗网格夹具。黑油 IMPES/FIM 已删除。
 
 | 状态 | 含义 |
 |------|------|
@@ -13,42 +13,19 @@
 | 能力 | 状态 | 入口 | 证据 |
 |------|------|------|------|
 | 300 mm / 10 mm → 30³，体积 0.027 m³ | 已验证 | `CartesianGrid.uniform` | `tests/grid/test_grid_lab.py` |
-| 控制 / 观测分离 | 已验证 | `ControlSeries` / `ObservationSeries` | `tests/physics/test_pressure_analytical.py` |
+| 控制 / 观测分离 | 已验证 | `ControlSeries` / `ObservationSeries` | `tests/observation/test_observation_operator.py` |
 | 非格点观测算子 | 已验证 | `ObservationOperator` | `tests/observation/test_observation_operator.py` |
-| 单相 1D 压力 | 已验证 | IMPES `single_phase` | `tests/physics/test_pressure_analytical.py` |
-| 两相 IMPES + CFL | MVP | `solver.impes.simulate` | `tests/solver/test_buckley_leverett.py` |
-| 黑油表面体积 \(F\) | 已验证 | `physics.pvt.BlackOilPVT` | `tests/physics/test_black_oil.py` |
-| TPFA 离散（迎风 \(\lambda\)、重力、\(k_z\)、TRANSI、SWT） | 已验证 | `discretization.tpfa`、`TableTwoPhase` | 五点/断层 \(F(K)\) p RMSE 21–23 psi，Sw 0.018–0.030 |
-| 隐式输运（后向 Euler + Newton） | 已验证 | `solver.transport.implicit_water` | `tests/physics/test_black_oil.py`；CMG 尺子默认开 |
-| 质量守恒报告 | MVP | `MassBalance`（地面水体积） | `tests/physics/test_mass_balance.py` |
-| 毛管模型（显式选择） | 已验证 | `BrooksCorey` / `NoCapillary` | `tests/physics/test_capillary.py` |
-| 相势通量（\(P_c\) + 重力分异） | 已验证 | `tpfa._phase_face_ops` | `tests/physics/test_capillary.py` |
-| 井筒水头 + 隐式分异通量 | 已验证 | `impes._connection_bhp` | `tests/solver/test_well_index.py`、`test_capillary.py` |
-| 均匀 `*PRES` 初值 + 格子 \(\rho(p)\) | 已验证 | `DigitalTwin.initial_state` | `tests/physics/test_capillary.py` |
-| 活油脱气尺子（井底 < 泡点） | MVP | `cmg_fault_channel_lib` | PVT=`cmg_seawater`（`pvt_from_cfg`）；1 天 p RMSE **5.8 psi**、均 \(S_g\) 0.017 vs 0.016；反演对比度 **39.6**（真 40）、log \(K\) RMSE **0.055**，pass；FIM 闸门未过默认关 |
-| 表导数 \(c_g\) + 闪蒸后二次压力 | 已验证 | `BlackOilPVT.cg_of` | `tests/physics/test_pvt_live_oil.py` |
+| 黑油 IMPES / 顺序隐式 / 黑油 FIM | **已删除** | — | 产品正演是组分 DPDP FIM |
 | 线性高斯 LM | 已验证 | `inverse.lm.run_lm` | `tests/inverse/test_lm_linear.py` |
-| Synthetic \(H(F(m_{true}))\) + hold-out | MVP | `synthetic` | `tests/inverse/test_synthetic_twin.py` |
-| 冻结 m 的 forecast | MVP | `DigitalTwin.forecast` | `tests/inverse/test_forecast.py` |
-| CLI validate/simulate/invert/forecast/synthetic | MVP | `reservoir` | `tests/cli/test_cli.py` |
-| 实验室 apply 交付门闩（6 mm、2-region、预报） | 已验证 | `reservoir apply` | `tests/cli/test_apply.py` |
-| 隐式输运（两相和三相默认，YAML `transport`） | 已验证 | `solver.transport.implicit_water` | `tests/physics/test_black_oil.py`、`tests/physics/test_three_phase.py` |
+| 冻结 θ 的正演 | MVP | `DigitalTwin.forward_from_posterior` | `tests/inverse/test_forecast.py` |
+| CLI validate/simulate/invert/forecast/apply | MVP | `reservoir` | `tests/cli/test_cli.py` |
+| 实验室 apply（历史反演 → 组分正演） | 已验证 | `reservoir apply` | `tests/cli/test_apply.py` |
 | 测点 CSV（SI / 分钟·kPa、hold-out、无 --demo） | 已验证 | `io.case` / `apply` | `tests/cli/test_apply.py`、`tests/io/test_case_csv.py` |
-| 已知通道 region_map + 对比度 | 已验证 | `make_channel_waterflood` | `tests/inverse/test_synthetic_twin.py` |
-| 三相顺序隐式 + hybrid 迎风 + 冻 \(q_T\) 井分流 | MVP | `implicit_blackoil` / `_well_transport_sources` | `tests/physics/test_three_phase.py` |
-| 步末更新压力（P→T→P）+ 按 \(\Delta S/\Delta p\) 选步 | 已验证 | `PhysicsSpec.reupdate_pressure`、`state_change_timestep` | `tests/physics/test_three_phase.py` |
-| 顺序输运守恒油+气 + Brenier 重力 extras | 已验证 | `implicit_blackoil(conserve=oil_gas)`、`sequential_gravity_face` | 放气 1 天 **5.6 psi** / 均 \(S_g\) **0.0165** vs 0.0162 |
-| 油通量面迎风 \(b_o\) + 活油压力增量迭代 | 已验证 | `implicit_blackoil`、`_sfi_pressure_flux`、闪蒸后 `_picard_pressure` | 放气 1 天 **5.4 psi** / 均 \(S_g\) 0.017 |
-| 顺序势迎风（Brenier 含 \(v_T\)，默认） | 已验证 | `upwind_type=potential`、`sequential_phase_fluxes` | 放气 1 天 **6.2 psi**；`hybrid` 仍可回退 |
-| 两相 / 临界饱和度截断 | 已验证 | `critical_point_chop` | 两层 1 天 **7.0 psi** / \(S_w\) 0.035 |
-| 井筒混合 / CNV / 牛顿松弛 / 按迭代选步 | 已验证 | `solver.seqtools` | `tests/solver/test_seqtools.py` |
-| 全隐式黑油牛顿（\((p,S_w,x)\)，\(x=R_s\) 或 \(S_g\)） | MVP | `solver.fi.solve_fi_step`、`solver.adnum.CellAD`、`run_fim_ladder.py` | **PVT=`cmg_seawater`**。阶梯：死油 ~0.43；无放气活油 ~0.73 / dsg≈0；放气仍 ~10 psi / Sg 0.013。**本轮**：活油 Newton 初值改 \(p^n\)（IMPES 猜压导致线搜索全失败）；FIM Δt 按 Newton 次数 chop/grow（不再用显式 CFL 或放气阶梯 300 s 帽）；disappear 折回 \(R_s\)。步末全闪蒸会 underflow。vs CMG ~**11.5 psi**（闸门未过）；默认关 |
-| 活油 \(R_s\) 守恒 + 表黏度 | 已验证 | `BlackOilPVT.flash_from_total` | `tests/physics/test_pvt_live_oil.py` |
 | 点估计场 \(F(\hat\theta)\) | MVP | `DigitalTwin.reconstruct` | `tests/inverse/test_reconstruct_uq.py` |
 | CSV 控制/观测 IO | 已验证 | `io.case` | `tests/io/test_case_csv.py` |
 | 任意深度柱面测点 | 已验证 | `column_sensors` | `tests/observation/test_observation_operator.py` |
-| 自洽两层 K 收回 | 已验证 | `make_two_layer_waterflood` | `tests/inverse/test_synthetic_twin.py` |
-| 组分 EXAMPLE 孪生（等温气–油，C1–nC10） | MVP | `solver.fi_comp`、`eos/`、`comp/` | `tests/cases/test_comp_twin.py`；`examples/compositional/comp_example.yaml`。定流量井 \(p_{\mathrm{wf}}\) 进 \(H\)。2-region LM invert（数据 nRMSE 下降、对比度方向对）。不是济阳 GEM |
+| 自洽 \(\theta=(C_f,T_{mf})\) 收回 | MVP | `make_lab_v1_face_twin` | `tests/inverse/test_log_cf_tmf.py` |
+| 组分 EXAMPLE 孪生（等温气–油，C1–nC10） | MVP | `solver.fi_comp`、`eos/`、`comp/` | `tests/cases/test_comp_twin.py`；`examples/compositional/comp_example.yaml`。定流量井 \(p_{\mathrm{wf}}\) 进 \(H\)。2-region LM invert（数据 nRMSE 下降、对比度方向对）。不是济阳 GEM。单孔 FIM Jacobian：局部闪蒸差分 + 解析 TPFA；线性解 SuperLU/ILU-GMRES/CPR（`tests/solver/test_comp_analytic_jac.py`） |
 | 组分 immiscible 水相 | MVP | `CompSpec.has_water` | `tests/cases/test_comp_water.py`、`examples/compositional/comp_example_water.yaml`。水进 \(F\) 和 \(H\)（\(S_w\)+率井 BHP）；2-region LM invert，对比度方向对。水不进 PR |
 | 公开 PR 牌加载 | 已验证 | `io.eos_load.load_eos_card` | `tests/physics/test_eos_load.py`；fixture 抄 OPM `1D_COMP` 数字。缺文件拒绝 |
 | 统一 invert run report | MVP | `twin.run_report`、`cli.reporting` | `invert.json` + `residuals.csv` |
@@ -59,7 +36,7 @@
 | 联合 \(\log C_f,\log\beta_{mf}\) | MVP | `LogCfTmfParameterization` + 分层 ES-MDA | **M1a PASS**。**M1b 主 Case B PASS**（Cf 0.89% / Tmf 0.69%）；T2 与 seed 稳健性未过。**M1c FAIL（已接受）**：实验室可行方案 0 个 \(D_{C_f,5\%}>2\)。不要再调 ES-MDA。 |
 | ES-MDA（log \(C_f\)） | 已验证 | `inverse.esmda`、`twin.history_match` | `tests/inverse/test_esmda.py`、`test_esmda_cf.py`。线性高斯收回；合成无噪声 \(C_f\) 向真值靠近；后验 P05/P50/P95 |
 | Parameter EnKF（在线一步） | MVP | `inverse.parameter_enkf` | `tests/inverse/test_parameter_enkf.py`。**M3 才解冻**；当前 M2 不是这条路 |
-| CMG-GEM 交叉验证流水线 | MVP | `twin.cmg_benchmark`、`examples/lab_v1/cmg_gem/` | **M2a–d PASS**（Case B + 四真值）。通用 `--case` 入口；`physical_3d/case.yaml` 15³ 单孔 7 组分 + 16 压力测点已 pack。15³ 正演等价/反演未跑。`tests/twin/test_cmg_benchmark.py` |
+| CMG-GEM 交叉验证流水线 | MVP | `twin.cmg_benchmark`、`examples/lab_v1/cmg_gem/` | **M2a–d PASS**（Case B + 四真值）。通用 `--case` 入口。`physical_3d` 15³ 单孔 7 组分：当前 `sanwei_co2.out` 重打包 hidden（时刻 0 / 0.01 / 0.14 / 1 / 3 d，无 0.0001 d 幽灵帧）。t=8.64 s \(F_\mathrm{ours}(k_\mathrm{GEM})\) 压力 RMSE **1.6 Pa**（GEM 在 0.01 d 全场 span ~1.5 kPa；旧 pack 的 0.45 MPa「采井漏斗」是坏图）。**不是 M2a PASS**。15³ 正演在 ~433 s 切步 underflow，864/12096 s 未对齐。`tests/twin/test_cmg_benchmark.py` |
 | DualContinuumState / transfer / ForwardModel adapter | MVP | `domain.state`、`physics.transfer`、`solver.forward_adapter` | `tests/domain/test_dual_state.py`、`tests/solver/test_forward_adapter.py` |
 | DPDP DualRock + 组分 transfer | 已验证 | `physics.dual_rock`、`physics.transfer.ComponentTransfer` | `tests/physics/test_dual_rock.py`、`test_component_transfer.py` |
 | DPDP compositional FIM D0–D4 | 已验证 | `comp.dual_residual`、`solver.fi_comp_dual` | `tests/comp/test_dual_d0.py`、`test_dual_d1234.py`：守恒相对误差 < 1e-4 |
@@ -83,15 +60,35 @@
 - 四场插值「反演」（已删除）
 - 每 cell 独立反演 27k 个 K（非默认）
 - Archie / EM / acoustic 通用反演（已删除）
-- 逐格 \(K\)、coarse-field、缝长/SRV/基质渗透率反演、济阳矿场吞吐、IMEX 页岩 suite、黑油 CMG 尺子（已删除）。PINN、MPFA、动态 AMR、热尚未做。活油黑油仍是 \(R_s\) 表闪蒸。实验室 `apply` 默认两区 log K + LM；`log_conductivity` 走组分 DPDP + ES-MDA
+- 逐格 \(K\)、coarse-field、缝长/SRV、济阳矿场吞吐、黑油 IMPES/FIM（已删除）。PINN、MPFA、动态 AMR、热尚未做。产品 `apply`：历史窗反演 \(\theta=(\log C_f,\log T_{mf})\)，再组分 DPDP 正演。
 - 旧 `pipeline/` 产品路径（已删除）
 
 ## 实验室默认（2026-08 重构）
 
 - 30 cm 立方，10 mm 网格，探头直径 6 mm（`H` 在插值场上做球平均）
-- V1 产品 Case：`examples/lab_v1/`（组分 DPDP + 面注采 + log \(C_f\) + ES-MDA）。`lab_cf.yaml` 仅粗网格夹具
-- 反演默认 `algorithm: auto`：先 LM 点估计；可辨识性弱、hold-out 差或 `uq: true` 再 ES-MDA / LM 协方差区间。YAML 仍可写死 `esmda`。遗留水驱演示才是 2 region log K
-- 三维 p/S 是 \(F(\hat\theta)\) 重建。M2 产品尺子是 CMG-GEM 交叉验证（稀疏测点反演 + hidden 全场评分），不再用自洽 synthetic 当最终验收
+- V1 产品 Case：`examples/lab_v1/`（组分 DPDP FIM + 面注采 + \(\theta=(\log C_f,\log T_{mf})\) + ES-MDA）。`lab_cf.yaml` 仅粗网格夹具
+- 产品 invert 默认 ES-MDA。`case_dev.yaml` 可用 `algorithm: auto`（先 LM）。\(k_m,\varphi_m,\varphi_f\)、PVT 固定
+- 三维 p/S 是 \(F(\hat\theta)\) 重建。M2 尺子是 CMG-GEM 交叉验证，不是用户入口
 - `reservoir harness` 已删除
-- 概念实验室 30 cm：`examples/lab/lab_concept.yaml` + `concept_probes.csv`（75 电阻率 + 16 新增 7.5 cm）。invert 对比 = \(F(m_{\mathrm{post}})\)/\(F(m_{\mathrm{true}})\) 场 nRMSE，不是 CMG。`tests/cases/test_lab_concept.py`。
-- 30 cm 产品开发计划（活文档）：`docs/lab_product.qmd`（CMG-GEM benchmark，不是 2-region log K）
+- 30 cm 产品开发计划（活文档）：`docs/lab_product.qmd`
+
+## physical_3d 尺子：已测 / 未关
+
+**已测（2026-09-07）**
+
+- GEM `.out` 官方：t=0.01 d 压力 span ~1.5 kPa（max 在注入井 8,8,11）；t=3 d span ~1.6 kPa；Sg=0；INJ ~1e-7 m³/day，PROD1–3 流量 0。
+- 当前 `parse_gem_out_maps` 重打包 hidden：时刻 0 / 864 / 12096 / 86400 / 259200 s。旧 pack 的 8.64 s + 0.45 MPa「采井漏斗」是坏图，不是物理。
+- `F_ours(k_GEM)` vs 插值 GEM，t=8.64 s：压力 RMSE **1.6 Pa**，本模型全场 50.000000 MPa。图：`results/lab_v1/cmg_gem_physical_3d_compare/`（gitignored）。**不是 M2a PASS。**
+- 解析回归：`test_parse_physical_3d_gem_out_if_present`、`test_parse_gem_out_ignores_timestep_table_times` 过。
+
+**未关（交给后续精度轮）**
+
+1. 15³ 组分 FIM 约 433 s `TimeStepUnderflow`，对不上 GEM 第一个报告时刻 864 s（0.01 d），更对不上 0.14 / 1 / 3 d。
+2. GEM `*GEOMECH`（`*NOCOUPERM`）在 F 外；864 s 的 ~1.5 kPa 鼓包本模型没有。
+3. 黏度：GEM `*VISCOR *HZYT`，我们是 LBC / 常数 μ。
+4. `tests/solver/test_comp_analytic_jac.py` Jacobian 误差约 1（已知）。
+5. `tests/comp/test_dual_d1234.py` D2 underflow（已知，产品路径外）。
+6. nrmse_p 在 GEM span 只有几十 Pa 时会被印出噪声放大；看 RMSE_Pa / `nrmse_p_sigma`。
+7. 流量一旦离开 50/50 近零区，要再对 Peaceman WI vs GEM `*GEOMETRY *K 0.003 0.34`。
+
+约束：不重跑 GEM、不调 ES-MDA、不改 50/50 井控去造漏斗、力学不进 F、不宣称 M2a PASS。

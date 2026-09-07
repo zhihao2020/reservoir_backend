@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -54,6 +55,7 @@ def main(argv=None) -> int:
         print(json.dumps({"alignment": rec}, indent=2), flush=True)
         return 0
 
+    print(f"pid={os.getpid()}", flush=True)
     blocked = export_blocked_reason(args.export)
     hidden = Path(args.export) / "hidden"
     if not (hidden / "pressure.npy").is_file():

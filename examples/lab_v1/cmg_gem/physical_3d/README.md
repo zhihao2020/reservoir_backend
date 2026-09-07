@@ -27,11 +27,16 @@
 - 采出井2、3：通天（k=1–15）
 - 采出井4：只打下层（k=11–15）
 
-注入目标 5 mL/min（`*BHF 0.0072` m³/day），注入 BHP ≤ 50 MPa，采出井 49.5 MPa。
+注入和回压都是 **50 MPa**（文档）。5 mL/min 只是泵上限（`*BHF 0.0072`）。基质 0.018 mD 上流量靠溶胀/扩散，不是五点驱。
+
+`*PERMK = 0.1 * PERMI`（层理占位）。`*SGT` Corey n=2，Sorg=0.25。报告时刻 0.01 / 0.14 / 1 / 3 day。
+
+GEM 2024.20 对单孔网格会忽略 `*DIFFUSION`（只用于裂缝–基质）。牌上数字保留，这次计算没有分子扩散。
 
 ## 我们的 case（通用入口）
 
-`case.yaml` 是单孔组分 + 标量 \(\log k\)，**不是** `examples/lab_v1/case.yaml` 的 30³ DPDP。
+`case.yaml` 是单孔组分 + 标量 \(\log k\)（`parameterization: log_permeability`），**不是** `examples/lab_v1/case.yaml` 的 30³ DPDP。
+`grid.kdir: down` 把 GEM `*KDIR DOWN`（k=1 为顶）翻到我们的 z 向上网格。
 电极行在 `sensors.csv` 里会被 loader 跳过（不做 Archie）。
 
 ```bash
@@ -42,6 +47,7 @@ python scripts/lab_v1_cmg_invert.py --case examples/lab_v1/cmg_gem/physical_3d/c
 ```
 
 先过正演等价再反演。15³×7 组分 ensemble 很重。力学不进 \(F\)（对齐 GEM `*NOCOUPERM`）。
+定压注入井的源项用 `z_inj`（CO2），不用格子里的原油组成。`phaseid: crit` 对齐 GEM `*PHASEID *CRIT`。
 
 ## 跑 GEM
 
@@ -55,12 +61,12 @@ python -c "from pathlib import Path; from reservoir_backend.twin.cmg_benchmark i
 
 Phase 1 `validate_gem_preflight.py` 目前只认 `gem_ccs_family`，这个新牌会 gated。
 
-## 第一次 GEM 2024.20 结果
+## GEM 结果
 
-`results/lab_v1/cmg_gem_physical_3d/sanwei_co2.out`：Normal Termination，155 步，0 cut，力学 155 步，约 52 s。
+跑次输出：`results/lab_v1/cmg_gem_physical_3d/`（`sanwei_co2.out` / `.sr3` / `figures/`）。
 
-- 五口井全部 open
-- 孔隙压 50 MPa，采出井 49.5 MPa（注采都钉 50 MPa 时注入量≈0，按计划把回压降了 500 kPa）
-- t=0.14 d 注入井储层气速率 5.1×10⁻⁴ m³/day ≈ **0.35 mL/min**（BHP 卡住，不是 5 mL/min）。0.018 mD 上要打到 5 mL/min 大约需要 14 MPa 压差，不改 k
-- 注入井格子 z_CO2 到 0.90，CO2 已进网格；四口采出井都出油
-- 累注 CO2 ≈ 1.00 mol，物质平衡误差 4×10⁻³ %
+更正后 GEM 2024.20 跑到 3 day：Normal Termination，309 步，0 cut，约 104 s。
+
+- 注采都是 50 MPa。t=3 d 注入约 1.3×10⁻⁷ m³/day（≪ 5 mL/min），烃采收率 **0.034%**
+- 注入井格子 z_CO2 约 0.21（k=1），CO2 几乎没离开井格
+- `*DIFFUSION` 被 GEM 忽略（单孔不能用该关键字）

@@ -19,7 +19,7 @@ from reservoir_backend.inverse.ensemble import sample_log_prior
 from reservoir_backend.inverse.parameter_enkf import analysis_parameters, forecast_parameters
 from reservoir_backend.physics.rock import LOGK_MAX, LOGK_MIN
 from reservoir_backend.solver.frozen_pressure import FrozenPressureContext, step_frozen_pressure
-from reservoir_backend.solver.impes import Trajectory
+from reservoir_backend.solver.trajectory import Trajectory
 from reservoir_backend.exceptions import AssimilationError
 from reservoir_backend.inverse.ensemble import replace_failed_member_bundle
 from reservoir_backend.observation.qc import ObservationStatus, classify_observations

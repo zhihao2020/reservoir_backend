@@ -1,478 +1,158 @@
-可以。根据我刚核对的最新 `main`，HEAD 已经是 `d4b5e15`，**最小 CMG-GEM 数字孪生 MVP 的代码链路基本已经具备了**。
+对，但要把两个问题分开。
 
-但要区分两句话：
+**如果你的意思是：`results/lab_v1/cmg_gem_physical_3d` 这个 15³、7 组分 CMG Case，现有代码是不是“完全没有反演能力”？——不是。最新提交 `86f12c7` 已经专门把 CMG 流水线从原来 4×4×2 DPDP Case 解耦，增加了任意 `--case` YAML、单孔隙 CMG 场解析、15³ physical_3d Case，以及 `auto=LM first` 的反演入口。** 但这个具体 Case 目前仍然是“已打包、尚未完成 forward-equivalence + inversion 验收”，所以仓库没有宣称它 PASS。
 
-> **“MVP 能实现”——可以。**
-> **“MVP 已经用一次完整 CMG→反演→重建结果验收通过”——目前 GitHub 还没有这个证据。**
+更重要的是：**当前 physical_3d 到底要反演什么，必须先说清楚。**
 
-现在差的主要不是架构，而是**把已经写好的 M2b/M2c 链路完整跑一次并固化结果**。
+## 1. 当前 physical_3d 不是原来的 DPDP \(C_f,T_{mf}\) 模型
 
-最新提交已经明确加入了 GEM 多时刻场解析、稀疏测点打包、controls 打包、并行 ensemble forward，而且规定反演过程绝不能读取 CMG hidden 3D field。
+现在 `physical_3d/case.yaml` 明确是：
 
----
-
-# 一、现在这个最小 MVP 到底是什么
-
-我建议把 MVP 定义得非常简单：
-
-$$
-\boxed{
-CMG\text{-}GEM
-\rightarrow
-虚拟测点
-\rightarrow
-ES\text{-}MDA
-\rightarrow
-\hat C_f,\hat\beta_{mf}
-\rightarrow
-我们的DPDP正演
-\rightarrow
-与CMG三维场比较
-}
-$$
-
-也就是说，暂时完全不需要：
-
-* 30³；
-* UDP；
-* Parameter EnKF；
-* 实际仪器；
-* 济阳真实 PVT；
-* 在线 1 Hz；
-* 更复杂的参数反演。
-
-只证明一件事：
-
-> **在只拿到 CMG 模拟出来的注采数据和有限压力/饱和度测点的情况下，我们的软件能否通过反演，重建出接近 CMG-GEM 的储层动态场。**
-
-这就是一个非常完整、非常有意义的最小 MVP。
-
----
-
-# 二、而且第一关 M2a 已经真的通过了
-
-现在不是“我们的组分模型还不知道能不能对上 CMG”。
-
-这个问题已经初步解决。
-
-当前 CMG reference case 是：
-
-$$
-0.30\times0.30\times0.30\ {\rm m}
-$$
-
-网格：
-
-$$
-4\times4\times2=32\ cells
-$$
-
-双方已经对齐：
-
-* Peng–Robinson EOS；
-* C1 / nC10；
-* \(T_c,P_c,\omega,M_w\)；
-* \(k_{ij}=0.049\)；
-* 初始组分；
-* 注入组分；
-* 温度；
-* matrix permeability；
-* fracture conductivity；
-* porosity；
-* Kazemi matrix-fracture transfer；
-* linear gas/oil relperm；
-* gravity=false；
-* capillary=none；
-* 面注入；
-* 面生产；
-* WI；
-* surface gas rate conversion。
-
-这些参数都已经集中写进 `cmg_gem/spec.yaml`。
-
-当前 M2a 得到：
-
-$$
-RMSE_P\approx23\ Pa
-$$
-
-$$
-NRMSE_P\approx0.075
-$$
-
-以及：
-
-$$
-RMSE_{S_g}\approx0.026
-$$
-
-均通过 provisional gate：
-
-$$
-NRMSE_P<0.10
-$$
-
-$$
-RMSE_{S_g}<0.05
-$$
-
-README 已明确把 M2a 标记为 **PASS**。
-
-这一步很关键，因为它说明：
-
-$$
-\boxed{
-F_{\rm ours}(\theta_{true})
-\approx
-F_{\rm GEM}(\theta_{true})
-}
-$$
-
-至少在当前最小 4×4×2 Case 上是成立的。
-
-所以现在可以进入真正的反演验证了。
-
----
-
-# 三、现在完整工作流是什么
-
-整个流程可以分成 5 层。
-
-## 1. CMG-GEM 生成“真实世界”
-
-CMG 现在相当于我们的**虚拟实验装置**。
-
-给 CMG 一个已知真值：
-
-$$
-\theta_{true}
-=
-\begin{bmatrix}
-\log C_f\\
-\log\beta_{mf}
-\end{bmatrix}
-$$
-
-当前 Case B：
-
-$$
-C_f^{true}=10^{-12}\ {\rm m^2}
-$$
-
-$$
-\beta_{mf}^{true}=2
-$$
-
-spec 中就是这个配置。
-
-然后 GEM 求解整个组分 DPDP：
-
-$$
-F_{\rm GEM}(\theta_{true},u)
-$$
-
-其中：
-
-$$
-u(t)=
-\{Q_{inj}(t),P_{prod}(t),z_{inj}(t)\}
-$$
-
-输出完整状态：
-
-$$
-X_{\rm GEM}(t)
-$$
-
-包括至少：
-
-$$
-P_f,\quad P_m,\quad S_g,\quad S_o
-$$
-
-当前最新 deck 已经设置多个报告时刻，包括：
-
-$$
-0.5,\quad15,\quad30,\quad60\ s
-$$
-
-最新提交就是专门加入多时刻 GEM maps 解析。
-
----
-
-# 四、从 CMG 全场中“抽取仪器测点”
-
-这是数字孪生最核心的一步之一。
-
-我们不能把：
-
-$$
-X_{\rm GEM}(x,y,z,t)
-$$
-
-全部交给反演器。
-
-必须模拟真实实验：
-
-$$
-d=H(X_{\rm GEM})
-$$
-
-这里 \(H\) 就是 observation operator。
-
-例如在：
-
-$$
-(x_i,y_i,z_i)
-$$
-
-取：
-
-$$
-P_i(t)
-$$
-
-或者：
-
-$$
-S_{g,i}(t)
-$$
-
-所以从：
-
-```text
-CMG完整32格场
+```yaml
+physics:
+  model: compositional
 ```
 
-只抽：
+而不是：
 
-```text
-少量压力测点
-少量饱和度测点
-注入流量
-生产压力
+```yaml
+model: compositional_dpdp
 ```
 
-当前 `lab_v1_cmg_pack_obs.py` 已经实现：
+反演参数是：
+
+```yaml
+inverse:
+  parameterization: log_conductivity
+  algorithm: auto
+  cf_ref_m2: 1.776e-17
+```
+
+也就是说，它当前实际上在做**单孔隙、均匀标量渗透率 \(k\)** 的反演，而不是：
 
 $$
-H(F_{\rm CMG})
-\rightarrow observations.csv
+(C_f,\beta_{mf})
 $$
 
-并同时写：
+联合反演。
 
-```text
-controls.csv
-```
+所以如果你问：
 
-而完整场被单独放到：
+> “现在这套 physical_3d 能不能反演一个等效渗透率，然后再正演恢复场？”
 
-```text
-export/hidden/
-```
+答案是：
 
-只用于最后打分。
+$$
+\boxed{\text{可以，核心链路已经具备}}
+$$
 
-这一设计是对的。
+但如果你问：
+
+> “这个单孔隙 CMG 模型能不能直接反演 DPDP 的 \(C_f,T_{mf}\)？”
+
+那答案是：
+
+$$
+\boxed{\text{不能直接这么做}}
+$$
+
+因为 CMG truth 本身现在没有 matrix/fracture 两套连续体和 \(T_{mf}\) 交换项。
+
+这不是改一个 `parameterization` 字段就能凭空产生的。
 
 ---
 
-# 五、反演器真正看到什么
+# 2. 单孔隙的标量 \(k\) 反演，公式确实已经连上了
 
-反演阶段只能看到：
+这点你理解得对。
 
-$$
-\boxed{
-Q_{inj},P_{prod},P_{obs},S_{obs}
-}
-$$
-
-看不到：
-
-$$
-P(x,y,z),S(x,y,z)
-$$
-
-完整 CMG 场。
-
-代码甚至专门做了硬限制：
+虽然类名现在还叫 `LogConductivityParameterization`，历史上是给裂缝 \(C_f\) 写的，但在**非 DPDP** 模型里，`TwinForwardAdapter` 会把反演后的这个参数直接转换成 Rock permeability field：
 
 ```python
-if hidden_dir is not None:
-    raise ValueError(
-        "inversion must not receive CMG hidden truth"
+if self.twin.uses_dpdp():
+    ...
+else:
+    cf = self.log_cf.decode(th)
+    return self.twin.rock_from_k(
+        self.conductivity.permeability(cf)
     )
 ```
 
-`attach_cmg_observations()` 和 `invert_from_cmg_observations()` 都禁止把 hidden truth 传进反演器。
-
-测试也专门验证：
-
-> invert refuses hidden truth
-
-以及：
-
-> attach observations does not open hidden
-
-所以现在已经真正避免了：
+而 physical_3d 默认没有 region map，所以 mask 是全域，实际上就是：
 
 $$
-\boxed{\text{inverse crime}}
+k(\mathbf x)=k
 $$
 
-这比之前：
+一个全局均匀渗透率。
+
+因此现在参数化实际上是：
 
 $$
-F_{ours}
-\rightarrow
-Inverse_{ours}
-\rightarrow
-F_{ours}
+m=\ln\frac{k}{k_{\rm ref}}
 $$
 
-科学性强很多。
+反解以后：
+
+$$
+k=k_{\rm ref}e^m
+$$
+
+physical_3d 中：
+
+$$
+k_{\rm ref}=1.776\times10^{-17}\ {\rm m^2}
+$$
+
+也就是大约：
+
+$$
+0.018\ {\rm mD}
+$$
+
+所以**数学链没有断。**
 
 ---
 
-# 六、反演的参数是什么
+# 3. 正演的核心物理也已经连上线
 
-现在不是逐格反演渗透率。
-
-只有两个核心参数：
+physical_3d 现在使用：
 
 $$
-\boxed{
-\theta=
-\begin{bmatrix}
-\log(C_f/C_{f,ref})\\
-\log\beta_{mf}
-\end{bmatrix}
-}
+15^3=3375
 $$
 
-其中：
-
-### \(C_f\)
-
-裂缝有效导流能力。
-
-它主要控制裂缝网络里的 transmissibility：
+个网格，7 个组分：
 
 $$
-T_f
-\propto
-C_f
-\frac{A}{L}
+\{\mathrm{CO_2},N_2C_1,C_2C_6,C_7C_{13},
+C_{14}C_{26},C_{26}C_{36},C_{36+}\}
 $$
 
-所以：
+相应的 \(T_c,P_c,\omega,M_w,V_c,k_{ij}\) 已经在 `pvt_co2.yaml` 中配置。
 
-$$
-C_f\uparrow
-\Rightarrow
-裂缝流动能力\uparrow
-\Rightarrow
-压力梯度改变
-$$
+### 组分守恒
 
----
-
-### \(\beta_{mf}\)
-
-基质—裂缝交换倍率：
-
-$$
-T_{mf}
-=
-\beta_{mf}T_{mf}^{ref}
-$$
-
-当前 CMG 对应的是 Kazemi transfer。
-
-基本结构可以理解为：
-
-$$
-q_{mf}
-\sim
-\beta_{mf}
-\sigma
-k_m
-V
-\lambda
-(P_m-P_f)
-$$
-
-其中：
-
-* \(\sigma\)：shape factor；
-* \(k_m\)：matrix permeability；
-* \(V\)：cell volume；
-* \(\lambda\)：phase mobility；
-* \(P_m-P_f\)：matrix-fracture pressure difference。
-
-当前：
-
-$$
-\sigma=40\ m^{-2}
-$$
-
-$$
-\beta_{mf}=2
-$$
-
-所以 GEM 中：
-
-$$
-*SIGMAMF=80
-$$
-
-这也是当前 alignment contract 明确规定的。
-
----
-
-# 七、我们的正演器原理是什么
-
-这部分非常重要。
-
-现在的软件不是插值器，也不是神经网络直接预测场。
-
-它仍然是：
-
-$$
-\boxed{\text{physics-based compositional reservoir simulator}}
-$$
-
-核心是对每个 control volume 做**组分质量守恒**。
-
-对于组分 \(i\)，可以抽象成：
+对于组分 \(i\)：
 
 $$
 \frac{\partial}{\partial t}
 \left[
 \phi
 \sum_\alpha
-\rho_\alpha S_\alpha x_{i,\alpha}
+\rho_\alpha S_\alpha x_{\alpha i}
 \right]
 +
 \nabla\cdot
 \left[
 \sum_\alpha
-\rho_\alpha x_{i,\alpha}\mathbf u_\alpha
+\rho_\alpha x_{\alpha i}\mathbf u_\alpha
 \right]
 =
-q_i+q_{i,mf}
+q_i
 $$
 
-其中：
-
-$$
-\alpha\in\{o,g\}
-$$
-
-如果以后有水，还可以再加 water phase。
-
-相速度遵循 Darcy：
+### Darcy 流动
 
 $$
 \mathbf u_\alpha
@@ -484,608 +164,622 @@ $$
 \right)
 $$
 
-当前 benchmark：
+当前 Case：
 
 $$
 g=0,\qquad P_c=0
 $$
 
-所以进一步简化。
+### PR EOS
+
+每个 cell 根据：
+
+$$
+(P,T,z_1,\ldots,z_7)
+$$
+
+做 Peng–Robinson flash：
+
+$$
+f_i^o=f_i^g
+$$
+
+得到：
+
+$$
+S_o,S_g,\quad x_i,y_i,\quad
+\rho_o,\rho_g
+$$
+
+所以不是插值场，而是：
+
+$$
+\boxed{\text{组分守恒 + Darcy + EOS 相平衡 + 井模型}}
+$$
+
+完整正演。
+
+`load_case()` 现在也已经能从 YAML 自动识别 `model: compositional`、读取外部 EOS 卡、建立组分流体和求解器。
 
 ---
 
-# 八、组分怎么变成油气两相
+# 4. 五口压力井也已经进入正演
 
-这里就是 PR EOS。
+当前 physical_3d 是：
 
-每个 cell、每个 Newton/time step 都会根据：
+* 中央注入井；
+* 四角采出井；
+* 不同 K 层段完井；
+* pressure-controlled；
+* `use_productivity: true`。
 
-$$
-p,T,z_i
-$$
+这些都已经通过 YAML 描述。
 
-执行 flash：
-
-$$
-(p,T,z)
-\xrightarrow{PR}
-\begin{cases}
-\beta_g\\
-x_i\\
-y_i\\
-\rho_o,\rho_g\\
-S_o,S_g
-\end{cases}
-$$
-
-因此它不是：
-
-> 先算压力，然后经验公式算 Sg。
-
-而是组分守恒、相平衡和流动彼此耦合。
-
-当前 CMG 与我们的 EOS 卡也已经尽可能对齐，初始化时：
+控制文件当前是：
 
 $$
-S_g^{ours}=0.356
+P_{inj}=50\ {\rm MPa}
 $$
 
 $$
-S_g^{GEM}=0.362
+P_{prod}=49.5\ {\rm MPa}
 $$
 
-差：
+五口井全部是压力边界。
+
+因此井源汇也是：
 
 $$
-\Delta S_g\approx0.006
-$$
-
-这已经足够小。
-
----
-
-# 九、ES-MDA 是怎么反演的
-
-现在 CMG 给出：
-
-$$
-d_{obs}
-$$
-
-我们先生成参数 ensemble：
-
-$$
-\theta_j^{(0)}
+q_w
 \sim
-N(\theta_0,C_\theta)
+WI\lambda
+(P_{bhp}-P_{\rm cell})
 $$
 
-当前：
+而 \(WI\) 又与：
 
 $$
-N_e=8
+k
 $$
 
-并且：
+相关。
+
+所以反演改变 \(k\) 后，不只是网格 transmissibility 会变，井流量响应也会变。
+
+---
+
+# 5. 反演算法也已经接通，而且这个 Case 用 LM 比 ES-MDA 合理
+
+最新提交一个很重要的改变就是：
+
+```yaml
+algorithm: auto
+```
+
+现在默认：
 
 $$
-N_a=5
+\boxed{\text{LM first}}
 $$
 
-配置就在 `case_dev.yaml`。
+而不是一上来就 Ne=8、Na=5 跑很多 ensemble。
 
-对于每一个 ensemble member：
-
-$$
-\theta_j
-$$
-
-都跑一次我们的物理正演：
+LM 求解的是：
 
 $$
-X_j=F_{ours}(\theta_j)
+J(m)=
+\frac12
+\left[
+H(F(m))-d
+\right]^T
+R^{-1}
+\left[
+H(F(m))-d
+\right]
++
+\frac12
+(m-m_0)^T
+C_m^{-1}
+(m-m_0)
 $$
 
-然后通过同一个 observation operator：
+当前 physical_3d 只有：
 
 $$
-y_j=H(X_j)
+n_\theta=1
 $$
 
-所以形成：
+所以这其实非常适合 LM。
+
+有限差分得到：
 
 $$
-C_{\theta y}
+J_m
+=
+\frac{\partial H(F(m))}{\partial m}
+$$
+
+然后：
+
+$$
+\left(
+J_m^T J_m
++
+C_m^{-1}
++
+\lambda D
+\right)\Delta m
+=
+-
+\left[
+J_m^Tr+
+C_m^{-1}(m-m_0)
+\right]
+$$
+
+不断更新：
+
+$$
+m_{n+1}=m_n+\Delta m
+$$
+
+当前代码就是 whitened residual + prior regularization 的 LM。
+
+如果 LM 判断：
+
+$$
+\frac{\sigma_{\rm post}}
+{\sigma_{\rm prior}}
+>0.7
+$$
+
+也就是参数还没有被数据很好约束，或者 holdout 太差，它才会自动升级到 ES-MDA。
+
+这个设计对 15³ 很重要，否则 7 组分 × 3375 cell 每次 ES-MDA 都跑很多成员，成本很高。
+
+---
+
+# 6. CMG → 测点 → 反演 → 后验场，这条链也已经接通
+
+最新通用入口已经支持：
+
+```bash
+python scripts/lab_v1_cmg_invert.py \
+  --case physical_3d/case.yaml \
+  --export physical_3d/export \
+  --score
+```
+
+反演阶段只读取：
+
+```text
+observations.csv
+controls.csv
+```
+
+而不会读取：
+
+```text
+hidden/pressure.npy
+hidden/sg.npy
+hidden/so.npy
+```
+
+得到参数以后，再另外运行：
+
+$$
+F_{\rm ours}(\hat k)
+$$
+
+然后才加载 CMG hidden truth 做：
+
+$$
+P_{\rm ours}
+\leftrightarrow
+P_{\rm CMG}
+$$
+
+以及：
+
+$$
+S_g^{ours}
+\leftrightarrow
+S_g^{CMG}
+$$
+
+的场比较。
+
+而且 physical_3d 的 CMG export 现在已经真正有：
+
+* `controls.csv`
+* `observations.csv`
+* `hidden/pressure.npy`
+* `hidden/sg.npy`
+* `hidden/so.npy`
+* `hidden/sw.npy`
+* `grid.csv`
+
+不是空架子了。
+
+---
+
+# 7. 那为什么仓库还写“15³ 正演等价/反演未跑”？
+
+因为现在真正缺的是：
+
+$$
+\boxed{\text{这个具体 physical_3d Case 的验证}}
+$$
+
+而不是公式。
+
+最新 commit 自己就写得非常明确：
+
+> `physical_3d/case.yaml` 15³ 单孔 7 组分 + 16 压力测点已 pack。**15³ 正演等价/反演未跑。**
+
+这一步不能跳。
+
+必须先做：
+
+$$
+F_{\rm ours}(k_{\rm true})
+\overset{?}{\approx}
+F_{\rm GEM}(k_{\rm true})
+$$
+
+如果真实 \(k\) 给进去以后，我们的压力场和 GEM 已经差很多，那么立即反演会发生：
+
+$$
+\hat k
+$$
+
+去吸收：
+
+* EOS 差异；
+* 黏度差异；
+* relperm 差异；
+* well model 差异；
+* rock compressibility 差异；
+* CMG geomechanics 差异；
+
+最终得到一个“补偿参数”。
+
+所以：
+
+> **先正演等价，再反演，不是代码限制，而是科学上必须这么做。**
+
+---
+
+# 8. 现在 physical_3d 还有一个真正值得注意的问题：只有压力观测
+
+这是我认为当前最需要改的地方。
+
+虽然 CMG hidden truth 已经有：
+
+$$
+S_g,\quad S_o,\quad S_w
+$$
+
+但现在 `sensors.csv` 中 32 个 E 开头的电极测点被 loader 明确跳过，因为暂时不做 Archie；真正进入反演的只有 16 个 pressure sensors。
+
+对应已经打包的 `observations.csv` 也确实全部都是：
+
+```text
+kind=pressure
+```
+
+没有饱和度。
+
+而你前面已经明确说：
+
+> 设备以后会给压力和饱和度。
+
+那 synthetic-CMG 阶段最好现在就把：
+
+$$
+P_{\rm obs}+S_{\rm obs}
+$$
+
+一起作为虚拟设备数据。
+
+---
+
+# 9. 尤其因为这个 Case 五口井全部是定压井
+
+这个在反演 \(k\) 时非常关键。
+
+对于一个极简稳态单相问题：
+
+$$
+\nabla\cdot(k\nabla P)=0
+$$
+
+如果：
+
+$$
+k=\text{uniform scalar}
+$$
+
+并且边界全是给定压力，那么：
+
+$$
+k\nabla^2P=0
+$$
+
+\(k\) 可以直接约掉。
+
+也就是说：
+
+$$
+\boxed{
+\text{压力空间形状本身对 uniform }k
+\text{可能很不敏感}
+}
+$$
+
+而流量：
+
+$$
+q\propto k\Delta P
+$$
+
+却对 \(k\) 很敏感。
+
+你的实际问题是 transient compositional，所以不会完全约掉，但这个原理仍然存在。
+
+因此 physical_3d 如果真要稳健反演 uniform \(k\)，最好的观测其实应该包括：
+
+$$
+P_{\rm sensor}
+$$
+
+*
+
+$$
+S_g/S_o
+$$
+
+*
+
+$$
+Q_{inj},Q_{prod}
+$$
+
+尤其是**井流量响应**。
+
+现在 CMG README 已经显示一个非常有用的信息：
+
+实际注入量不是目标 5 mL/min，而是大约：
+
+$$
+0.35\ {\rm mL/min}
+$$
+
+因为 50 MPa BHP constraint 卡住了。
+
+这恰恰是非常强的 \(k\) 信息。
+
+所以：
+
+> 反演 uniform \(k\) 时，把这个 rate response 扔掉，只用内部压力测点，是在主动丢信息。
+
+---
+
+# 10. 所以“只要用户配置 YAML”这个方向是对的，但现在还差最后一点产品化
+
+我认为最终产品就应该是这样：
+
+```yaml
+physics:
+  model: compositional
+
+grid:
+  nx: 15
+  ny: 15
+  nz: 15
+
+fluid:
+  file: pvt_co2.yaml
+
+rock:
+  porosity: ...
+  permeability: ...
+
+ports:
+  ...
+
+sensors:
+  file: sensors.csv
+
+inverse:
+  parameterization: log_permeability
+  algorithm: auto
+  prior_mean: ...
+  prior_std: ...
+
+experiment:
+  controls: controls.csv
+  observations: observations.csv
+```
+
+然后用户不应该关心：
+
+* 调哪个 solver；
+* 调 LM 还是 ES-MDA；
+* 怎么构造 observation operator；
+* 怎么生成 posterior forward；
+* 怎么比较 CMG field。
+
+软件自己路由。
+
+**这部分架构现在已经基本成立。**
+
+---
+
+## 但我会改一个命名
+
+physical_3d 现在写：
+
+```yaml
+parameterization: log_conductivity
+```
+
+这是历史包袱。
+
+它在 DPDP 里代表：
+
+$$
+C_f
+$$
+
+但 physical_3d 实际上代表：
+
+$$
+k
+$$
+
+虽然代码上可以工作，但用户看起来非常容易误解。
+
+应该增加：
+
+```yaml
+parameterization: log_permeability
+```
+
+作为单孔隙模型的正式名字：
+
+$$
+m=\log(k/k_{ref})
+$$
+
+而：
+
+```yaml
+log_conductivity
+```
+
+只留给 DPDP fracture \(C_f\)。
+
+同样，当前 generic `invert.json` 仍输出：
+
+```text
+cf_p50
+tmf_p50
+```
+
+对于 single-porosity physical_3d 是错误的产品语义。
+
+实际上应该输出：
+
+```text
+parameter: permeability
+k_p50_m2
+k_p05_m2
+k_p95_m2
+```
+
+`tmf` 根本不应该出现。
+
+这是**接口/命名问题，不是反演公式问题**。
+
+---
+
+# 11. 所以我现在对 physical_3d 的判断
+
+| 项目                              | 状态                 |
+| ------------------------------- | ------------------ |
+| 15³ grid                        | 已接                 |
+| 7 组分 PR EOS                     | 已接                 |
+| 组分质量守恒                          | 已接                 |
+| Darcy flux                      | 已接                 |
+| pressure wells                  | 已接                 |
+| 分层 perforation                  | 已接                 |
+| well productivity               | 已接                 |
+| scalar \(k\) → forward          | **已接**             |
+| observation operator            | 已接                 |
+| CMG sparse observations         | 已打包                |
+| LM inversion                    | **已接**             |
+| auto LM→ES-MDA                  | 已接                 |
+| posterior forward               | 已接                 |
+| CMG hidden field scoring        | 已接                 |
+| physical_3d forward equivalence | **未验收**            |
+| physical_3d actual inversion    | **未验收**            |
+| saturation observation          | **当前没有喂给 inverse** |
+| rate observation                | **当前没有充分利用**       |
+| YAML generic semantics          | 基本具备               |
+| `log_conductivity` 命名           | 需要整理               |
+
+所以不是：
+
+$$
+\boxed{\text{“软件缺公式，所以反演不了”}}
+$$
+
+而是：
+
+$$
+\boxed{
+\text{公式/求解/反演链已经接通，
+physical\_3d 现在缺的是 Case-level validation + 观测合同完善}
+}
+$$
+
+---
+
+## 我建议下一刀非常明确
+
+先**不要再开发新的反演算法**。
+
+就针对 physical_3d 做：
+
+$$
+\boxed{
+\text{true-}k\ forward\ equivalence
+}
+$$
+
+先看：
+
+$$
+P_{\rm ours}\ vs\ P_{\rm CMG}
 $$
 
 和：
 
 $$
-C_{yy}
+S_g^{ours}\ vs\ S_g^{CMG}
 $$
 
-ES-MDA 更新可以写成：
+如果这一步过了，再把 CMG 的：
 
 $$
-\theta_j^{a}
-=
-\theta_j^{f}
+P_{\rm sensors}
 +
-C_{\theta y}
-\left(
-C_{yy}+\alpha R
-\right)^{-1}
-\left(
-d_{obs}+\epsilon_j-y_j
-\right)
+S_{\rm sensors}
++
+Q_{\rm wells}
 $$
 
-然后重复若干 assimilation steps。
+作为 observations，直接用：
 
-本质就是：
-
-> **哪个参数变化能够让模拟测点朝 CMG 测点方向移动，就把 ensemble 往那个方向更新。**
-
-所以不是直接通过公式：
-
-$$
-P\rightarrow C_f
-$$
-
-而是：
-
-$$
-C_f,\beta_{mf}
-\rightarrow
-完整物理模型
-\rightarrow
-P,S
-$$
-
-然后利用 ensemble statistics 反过来推断参数。
-
----
-
-# 十、反演以后干什么
-
-这才是你真正关心的部分。
-
-得到：
-
-$$
-\hat\theta
-=
-(\hat C_f,\hat\beta_{mf})
-$$
-
-之后，再跑一次：
-
-$$
-X_{post}
-=
-F_{ours}(\hat\theta)
-$$
-
-同时保留原来的 prior：
-
-$$
-X_{prior}
-=
-F_{ours}(\theta_{prior})
-$$
-
-于是现在有三套场：
-
-$$
-X_{CMG}
-$$
-
-$$
-X_{prior}
-$$
-
-$$
-X_{post}
-$$
-
-然后比较：
-
-```text
-        CMG truth      Prior ours      Posterior ours
-
-P          场               场               场
-
-Sg         场               场               场
-
-So         场               场               场
+```yaml
+algorithm: auto
 ```
 
-当前 `lab_v1_cmg_invert.py --score` 已经实现这条路径。它会先完成反演，然后**才**加载 hidden truth，再计算 prior/post fields。
-
----
-
-# 十一、最终评价的核心也已经设计对了
-
-现在仓库已经明确：
-
-> **场误差优先于参数误差。**
-
-KPI 顺序是：
-
-1. pressure field NRMSE；
-2. \(S_g/S_o/S_w\) field RMSE；
-3. injection / production curves；
-4. holdout sensor error；
-5. component field RMSE；
-6. \(C_f\) error；
-7. \(T_{mf}\) error。
-
-这是正确的。
-
-因为真正的数字孪生目标是：
+反一个 uniform：
 
 $$
-\boxed{
-F_{ours}(\hat\theta)
-\approx
-F_{CMG}(\theta_{true})
-}
+k
 $$
 
-而不一定强求：
+最后验证：
 
 $$
-\hat C_f=C_f^{CMG}
+E_{\rm post}<E_{\rm prior}
 $$
 
-两个 simulator 的等效参数可能存在少量系统偏差。
+这一步跑通以后，你说的产品形态就基本成立了：
 
----
+> **用户主要负责 YAML / PVT / 井 / 测点 / 控制 / prior 配置；求解、反演算法选择、后验正演、CMG 场对比全部由后端完成。**
 
-# 十二、最值得看的指标其实是“反演改善率”
-
-当前代码已经实现：
-
-$$
-Improvement_P
-=
-1-
-\frac{
-E_P^{post}
-}{
-E_P^{prior}
-}
-$$
-
-其中：
-
-$$
-E_P^{prior}
-=
-NRMSE(P_{prior},P_{CMG})
-$$
-
-$$
-E_P^{post}
-=
-NRMSE(P_{post},P_{CMG})
-$$
-
-比如：
-
-$$
-E_P^{prior}=0.20
-$$
-
-反演后：
-
-$$
-E_P^{post}=0.05
-$$
-
-那么：
-
-$$
-Improvement_P
-=
-1-\frac{0.05}{0.20}
-=
-75\%
-$$
-
-这个指标已经写进 `reconstruction_report()`。
-
-它直接回答：
-
-> ES-MDA 是否真正把我们的模型拉向 CMG？
-
----
-
-# 十三、最新代码实际上已经走到哪里
-
-现在可以这样看：
-
-| 阶段                             | 当前                 |
-| ------------------------------ | ------------------ |
-| CMG 4×4×2 GEM deck             | 已有                 |
-| CMG / ours 参数合同对齐              | 已有                 |
-| PR EOS 对齐                      | 已有                 |
-| DPDP transfer 对齐               | 已有                 |
-| face injection / production 对齐 | 已有                 |
-| M2a forward equivalence        | **PASS**           |
-| GEM 多时间点解析                     | **已有**             |
-| CMG hidden truth 数据结构          | **已有**             |
-| CMG → sparse virtual sensors   | **已有**             |
-| controls.csv                   | **已有**             |
-| hidden / invert 数据隔离           | **已有且有测试**         |
-| ES-MDA from CMG observations   | **代码已有**           |
-| posterior forward              | **代码已有**           |
-| prior/post/CMG field scoring   | **代码已有**           |
-| pressure comparison figure     | **代码已有**           |
-| 实际 M2b 数值结果                    | **尚无 GitHub 提交证据** |
-| 实际 M2c reconstruction PASS     | **尚无 GitHub 提交证据** |
-| 30³ CMG benchmark              | 未做                 |
-| M2d 四真值                        | 未做                 |
-
-所以准确地说：
-
-$$
-\boxed{\text{MVP infrastructure = READY}}
-$$
-
-但：
-
-$$
-\boxed{\text{MVP integrated acceptance = 还差最后一次完整运行}}
-$$
-
----
-
-# 十四、为什么我说“只差最后一刀”
-
-因为现在仓库里的：
-
-```text
-examples/lab_v1/cmg_gem/export/
-```
-
-主线上仍然只有 `README.md`，没有真正提交：
-
-```text
-observations.csv
-controls.csv
-hidden/pressure.npy
-hidden/sg.npy
-...
-```
-
-而 `STATUS.md` 也仍然记录：
-
-> M2a PASS，未 pack export，未做 M2b。
-
-虽然最新 `d4b5e15` 已经把 M2b 所需代码补上了，但**没有看到一次实际 inversion 的 `invert.json` / `reconstruction.json` 成绩被提交**。
-
-所以这不是再开发几周的问题。
-
-而是：
-
-> **现在应该停止继续扩功能，把现有链路真正跑通。**
-
----
-
-# 十五、下一步就做这 5 条命令
-
-当前最小 MVP 的执行顺序其实已经非常明确：
-
-```bash
-python scripts/lab_v1_cmg_run_gem.py
-```
-
-得到：
-
-$$
-F_{CMG}
-$$
-
-然后：
-
-```bash
-python scripts/lab_v1_cmg_pack_obs.py \
-    --hidden results/lab_v1/cmg_gem_run/hidden
-```
-
-得到：
-
-```text
-observations.csv
-controls.csv
-hidden/
-```
-
-然后先确认 M2a：
-
-```bash
-python scripts/lab_v1_cmg_forward_gate.py \
-    --export examples/lab_v1/cmg_gem/export
-```
-
-再真正跑反演：
-
-```bash
-python scripts/lab_v1_cmg_invert.py \
-    --export examples/lab_v1/cmg_gem/export \
-    --workers 4
-```
-
-最后：
-
-```bash
-python scripts/lab_v1_cmg_invert.py \
-    --export examples/lab_v1/cmg_gem/export \
-    --score \
-    --workers 4
-```
-
-它应该最终产生：
-
-```text
-invert.json
-theta.npy
-
-reconstruction.json
-fields.npz
-grid.csv
-pressure_compare.png
-```
-
-代码已经这样写好了。
-
----
-
-# 十六、我建议最小 MVP 暂时只设三个验收条件
-
-先不要又做复杂的门闩体系。
-
-### Gate 1：外部 simulator 正演一致
-
-已经 PASS：
-
-$$
-NRMSE_P<0.10
-$$
-
-$$
-RMSE_{S_g}<0.05
-$$
-
----
-
-### Gate 2：反演确实使用有限观测
-
-要求：
-
-$$
-hidden\_used=false
-$$
-
-这个当前代码已经强制实现。
-
----
-
-### Gate 3：posterior 比 prior 更接近 CMG
-
-最低要求：
-
-$$
-E_P^{post}<E_P^{prior}
-$$
-
-并且：
-
-$$
-E_{S_g}^{post}<E_{S_g}^{prior}
-$$
-
-等价于：
-
-$$
-Improvement_P>0
-$$
-
-最好：
-
-$$
-Improvement_{S_g}>0
-$$
-
-**只要这三条成立，我就认为你已经有一个真正可以展示的最小 MVP。**
-
-因为它已经证明：
-
-$$
-\boxed{
-CMG产生未知储层
-\rightarrow
-只给少量测点
-\rightarrow
-我们的反演识别等效储层参数
-\rightarrow
-我们的正演恢复未观测三维场
-}
-$$
-
----
-
-# 十七、这其实已经是真正的“数字孪生”原型了
-
-它跟普通 history matching 的区别在于：
-
-你不是只问：
-
-> \(C_f\) 猜得准不准？
-
-而是在问：
-
-$$
-\boxed{
-\text{通过有限观测，能否重构系统内部没有直接测量的动态状态？}
-}
-$$
-
-输入：
-
-$$
-Q_{inj},P_{prod},P_{sensor},S_{sensor}
-$$
-
-内部反演：
-
-$$
-C_f,\beta_{mf}
-$$
-
-再由物理模型恢复：
-
-$$
-P(x,y,z,t)
-$$
-
-$$
-S_g(x,y,z,t)
-$$
-
-$$
-S_o(x,y,z,t)
-$$
-
-这就是目前这个软件最清晰的核心工作原理。
-
----
-
-## 所以现在我建议不要再写新架构
-
-**下一步只做 M2b + M2c 的第一次真实 integrated run。**
-
-如果这一次得到例如：
-
-$$
-P_{prior}\rightarrow P_{post}
-$$
-
-明显靠近 CMG，
-
-同时：
-
-$$
-S_{g,prior}\rightarrow S_{g,post}
-$$
-
-也明显靠近 CMG，那么我会认为：
-
-$$
-\boxed{\text{最小科学 MVP 已成立}}
-$$
-
-之后才值得做 **10³/30³、四真值 robustness、真实 PVT、online、UDP**。
-
-现在已经不是“还缺什么算法”的阶段了，最新 GitHub **已经基本把最小 MVP 的骨架搭完，当前最重要的工作就是把这条 CMG→稀疏观测→ES-MDA→posterior field→CMG hidden truth 的闭环实际跑出结果。**
+而如果最终产品仍然要走你之前的 **DPDP \(C_f+\beta_{mf}\)**，那就另建一个 `physical_3d_dpdp.yaml`，对应的 CMG truth 也必须改成双重介质；不能拿现在这个 single-porosity GEM Case 硬反 \(C_f,T_{mf}\)。

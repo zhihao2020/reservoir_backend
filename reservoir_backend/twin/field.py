@@ -288,6 +288,8 @@ def _forward_pressure(
     twin: DigitalTwin,
     k: NDArray[np.float64],
     report_times: NDArray[np.float64],
+    *,
+    theta: ArrayLike | None = None,
 ) -> tuple[
     NDArray[np.float64],
     NDArray[np.float64],
@@ -299,8 +301,12 @@ def _forward_pressure(
     if times.size == 0:
         raise ValueError("report_times is empty")
     t_end = float(np.max(times))
-    rock = twin.rock_from_k(np.asarray(k, dtype=float).ravel())
-    traj = twin.simulate(rock, t_end=t_end, report_times=times)
+    theta_arr = None if theta is None else np.asarray(theta, dtype=float).ravel()
+    if twin.uses_dpdp() and theta_arr is not None:
+        traj = twin.simulate(parameters=theta_arr, t_end=t_end, report_times=times)
+    else:
+        rock = twin.rock_from_k(np.asarray(k, dtype=float).ravel())
+        traj = twin.simulate(rock, t_end=t_end, report_times=times)
     p_rows: list[NDArray[np.float64]] = []
     sw_rows: list[NDArray[np.float64]] = []
     so_rows: list[NDArray[np.float64]] = []
@@ -394,7 +400,8 @@ def pressure_field(
     else:
         times = np.asarray(report_times, dtype=float).ravel()
 
-    times, pressure, sw, so, sg = _forward_pressure(twin, k_use, times)
+    theta = None if post is None else getattr(post, "theta", None)
+    times, pressure, sw, so, sg = _forward_pressure(twin, k_use, times, theta=theta)
     result = PressureField(
         times_s=times,
         pressure=pressure,

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import yaml
 
 from reservoir_backend.exceptions import InvalidControl
 from reservoir_backend.ports.flow import FlowPort
@@ -63,7 +64,19 @@ def ports_from_cfg(cfg: dict[str, Any], grid: Any, *, cfg_dir: str | Path = ".")
 
 
 def ports_from_well_file(path: str | Path, grid: Any) -> list[FlowPort]:
-    text = Path(path).read_text(encoding="utf-8")
+    path = Path(path)
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(data, list):
+            rows = data
+        elif isinstance(data, dict):
+            rows = data.get("ports") or data.get("wells") or []
+        else:
+            raise InvalidControl("wells file must be a mapping or list: " + str(path))
+        if not isinstance(rows, list) or not rows:
+            raise InvalidControl("wells file has no ports: " + str(path))
+        return [_port_from_yaml(grid, row) for row in rows]
+    text = path.read_text(encoding="utf-8")
     return parse_well_deck(text, grid, source=str(path))
 
 

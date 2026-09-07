@@ -59,8 +59,10 @@ def test_region_map_npy(tmp_path: Path) -> None:
     assert np.array_equal(param.region_id, rid)
 
 
-def test_lab_30cm_has_two_parameters() -> None:
-    assert load_case("examples/lab/lab_30cm.yaml").parameterization.n_params == 2
+def test_lab_v1_has_two_cf_tmf_parameters() -> None:
+    twin = load_case("examples/lab_v1/case.yaml")
+    assert twin.parameterization.n_params == 2
+    assert type(twin.parameterization).__name__ == "LogCfTmfParameterization"
 
 
 def test_high_region_flips_contrast_body(tmp_path: Path) -> None:
@@ -78,20 +80,11 @@ def test_high_region_flips_contrast_body(tmp_path: Path) -> None:
     assert int(np.max(top.region_id)) == 1
 
 
-def test_lab_apply_has_two_parameters() -> None:
-    twin = load_case("examples/lab/lab_apply.yaml")
+def test_lab_cf_fixture_is_joint_cf_tmf() -> None:
+    twin = load_case("examples/lab/lab_cf.yaml")
     assert twin.parameterization.n_params == 2
-    assert isinstance(twin.parameterization, RegionParameterization)
-
-
-def test_lab_channel_uses_contrast_map() -> None:
-    twin = load_case("examples/lab/lab_channel.yaml")
-    assert isinstance(twin.parameterization, ContrastParameterization)
-    assert twin.parameterization.n_params == 2
-    rid = twin.parameterization.region_id
-    assert {int(rid.min()), int(rid.max())} == {0, 1}
-    assert int(np.sum(rid == 1)) < int(np.sum(rid == 0))
-    assert all(abs(s.probe_diameter_m - 0.006) < 1e-12 for s in twin.experiment.sensors)
+    assert type(twin.parameterization).__name__ == "LogCfTmfParameterization"
+    assert twin.uses_dpdp()
 
 
 def test_forbidden_inverse_keys_error() -> None:

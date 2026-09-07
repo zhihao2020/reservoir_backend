@@ -19,13 +19,12 @@ def _case_body() -> dict:
     return {
         "geometry": {"size_m": [0.16, 0.08, 0.08]},
         "grid": {"spacing_m": 0.04},
-        "physics": {"model": "two_phase_immiscible", "capillary": "none"},
+        "physics": {"model": "compositional_dpdp", "fluid": "example", "capillary": "none"},
         "sensors": [
             {"name": "P1", "kind": "pressure", "x": 0.06, "y": 0.04, "z": 0.04, "sigma": 2000},
         ],
         "inverse": {
-            "parameterization": "region",
-            "n_regions": 2,
+            "parameterization": "log_cf_tmf",
             "max_iter": 4,
         },
         "experiment": {
@@ -204,6 +203,37 @@ def test_load_case_yaml_ports_still_work(tmp_path: Path) -> None:
     ref_prod = FlowPort.at_point(grid, "PROD", "producer", "pressure", (0.14, 0.04, 0.04))
     _same_well(twin.ports[0], ref_inj)
     _same_well(twin.ports[1], ref_prod)
+
+
+def test_yaml_wells_sidecar_loads_like_inline_ports(tmp_path: Path) -> None:
+    wells = tmp_path / "wells.yaml"
+    wells.write_text(
+        yaml.safe_dump(
+            {
+                "ports": [
+                    {"name": "INJ", "role": "injector", "control": "rate", "x": 0.02, "y": 0.04, "z": 0.04},
+                    {"name": "PROD", "role": "producer", "control": "pressure", "x": 0.14, "y": 0.04, "z": 0.04},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    body = _case_body()
+    body["wells"] = "wells.yaml"
+    yml = tmp_path / "case.yaml"
+    yml.write_text(yaml.safe_dump(body), encoding="utf-8")
+    twin = load_case(yml)
+    assert [p.name for p in twin.ports] == ["INJ", "PROD"]
+    grid = twin.grid
+    _same_well(twin.ports[0], FlowPort.at_point(grid, "INJ", "injector", "rate", (0.02, 0.04, 0.04)))
+    _same_well(twin.ports[1], FlowPort.at_point(grid, "PROD", "producer", "pressure", (0.14, 0.04, 0.04)))
+
+
+def test_lab_v1_uses_wells_sidecar() -> None:
+    twin = load_case("examples/lab_v1/case_dev.yaml")
+    assert [p.name for p in twin.ports] == ["INJ", "PROD"]
+    assert twin.ports[0].control == "rate"
+    assert twin.ports[1].control == "pressure"
 
 
 def test_geometry_maps_existing_wi_fields() -> None:

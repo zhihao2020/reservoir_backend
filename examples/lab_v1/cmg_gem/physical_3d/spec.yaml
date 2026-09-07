@@ -28,6 +28,7 @@ rock:
   phi: 0.0367                 # 3.67%, taken as already at stressed lab state
   k_md: 0.018                 # single-porosity; document gives one k
   k_m2: 1.776e-17             # 0.018 mD * 9.869233e-16
+  kv_kh: 0.1                  # shale bedding placeholder; PERMK = 0.1*PERMI
   mineral_wt_pct:
     clay: 18.6
     quartz: 55.7
@@ -97,6 +98,11 @@ fluid:
   z_init_mole: [0.0080, 0.0630, 0.0387, 0.3146, 0.4122, 0.1285, 0.0350]
   z_inj_mole:  [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   viscor: HZYT
+  diffusion_m2_day: [8.6e-5, 4.0e-5, 2.0e-5, 8.0e-6, 4.0e-6, 2.0e-6, 1.0e-6]
+  diffusion_note: >
+    CO2 ~1e-9 m2/s EXAMPLE. GEM 2024.20 ignores *DIFFUSION on single-porosity
+    (warning: fractured reservoirs only). Numbers stay in the deck for a later
+    DPDP variant. This run has no molecular diffusion.
   note: >
     WinProp sample is a 7-pseudo-component CO2 flood at 126 C with a swelling
     test. Retuned TRES to 120 C. Not laboratory crude. Swap when PVT arrives.
@@ -143,15 +149,13 @@ wells:
 # Pump volumetric 5 mL/min, not surface gas.
 controls:
   q_inj_mL_min: 5.0
-  q_inj_m3_day: 0.0072           # GEM SI *BHF
+  q_inj_m3_day: 0.0072           # GEM SI *BHF cap; not expected at 50/50
   p_inj_kPa: 50000
-  p_prod_kPa: 49500
-  drawdown_kPa: 500
+  p_prod_kPa: 50000
+  drawdown_kPa: 0
   note: >
-    Document writes inj and backpressure both 50 MPa. Equal BHP in 0.018 mD
-    switches INJ to BHP and rate ~0. First smoke after that drop: producer
-    49500 kPa (500 kPa drawdown). 5 mL/min through this k needs ~14 MPa ΔP;
-    do not raise k. Rate will be injectivity-limited.
+    Document: inj and backpressure both 50 MPa. 5 mL/min is a pump cap only.
+    Volume change is swelling/diffusion, not a 5-spot flood. Do not raise k.
 
 # Sensors: 5x5 snapped to i in {3,5,8,11,13} = 5, 9, 15, 21, 25 cm.
 # Skip centre (8,8) — injector. Pressure = interior 3x3 minus centre.
@@ -171,12 +175,13 @@ physics:
   dual_porosity: false
 
 relperm:
-  sgt: linear_0_1
+  sgt: corey_n2
+  sgc: 0.05
+  sorg: 0.25
   swt: linear_placeholder
   sw_init: 0.0
+  pc: none
 
 time:
-  smoke_day: 0.01                # ~14 min
-  one_pv_day: 0.14               # only 1 PV if 5 mL/min were delivered
+  report_day: [0.01, 0.14, 1.0, 3.0]
   pv_mL: 991
-  actual_inj_mL_min_at_0p14d: 0.35   # first GEM run, BHP-limited; 1 PV then ~47 h

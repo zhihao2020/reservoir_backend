@@ -59,8 +59,6 @@ def main(argv=None) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     payload = {
         "gate": "m2b_sparse_observation_inversion",
-        "cf_p50": phys_post["cf_m2"],
-        "tmf_p50": phys_post["tmf_multiplier"],
         "holdout_rmse": post.holdout_rmse,
         "holdout_rmse_is_whitened": True,
         "assimilate_rmse": post.assimilate_rmse,
@@ -68,6 +66,13 @@ def main(argv=None) -> int:
         "hidden_used": False,
         "n_forward": post.n_forward,
     }
+    if twin.uses_dpdp() or int(twin.parameterization.n_params) >= 2:
+        payload["cf_p50"] = phys_post["cf_m2"]
+        payload["tmf_p50"] = phys_post["tmf_multiplier"]
+    else:
+        k_hat = float(phys_post.get("k_m2", phys_post["cf_m2"]))
+        payload["parameter"] = "permeability"
+        payload["k_p50_m2"] = k_hat
     (dest / "invert.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     np.save(dest / "theta.npy", np.asarray(post.theta, dtype=float))
     print(json.dumps(payload, indent=2), flush=True)

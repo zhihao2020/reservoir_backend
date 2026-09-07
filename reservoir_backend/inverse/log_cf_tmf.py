@@ -1,9 +1,11 @@
-"""Joint log-space parameterization: fracture conductivity and T_mf multiplier.
+"""Joint log-space parameterization: fracture conductivity and T_mf.
 
-V1 theta is
-    theta[0] = log(C_f / C_ref)
-    theta[1] = log(beta_mf)
-with T_mf = beta_mf * T_mf^ref. Shape factor and k_m stay in T_mf^ref.
+Product theta is
+    theta[0] = log(C_f / C_ref)      C_f = k_f b_f, along-fracture transport
+    theta[1] = log(T_mf / T_mf^ref)  matrix–fracture replenishment
+
+T_mf = beta_mf * T_mf^ref. Shape factor and k_m stay in T_mf^ref and are
+not inverted. Porosity (phi_m, phi_f) and PVT are likewise fixed.
 """
 
 from __future__ import annotations
@@ -87,7 +89,8 @@ class LogCfTmfParameterization:
 
     def decode_physical(self, latent_parameter: float | NDArray[np.float64]) -> dict[str, float]:
         phys = self.decode(latent_parameter)
-        return {"cf_m2": float(phys[0]), "tmf_multiplier": float(phys[1])}
+        beta = float(phys[1])
+        return {"cf_m2": float(phys[0]), "tmf_multiplier": beta, "tmf": beta}
 
     def project(self, theta: NDArray[np.float64]) -> NDArray[np.float64]:
         th = np.asarray(theta, dtype=float).ravel()

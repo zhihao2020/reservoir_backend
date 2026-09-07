@@ -1,0 +1,13 @@
+# Face inject / produce. Geometry and completions only.
+# Time-varying well control is controls.csv (or controls_dev.csv).
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    perforation: face
+    face: xmin
+  - name: PROD
+    role: producer
+    control: pressure
+    perforation: face
+    face: xmax

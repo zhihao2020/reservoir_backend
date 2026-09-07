@@ -1,18 +1,20 @@
 """Fully implicit compositional Newton. Unknowns (n_i, p) per cell.
 
-New path: does not edit ``solver/fi.py``. Jacobian is coloring FD of the
-same residual used by Newton. Names follow docs/fim_name_map.md (no upstream IDs).
+Jacobian: cell-local flash FD + analytic TPFA (same residual as Newton).
+Linear solve: compiled SuperLU / ILU-GMRES / CPR via ``solver.linear``.
+Names follow docs/fim_name_map.md (no upstream IDs).
 """
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
-import warnings
+from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy import sparse
-from scipy.sparse.linalg import MatrixRankWarning, lsmr, spsolve
 
 from reservoir_backend.comp.fluid import CompSpec
 from reservoir_backend.comp.properties import moles_from_z
@@ -24,8 +26,10 @@ from reservoir_backend.exceptions import TimeStepUnderflow
 from reservoir_backend.grid.cartesian import CartesianGrid
 from reservoir_backend.physics.rock import Rock
 from reservoir_backend.ports.flow import FlowPort
-from reservoir_backend.solver.fi import clip_dt_to_report_times, dt_from_newton_iters, index_nearest_time
-from reservoir_backend.solver.impes import MassBalance, StepReport, Trajectory
+from reservoir_backend.solver.dpdp_blocks import assemble_single_jacobian
+from reservoir_backend.solver.timestep import clip_dt_to_report_times, dt_from_newton_iters, index_nearest_time
+from reservoir_backend.solver.trajectory import MassBalance, StepReport, Trajectory
+from reservoir_backend.solver.linear import solve_newton_system
 
 
 @dataclass
@@ -36,6 +40,50 @@ class CompStepResult:
     port_rates: dict[str, float]
     port_bhp: dict[str, float]
     q_src: NDArray[np.float64]
+    residual_ratio: float = 0.0
+    accepted_loose: bool = False
+
+
+LAST_NEWTON_FAIL: dict = {}
+NEWTON_ABS_TOL = 1.0e-8
+NEWTON_ABS_STALL = 1.0e-7  # already at noise floor; do not chop
+NEWTON_REL_ACCEPT = 5.0e-2  # 20× drop is enough if line search stalls
+
+
+def _newton_fail(reason: str, **info):
+    LAST_NEWTON_FAIL.clear()
+    LAST_NEWTON_FAIL.update(reason=reason, **info)
+    return None
+
+
+def _clip_comp_step(
+    du: NDArray[np.float64],
+    moles: NDArray[np.float64],
+    n_cells: int,
+    nc: int,
+    *,
+    dp_max: float = 5.0e6,
+    dz_max: float = 0.25,
+) -> NDArray[np.float64]:
+    """Cap |Δp| and |Δz| on the Newton increment before line search."""
+    w = np.asarray(du, dtype=float).reshape(n_cells, nc + 1).copy()
+    w[:, nc] = np.clip(w[:, nc], -float(dp_max), float(dp_max))
+    n_tot = np.maximum(np.sum(np.abs(moles), axis=1, keepdims=True), 1.0e-18)
+    w[:, :nc] = np.clip(w[:, :nc], -float(dz_max) * n_tot, float(dz_max) * n_tot)
+    return w.ravel()
+
+
+def _residual_tight(rnorm: float, r0: float, tol: float) -> bool:
+    return rnorm / r0 < float(tol) or rnorm < NEWTON_ABS_TOL
+
+
+def _residual_floor(rnorm: float, r0: float) -> bool:
+    return rnorm < NEWTON_ABS_STALL or r0 < NEWTON_ABS_STALL
+
+
+def _residual_ok(rnorm: float, r0: float, tol: float) -> bool:
+    """Happy-path tight, stall floor, or 20× drop if line search cannot move."""
+    return _residual_tight(rnorm, r0, tol) or _residual_floor(rnorm, r0) or rnorm <= r0 * NEWTON_REL_ACCEPT
 
 
 def _cell_colors(grid: CartesianGrid) -> NDArray[np.int64]:
@@ -74,6 +122,82 @@ def _control_map(controls: list[ControlSeries]) -> dict[tuple[str, str], Control
     return {(c.port_name, c.kind): c for c in controls}
 
 
+def _well_jacobian(
+    grid: CartesianGrid,
+    rock: Rock,
+    spec: CompSpec,
+    ports: list[FlowPort],
+    controls: dict[tuple[str, str], ControlSeries],
+    moles: NDArray[np.float64],
+    pressure: NDArray[np.float64],
+    props,
+    dt: float,
+    t: float,
+    n_scale: float,
+    p_scale: float,
+) -> sparse.csc_matrix:
+    """FD of well molar sources on perforated cells only."""
+    n_cells = grid.n_cells
+    nc = spec.nc
+    nu = nc + 1
+    n_u = n_cells * nu
+    if not ports:
+        return sparse.csc_matrix((n_u, n_u))
+    from reservoir_backend.comp.properties import flash_state
+
+    q0, _, _ = well_molar_sources(grid, rock, ports, controls, pressure, props, spec, t, need_bhp=False)
+    cells = sorted({int(c) for port in ports for c in port.cell_ids})
+    eps_n = 1.0e-8 * max(float(n_scale), 1.0)
+    eps_p = 1.0e-8 * max(float(p_scale), 1.0e5)
+    n0 = np.asarray(moles, dtype=float)
+    p0 = np.asarray(pressure, dtype=float).ravel()
+
+    def _one_cell(c: int) -> tuple[list[int], list[int], list[float]]:
+        rows_c: list[int] = []
+        cols_c: list[int] = []
+        data_c: list[float] = []
+        for slot in range(nu):
+            n_t = n0.copy()
+            p_t = p0.copy()
+            eps = eps_n if slot < nc else eps_p
+            if slot < nc:
+                n_t[c, slot] = n_t[c, slot] + eps
+            else:
+                p_t[c] = p_t[c] + eps
+            trial = props.copy()
+            flash_state(spec, p_t, n_t, cells=np.array([c], dtype=np.int64), out=trial)
+            q1, _, _ = well_molar_sources(grid, rock, ports, controls, p_t, trial, spec, t, need_bhp=False)
+            dq = (q1 - q0) / eps
+            col = c * nu + slot
+            hit = np.argwhere(np.abs(dq) > 1.0e-18)
+            for cc, i in hit:
+                rows_c.append(int(cc) * nu + int(i))
+                cols_c.append(col)
+                data_c.append(-float(dt) * float(dq[int(cc), int(i)]))
+        return rows_c, cols_c, data_c
+
+    from reservoir_backend.eos.threads import jacobian_threads
+
+    workers = jacobian_threads(len(cells)) if len(cells) >= 8 else 1
+    if workers <= 1:
+        pieces = [_one_cell(c) for c in cells]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            pieces = list(pool.map(_one_cell, cells))
+    rows: list[int] = []
+    cols: list[int] = []
+    data: list[float] = []
+    for r, c, d in pieces:
+        rows.extend(r)
+        cols.extend(c)
+        data.extend(d)
+    if not data:
+        return sparse.csc_matrix((n_u, n_u))
+    return sparse.csc_matrix((data, (rows, cols)), shape=(n_u, n_u))
+
+
 def _scale_rows(n_cells: int, nc: int, n_scale: float, pv_scale: float) -> NDArray[np.float64]:
     s = np.ones(n_cells * (nc + 1))
     block = s.reshape(n_cells, nc + 1)
@@ -93,7 +217,7 @@ def solve_comp_step(
     dt: float,
     t: float,
     *,
-    max_newton: int = 12,
+    max_newton: int = 20,
     tol: float = 1.0e-6,
 ) -> CompStepResult | None:
     """One fully implicit compositional step, or None on Newton failure."""
@@ -103,17 +227,13 @@ def solve_comp_step(
     p = np.asarray(pressure, dtype=float).ravel().copy()
     n = n0.copy()
     t_geom = geometric_transmissibility(grid, rock.permeability, kz=rock.kz)
-    colors = _cell_colors(grid)
     pv = np.asarray(rock.porosity, dtype=float).ravel() * grid.cell_volumes()
     n_scale = max(float(np.mean(np.sum(n0, axis=1))), 1.0e-6)
     pv_scale = max(float(np.mean(pv)), 1.0e-12)
     row_s = _scale_rows(n_cells, nc, n_scale, pv_scale)
     nu = nc + 1
     n_u = n_cells * nu
-    use_dense = n_u <= 192
-    n_colors = int(np.max(colors)) + 1
-    color_cells = [np.flatnonzero(colors == color) for color in range(n_colors)]
-    neighbors = [_neighbor_cells(grid, c) for c in range(n_cells)]
+    p_scale = max(float(np.mean(np.abs(p))), 1.0e5)
 
     def residual_of(nm, pr, props=None, reflash=None, *, need_bhp=False):
         from reservoir_backend.comp.properties import flash_state
@@ -132,53 +252,23 @@ def solve_comp_step(
         )
         return res, props_out, rates, bhp, q_src
 
-    def assemble_jacobian(nm, pr, res0, props0):
-        eps_n = 1.0e-7 * max(n_scale, 1.0)
-        eps_p = 1.0e-6 * max(float(np.mean(np.abs(pr))), 1.0e5)
-        if use_dense:
-            jac = np.zeros((n_u, n_u))
-        else:
-            rows: list[int] = []
-            cols: list[int] = []
-            data: list[float] = []
-        for cells in color_cells:
-            if cells.size == 0:
-                continue
-            for slot in range(nu):
-                n_t = nm.copy()
-                p_t = pr.copy()
-                if slot < nc:
-                    n_t[cells, slot] = n_t[cells, slot] + eps_n
-                    eps = eps_n
-                else:
-                    p_t[cells] = p_t[cells] + eps_p
-                    eps = eps_p
-                res_t, _, _, _, _ = residual_of(n_t, p_t, props=props0.copy(), reflash=cells, need_bhp=False)
-                dres = (res_t - res0) / eps
-                for c in cells:
-                    col = int(c) * nu + slot
-                    for cc in neighbors[int(c)]:
-                        for blk in range(nu):
-                            row = int(cc) * nu + blk
-                            val = float(dres[row])
-                            if use_dense:
-                                jac[row, col] = val
-                            else:
-                                rows.append(row)
-                                cols.append(col)
-                                data.append(val)
-        if use_dense:
-            return row_s[:, None] * jac
-        raw = sparse.csr_matrix((data, (rows, cols)), shape=(n_u, n_u))
-        return sparse.diags(row_s) @ raw
+    def assemble_jacobian(nm, pr, props0):
+        jac, _ = assemble_single_jacobian(
+            grid, spec, nm, pr, props0, dt, t_geom, n_scale, p_scale
+        )
+        if ports:
+            jac = jac + _well_jacobian(
+                grid, rock, spec, ports, controls, nm, pr, props0, dt, t + dt, n_scale, p_scale
+            )
+        return jac.tocsr().multiply(row_s[:, None]).tocsc()
 
     try:
         res, props, rates, bhp, q_src = residual_of(n, p, need_bhp=True)
-    except Exception:
-        return None
+    except Exception as exc:
+        return _newton_fail("residual", error=str(exc))
     r0 = float(np.linalg.norm(res * row_s))
     if not np.isfinite(r0):
-        return None
+        return _newton_fail("residual_not_finite", r0=r0)
     r0 = max(r0, 1.0e-18)
     n_its = 0
     jac_s = None
@@ -186,41 +276,35 @@ def solve_comp_step(
     refresh_every = 2
     for n_its in range(1, int(max_newton) + 1):
         rnorm = float(np.linalg.norm(res * row_s))
-        if rnorm / r0 < float(tol) or rnorm < 1.0e-10:
+        if _residual_tight(rnorm, r0, tol) or _residual_floor(rnorm, r0):
             _, _, rates, bhp, q_src = residual_of(n, p, props=props, need_bhp=True)
             return CompStepResult(
-                moles=n, pressure=p, newton_iters=n_its, port_rates=rates, port_bhp=bhp, q_src=q_src
+                moles=n,
+                pressure=p,
+                newton_iters=n_its,
+                port_rates=rates,
+                port_bhp=bhp,
+                q_src=q_src,
+                residual_ratio=rnorm / r0,
             )
         rebuild = jac_s is None or jac_age >= refresh_every
         if rebuild:
             try:
-                jac_s = assemble_jacobian(n, p, res, props)
-            except Exception:
-                return None
+                jac_s = assemble_jacobian(n, p, props)
+            except Exception as exc:
+                return _newton_fail("jacobian", error=str(exc), n_its=n_its)
             jac_age = 0
         rhs = -res * row_s
         try:
-            if use_dense:
-                try:
-                    du = np.linalg.solve(jac_s, rhs)
-                except np.linalg.LinAlgError:
-                    du = np.linalg.lstsq(jac_s, rhs, rcond=None)[0]
-                du = np.asarray(du, dtype=float).ravel()
-            else:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", MatrixRankWarning)
-                    du = np.asarray(spsolve(jac_s, rhs), dtype=float).ravel()
-                if du.size != n_u or not np.all(np.isfinite(du)):
-                    du = np.asarray(
-                        lsmr(jac_s, rhs, atol=1.0e-10, btol=1.0e-10, maxiter=max(80, n_u))[0],
-                        dtype=float,
-                    ).ravel()
-        except Exception:
-            return None
+            lin = solve_newton_system(jac_s, rhs, n_comp=nc, continua=1)
+            du = np.asarray(lin.x, dtype=float).ravel()
+        except Exception as exc:
+            return _newton_fail("linear", error=str(exc), n_its=n_its)
         if du.size != n_u or not np.all(np.isfinite(du)):
-            return None
+            return _newton_fail("step_not_finite", n_its=n_its)
+        du = _clip_comp_step(du, n, n_cells, nc)
         improved = False
-        for alpha in (1.0, 0.5, 0.25, 0.125, 0.0625):
+        for alpha in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625):
             dn, dp = unpack_unknowns(alpha * du, n_cells, nc)
             n_try = np.maximum(n + dn, 1.0e-16)
             p_try = np.clip(p + dp, 1.0e4, 1.0e9)
@@ -234,12 +318,44 @@ def solve_comp_step(
                 improved = True
                 break
         if not improved:
+            if _residual_ok(rnorm, r0, tol):
+                _, _, rates, bhp, q_src = residual_of(n, p, props=props, need_bhp=True)
+                return CompStepResult(
+                    moles=n,
+                    pressure=p,
+                    newton_iters=n_its,
+                    port_rates=rates,
+                    port_bhp=bhp,
+                    q_src=q_src,
+                    residual_ratio=rnorm / r0,
+                    accepted_loose=not _residual_tight(rnorm, r0, tol),
+                )
             if rebuild:
-                return None
+                return _newton_fail(
+                    "line_search",
+                    n_its=n_its,
+                    rnorm=float(rnorm),
+                    r0=float(r0),
+                    p_min=float(np.min(p)),
+                    p_max=float(np.max(p)),
+                    sg_max=float(np.max(props.sv)),
+                )
             jac_s = None
             continue
         jac_age += 1
-    return None
+    if _residual_ok(rnorm, r0, tol):
+        _, _, rates, bhp, q_src = residual_of(n, p, props=props, need_bhp=True)
+        return CompStepResult(
+            moles=n,
+            pressure=p,
+            newton_iters=n_its,
+            port_rates=rates,
+            port_bhp=bhp,
+            q_src=q_src,
+            residual_ratio=rnorm / r0,
+            accepted_loose=not _residual_tight(rnorm, r0, tol),
+        )
+    return _newton_fail("max_newton", n_its=n_its, rnorm=float(rnorm), r0=float(r0))
 
 
 def initialize_state(grid: CartesianGrid, rock: Rock, spec: CompSpec, p_init: float) -> State:
@@ -309,6 +425,9 @@ def simulate_comp(
     report_times: NDArray[np.float64] | None = None,
 ) -> Trajectory:
     """Time loop. Δt from Newton count. Failure chops; underflow raises."""
+    from reservoir_backend.eos.threads import configure_forward_threads
+
+    configure_forward_threads(n_slots=int(spec.nc) + 1)
     cmap = _control_map(controls)
     if state0.moles is None:
         st = initialize_state(grid, rock, spec, float(np.mean(state0.pressure)))
@@ -334,6 +453,8 @@ def simulate_comp(
     bhp_hist = [dict(bhp0)]
     n_acc = 0
     last_its = 5
+    hold_dt = False
+    progress_path = os.environ.get("RESERVOIR_PROGRESS", "").strip()
 
     while t < t_end - 1.0e-15:
         if n_acc >= int(max_steps):
@@ -343,10 +464,16 @@ def simulate_comp(
         if dt < float(dt_min):
             if (t_end - t) <= float(dt_min):
                 break
-            raise TimeStepUnderflow(f"failed to accept a step at t={t}")
+            raise TimeStepUnderflow(f"failed to accept a step at t={t} last={LAST_NEWTON_FAIL}")
         nxt = solve_comp_step(grid, rock, spec, ports, cmap, moles, p, dt, t)
         if nxt is None:
+            if progress_path:
+                print(
+                    f"[comp] chop t={t:.6f} dt={dt:.6g} last={LAST_NEWTON_FAIL}",
+                    flush=True,
+                )
             dt *= 0.5
+            hold_dt = True
             continue
         inj = np.sum(np.maximum(nxt.q_src, 0.0), axis=0) * dt
         prod = np.sum(np.maximum(-nxt.q_src, 0.0), axis=0) * dt
@@ -376,8 +503,40 @@ def simulate_comp(
         times.append(t)
         rates_hist.append(dict(nxt.port_rates))
         bhp_hist.append(dict(nxt.port_bhp))
-        dt = dt_from_newton_iters(dt, nxt.newton_iters, its0=last_its, dt_min=dt_min, dt_max=dt_max)
-        last_its = nxt.newton_iters
+        if progress_path and (n_acc == 1 or n_acc % 5 == 0):
+            print(
+                f"[comp] t={t:.6f} dt={dt:.6g} its={nxt.newton_iters} "
+                f"r={nxt.residual_ratio:.3e} p=[{float(np.min(p)):.6e},{float(np.max(p)):.6e}] "
+                f"sg_max={float(np.max(props.sv)):.4f}",
+                flush=True,
+            )
+        if progress_path:
+            n_tot = np.maximum(np.sum(moles, axis=1), 1.0e-18)
+            z_co2 = moles[:, 0] / n_tot
+            Path(progress_path).write_text(
+                json.dumps(
+                    {
+                        "t": float(t),
+                        "dt": float(dt),
+                        "n_acc": int(n_acc),
+                        "newton_its": int(nxt.newton_iters),
+                        "residual_ratio": float(nxt.residual_ratio),
+                        "accepted_loose": bool(nxt.accepted_loose),
+                        "p_min": float(np.min(p)),
+                        "p_max": float(np.max(p)),
+                        "sg_max": float(np.max(props.sv)),
+                        "z_co2_max": float(np.max(z_co2)),
+                        "q_inj": float(nxt.port_rates.get("INJ", 0.0)),
+                    }
+                ),
+                encoding="utf-8",
+            )
+        if not hold_dt and not nxt.accepted_loose:
+            dt = dt_from_newton_iters(
+                dt, int(nxt.newton_iters), its0=last_its, dt_min=dt_min, dt_max=dt_max
+            )
+        hold_dt = False
+        last_its = int(nxt.newton_iters)
 
     if report_times is not None:
         need = np.unique(np.asarray(report_times, dtype=float))

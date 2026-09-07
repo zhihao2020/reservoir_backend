@@ -1,0 +1,15 @@
+# Coarse DPDP apply fixture wells. Schedule stays in case experiment.controls
+# or a controls CSV.
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    perforation: column
+    x: 0.05
+    y: 0.05
+  - name: PROD
+    role: producer
+    control: pressure
+    perforation: column
+    x: 0.25
+    y: 0.05

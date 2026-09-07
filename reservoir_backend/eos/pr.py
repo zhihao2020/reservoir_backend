@@ -83,6 +83,8 @@ class PengRobinson:
     mw: NDArray[np.float64]
     kij: NDArray[np.float64]
     names: tuple[str, ...]
+    vcrit: NDArray[np.float64] | None = None
+    vshift: NDArray[np.float64] | None = None
 
     def __post_init__(self) -> None:
         tc = np.asarray(self.tc, dtype=float).ravel()
@@ -102,6 +104,16 @@ class PengRobinson:
         object.__setattr__(self, "omega", omega)
         object.__setattr__(self, "mw", mw)
         object.__setattr__(self, "kij", kij)
+        if self.vcrit is not None:
+            vc = np.asarray(self.vcrit, dtype=float).ravel()
+            if vc.size != n or np.any(vc <= 0.0):
+                raise ValueError("vcrit must be positive and align with nc")
+            object.__setattr__(self, "vcrit", vc)
+        if self.vshift is not None:
+            vs = np.asarray(self.vshift, dtype=float).ravel()
+            if vs.size != n or not np.all(np.isfinite(vs)):
+                raise ValueError("vshift must align with nc")
+            object.__setattr__(self, "vshift", vs)
 
     @property
     def nc(self) -> int:
@@ -149,10 +161,26 @@ class PengRobinson:
         A, B, *_ = self.reduced_ab(pressure, temperature, z)
         return pr_z_factors(A, B)
 
+    def peneloux_shift(self, z: NDArray[np.float64], temperature: float) -> float:
+        """Péneloux volume translation ∑ x_i s_i b_i. Zero when the card has no VSHIFT."""
+        corr = self.peneloux_shift_batch(np.asarray(z, dtype=float).reshape(1, -1), temperature)
+        return float(corr[0])
+
+    def peneloux_shift_batch(self, z: NDArray[np.float64], temperature: float) -> NDArray[np.float64]:
+        z = np.asarray(z, dtype=float)
+        if z.ndim == 1:
+            z = z.reshape(1, -1)
+        n = z.shape[0]
+        if self.vshift is None:
+            return np.zeros(n)
+        _, b_i = self._ab_pure(temperature)
+        return z @ (self.vshift * b_i)
+
     def molar_volume(self, pressure: float, temperature: float, z: NDArray[np.float64], *, vapor: bool) -> float:
         zl, zv = self.z_roots(pressure, temperature, z)
         zz = zv if vapor else zl
-        return zz * R_GAS * float(temperature) / max(float(pressure), 1.0e-12)
+        vol = zz * R_GAS * float(temperature) / max(float(pressure), 1.0e-12)
+        return max(vol - self.peneloux_shift(z, temperature), 1.0e-12)
 
     def ln_fugacity_coeff(
         self,

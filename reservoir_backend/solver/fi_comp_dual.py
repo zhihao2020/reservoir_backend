@@ -25,9 +25,9 @@ from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.solver.dpdp_blocks import assemble_block_jacobian
 from reservoir_backend.solver.dpdp_context import DPDPModelContext
 from reservoir_backend.solver.dpdp_jacobian import fill_column_slice, residual_scales
-from reservoir_backend.solver.fi import clip_dt_to_report_times, dt_from_newton_iters, index_nearest_time
+from reservoir_backend.solver.timestep import clip_dt_to_report_times, dt_from_newton_iters, index_nearest_time
 from reservoir_backend.solver.fi_comp import _control_map, _mass_pack
-from reservoir_backend.solver.impes import StepReport, Trajectory
+from reservoir_backend.solver.trajectory import StepReport, Trajectory
 from reservoir_backend.solver.linear import solve_newton_system
 
 
@@ -612,6 +612,9 @@ def simulate_dual_comp(
     matrix_intercell: bool = True,
 ) -> tuple[Trajectory, DualCompositionalState]:
     """Time loop for compositional DPDP. Port coupling selects fracture/matrix/split."""
+    from reservoir_backend.eos.threads import configure_forward_threads
+
+    configure_forward_threads(n_slots=int(spec.nc) + 1)
     ctx = context if context is not None else DPDPModelContext.build(grid, spec.nc, matrix_intercell=matrix_intercell)
     if isinstance(state0, DualCompositionalState):
         dual = state0.copy()

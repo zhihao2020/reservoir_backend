@@ -683,9 +683,12 @@ def reconstruction_report(
         per_time.append(row)
     cf_true = float(phys_true["cf_m2"])
     tmf_true = float(phys_true["tmf_multiplier"])
+    k_true = float(phys_true.get("k_m2", cf_true))
+    k_post = float(phys_post.get("k_m2", phys_post["cf_m2"]))
     param = {
         "cf_rel_error": abs(float(phys_post["cf_m2"]) - cf_true) / max(abs(cf_true), 1.0e-30),
         "tmf_rel_error": abs(float(phys_post["tmf_multiplier"]) - tmf_true) / max(abs(tmf_true), 1.0e-30),
+        "k_rel_error": abs(k_post - k_true) / max(abs(k_true), 1.0e-30),
     }
     if holdout_rmse is not None:
         post_m = dict(post_m)
@@ -753,8 +756,11 @@ def write_hidden_truth(folder: str | Path, truth: HiddenTruth) -> None:
     np.save(folder / "pressure.npy", np.asarray(truth.pressure, dtype=float))
     for name in ("sg", "so", "sw", "z", "pressure_fracture", "pressure_matrix", "p_inj", "q_prod"):
         arr = getattr(truth, name)
+        dest = folder / f"{name}.npy"
         if arr is not None:
-            np.save(folder / f"{name}.npy", np.asarray(arr, dtype=float))
+            np.save(dest, np.asarray(arr, dtype=float))
+        elif dest.is_file():
+            dest.unlink()
 
 
 def sample_observations_from_hidden(
@@ -803,16 +809,46 @@ _IHEAD = re.compile(r"^\s*I\s*=\s*(.+)$", re.I)
 _ALLVAL = re.compile(r"All values are\s+([0-9.Ee+\-]+)", re.I)
 
 
-def _flatten_planes(planes: dict[int, dict[int, list[float]]], nx: int, ny: int, nz: int) -> NDArray[np.float64]:
+def _k_to_our(k_1based: int, nz: int, *, kdir_down: bool) -> int:
+    """GEM Plane K is 1-based. *KDIR DOWN puts k=1 at the top; our k=0 is zmin."""
+    k0 = int(k_1based) - 1
+    if kdir_down:
+        k0 = int(nz) - int(k_1based)
+    return k0
+
+
+def gem_kdir_down(case_path: str | Path | None = None) -> bool:
+    """Read ``grid.kdir: down`` from a case YAML. Default up (M2 4×4×2)."""
+    if case_path is None:
+        return False
+    path = Path(case_path)
+    if not path.is_file():
+        return False
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = str((data.get("grid") or {}).get("kdir", "up")).strip().lower()
+    return raw in {"down", "kdir_down", "top_first"}
+
+
+def _flatten_planes(
+    planes: dict[int, dict[int, list[float]]],
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    kdir_down: bool = False,
+) -> NDArray[np.float64]:
     field = np.full(nx * ny * nz, np.nan, dtype=float)
     for k, rows in planes.items():
+        k0 = _k_to_our(int(k), nz, kdir_down=kdir_down)
+        if not 0 <= k0 < nz:
+            continue
         for j, vals in rows.items():
             for i, v in enumerate(vals):
                 if i >= nx:
                     break
                 if not np.isfinite(v):
                     continue
-                cell = (int(k) - 1) * ny * nx + (int(j) - 1) * nx + i
+                cell = k0 * ny * nx + (int(j) - 1) * nx + i
                 if 0 <= cell < field.size:
                     field[cell] = float(v)
     return field
@@ -843,8 +879,19 @@ def _si_fields_from_maps(maps: dict[tuple[str, str], NDArray[np.float64]]) -> di
     }
 
 
-def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: int = 2) -> HiddenTruth:
-    """Parse GEM ASCII grid maps (kPa) at every report time into SI hidden truth."""
+def parse_gem_out_maps(
+    out_path: str | Path,
+    *,
+    nx: int = 4,
+    ny: int = 4,
+    nz: int = 2,
+    kdir_down: bool = False,
+) -> HiddenTruth:
+    """Parse GEM ASCII grid maps (kPa) at every report time into SI hidden truth.
+
+    ``kdir_down=True`` maps GEM Plane K=1 (top, ``*KDIR DOWN``) onto our
+    Cartesian k=nz (z up). Leave false for the M2 4×4×2 DEPTH-TOP=0 card.
+    """
     text = Path(out_path).read_text(encoding="utf-8", errors="ignore")
     lines = text.splitlines()
     t_days = 0.0
@@ -860,7 +907,7 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
         nonlocal planes, current, kind
         cont = current or ("bulk" if kind else None)
         if kind and cont and planes:
-            maps[(kind, cont)] = _flatten_planes(planes, nx, ny, nz)
+            maps[(kind, cont)] = _flatten_planes(planes, nx, ny, nz, kdir_down=kdir_down)
         planes = {}
 
     def stash() -> None:
@@ -876,9 +923,12 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
             if t_new > t_days + 1.0e-16:
                 stash()
                 maps = {}
-                planes = {}
-                kind = None
-                current = None
+            else:
+                flush()
+            planes = {}
+            kind = None
+            current = None
+            i_ids = []
             t_days = t_new
         low = line.strip().lower()
         new_kind = None
@@ -910,8 +960,17 @@ def parse_gem_out_maps(out_path: str | Path, *, nx: int = 4, ny: int = 4, nz: in
             current = "fracture"
         allv = _ALLVAL.search(line)
         if allv and kind:
-            cont = current or "bulk"
-            maps[(kind, cont)] = np.full(nx * ny * nz, float(allv.group(1)))
+            val = float(allv.group(1))
+            pm_all = _PLANE.search(line)
+            if pm_all:
+                kplane = int(pm_all.group(1))
+                const = [val] * nx
+                layer = planes.setdefault(kplane, {})
+                for j in range(1, ny + 1):
+                    layer[j] = list(const)
+            else:
+                cont = current or "bulk"
+                maps[(kind, cont)] = np.full(nx * ny * nz, val)
             continue
         if "Fundamental Grid - Matrix" in line or "Fundamental Grid - Fracture" in line:
             continue

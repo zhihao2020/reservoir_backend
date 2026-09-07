@@ -12,7 +12,7 @@ from reservoir_backend.exceptions import PhysicsConvergenceError, TimeStepUnderf
 from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
 from reservoir_backend.physics.conductivity import FractureConductivityModel
 from reservoir_backend.physics.rock import Rock
-from reservoir_backend.solver.impes import Trajectory
+from reservoir_backend.solver.trajectory import Trajectory
 from reservoir_backend.twin.offline import DigitalTwin
 
 

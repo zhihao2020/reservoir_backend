@@ -35,17 +35,7 @@ rock:
   porosity: 0.08
   k_matrix_m2: 1.0e-15
 
-ports:
-  - name: INJ
-    role: injector
-    control: rate
-    perforation: face
-    face: xmin
-  - name: PROD
-    role: producer
-    control: pressure
-    perforation: face
-    face: xmax
+wells: wells.yaml
 
 sensors_defaults:
   probe_diameter_m: 0.006

@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 
 from reservoir_backend.twin.cmg_benchmark import (
     find_gem_exe,
+    gem_kdir_down,
     init_flash_report,
     load_twin_case,
     parse_gem_out_maps,
@@ -41,7 +42,13 @@ def main(argv=None) -> int:
     outs = rec.get("out_files") or []
     if outs:
         twin = load_twin_case(args.case)
-        truth = parse_gem_out_maps(outs[0], nx=twin.grid.nx, ny=twin.grid.ny, nz=twin.grid.nz)
+        truth = parse_gem_out_maps(
+            outs[0],
+            nx=twin.grid.nx,
+            ny=twin.grid.ny,
+            nz=twin.grid.nz,
+            kdir_down=gem_kdir_down(args.case),
+        )
         hidden = Path(args.work) / "hidden"
         write_hidden_truth(hidden, truth)
         write_grid_csv(twin, hidden / "grid.csv")

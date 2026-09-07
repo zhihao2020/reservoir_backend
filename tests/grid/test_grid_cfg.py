@@ -29,14 +29,10 @@ def test_uniform_spacing_fallback_matches_lab_30cm() -> None:
 
 
 def test_lab_yaml_defaults_unchanged() -> None:
-    lab = Path("examples/lab/lab_30cm.yaml")
-    channel = Path("examples/lab/lab_channel.yaml")
+    lab = Path("examples/lab_v1/case.yaml")
     g30 = grid_from_cfg(yaml.safe_load(lab.read_text(encoding="utf-8")), cfg_dir=lab.parent)
-    gch = grid_from_cfg(yaml.safe_load(channel.read_text(encoding="utf-8")), cfg_dir=channel.parent)
     assert (g30.nx, g30.ny, g30.nz) == (30, 30, 30)
     assert g30.size_m() == pytest.approx((0.3, 0.3, 0.3))
-    assert (gch.nx, gch.ny, gch.nz) == (12, 12, 12)
-    assert gch.size_m() == pytest.approx((0.3, 0.3, 0.3))
 
 
 def test_variable_dz_layers() -> None:

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from reservoir_backend.inverse.lm import (
     HOLDOUT_WHITENED_ESCALATE,
@@ -40,7 +41,7 @@ def test_cf_yaml_defaults_to_auto() -> None:
     spec = inverse_spec_from_cfg({"parameterization": "log_conductivity"})
     assert spec.algorithm == "auto"
     spec_j = inverse_spec_from_cfg({"parameterization": "log_cf_tmf"})
-    assert spec_j.algorithm == "auto"
+    assert spec_j.algorithm == "esmda"
     spec_lm = inverse_spec_from_cfg({"parameterization": "region"})
     assert spec_lm.algorithm == "lm"
 
@@ -52,6 +53,17 @@ def test_explicit_esmda_still_selected() -> None:
 
 def test_lab_v1_and_physical_3d_use_auto() -> None:
     assert load_case("examples/lab_v1/case_dev.yaml").inverse.algorithm == "auto"
-    assert load_case("examples/lab_v1/case.yaml").inverse.algorithm == "auto"
+    assert load_case("examples/lab_v1/case.yaml").inverse.algorithm == "esmda"
     assert load_case("examples/lab_v1/cmg_gem/physical_3d/case.yaml").inverse.algorithm == "auto"
     assert load_case("examples/lab/lab_cf.yaml").inverse.algorithm == "auto"
+
+
+def test_physical_3d_reports_permeability_not_tmf() -> None:
+    from reservoir_backend.twin.offline import physical_from_theta
+
+    twin = load_case("examples/lab_v1/cmg_gem/physical_3d/case.yaml")
+    assert not twin.uses_dpdp()
+    phys = physical_from_theta(twin.parameterization, np.array([0.0]))
+    assert phys["k_m2"] == pytest.approx(1.776e-17)
+    assert "tmf_multiplier" in phys
+    assert twin.parameterization.n_params == 1

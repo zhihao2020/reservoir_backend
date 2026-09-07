@@ -60,7 +60,7 @@ def test_injector_bhp_falls_when_k_rises() -> None:
 
 
 def test_rates_and_bhp_use_value_at_or_before_t() -> None:
-    from reservoir_backend.solver.impes import Trajectory
+    from reservoir_backend.solver.trajectory import Trajectory
     from reservoir_backend.domain.types import State
 
     times = np.array([0.0, 10.0, 20.0])

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from reservoir_backend.domain.types import State
-from reservoir_backend.solver.impes import Trajectory
+from reservoir_backend.solver.trajectory import Trajectory
 from reservoir_backend.twin.loops import TwinLoops
 
 

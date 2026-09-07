@@ -28,8 +28,8 @@ def test_update_control_appends_series() -> None:
 def test_observe_skips_reused_times() -> None:
     twin = load_case("examples/lab_v1/case_dev.yaml")
     rt = TwinRuntime(twin, field_folder="results/fields_test")
-    a = rt.observe(sensor_id="P001", kind="pressure", value=1.21e7, sigma=2.0e3, time_s=1.0)
-    b = rt.observe(sensor_id="P001", kind="pressure", value=1.22e7, sigma=2.0e3, time_s=1.0)
+    a = rt.observe(sensor_id="P_f_in", kind="pressure", value=1.21e7, sigma=2.0e3, time_s=1.0)
+    b = rt.observe(sensor_id="P_f_in", kind="pressure", value=1.22e7, sigma=2.0e3, time_s=1.0)
     assert a["reused"] is False
     assert b["reused"] is True
 
@@ -41,14 +41,14 @@ def test_udp_observe_sensor_id_goes_to_runtime() -> None:
     payload = {
         "cmd": "observe",
         "time_s": 2.0,
-        "sensor_id": "S001",
-        "kind": "sw",
+        "sensor_id": "S_f_mid",
+        "kind": "sg",
         "value": 0.46,
         "sigma": 0.025,
     }
     out = json.loads(proto.handle_bytes(json.dumps(payload).encode("utf-8")))
     assert out["ok"] is True
-    assert out["sensor_id"] == "S001"
+    assert out["sensor_id"] == "S_f_mid"
 
 
 def test_field_store_writes_npz(tmp_path: Path) -> None:

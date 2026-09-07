@@ -23,7 +23,7 @@ def test_online_member_state_holds_dual() -> None:
 def test_from_posterior_uses_per_member_dual_not_mean() -> None:
     from reservoir_backend.comp.dual_state import CompositionalContinuumState
     from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble
-    from reservoir_backend.solver.impes import Trajectory
+    from reservoir_backend.solver.trajectory import Trajectory
 
     def _dual(p, t):
         return DualCompositionalState(
@@ -71,7 +71,7 @@ def test_from_posterior_uses_per_member_dual_not_mean() -> None:
 
 def test_from_posterior_without_member_states_does_not_clone_mean() -> None:
     from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble
-    from reservoir_backend.solver.impes import Trajectory
+    from reservoir_backend.solver.trajectory import Trajectory
 
     members = np.array([[1.0, 2.0]])
     ens = PosteriorEnsemble(
@@ -131,7 +131,7 @@ def test_two_cf_members_keep_distinct_states_into_online() -> None:
     assert end_lo.flash is not None and end_hi.flash is not None
 
     from reservoir_backend.inverse.post_ensemble import PosteriorEnsemble
-    from reservoir_backend.solver.impes import Trajectory
+    from reservoir_backend.solver.trajectory import Trajectory
     from reservoir_backend.twin.offline import Posterior
 
     ens = PosteriorEnsemble(

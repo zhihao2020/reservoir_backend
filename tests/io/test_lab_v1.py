@@ -42,6 +42,7 @@ def test_load_physical_3d_case_is_single_porosity_log_k() -> None:
     assert twin.physics.fluid.eos.nc == 7
     assert twin.inverse.algorithm == "auto"
     assert twin.parameterization.n_params == 1
+    assert float(twin.parameterization.c_ref_m2) == pytest.approx(1.776e-17)
     names = [p.name for p in twin.ports]
     assert names == ["INJ", "PROD1", "PROD2", "PROD3", "PROD4"]
     inj = twin.ports[0]
@@ -56,8 +57,9 @@ def test_load_lab_v1_product_spec_is_30_cubed() -> None:
     assert twin.grid.n_cells == 27_000
     assert twin.ports[0].cell_ids.size == 900
     assert twin.inverse.ensemble_size == 12
-    assert twin.inverse.algorithm == "auto"
+    assert twin.inverse.algorithm == "esmda"
     assert twin.parameterization.n_params == 2
+    assert twin.physics.model == "compositional_dpdp"
 
 
 def test_new_sensor_csv_requires_sigma(tmp_path: Path) -> None:

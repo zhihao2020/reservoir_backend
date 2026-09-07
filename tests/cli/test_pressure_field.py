@@ -1,32 +1,47 @@
 import numpy as np
 
+from reservoir_backend.comp.fluid import fluid_from_name
 from reservoir_backend.domain.types import ControlSeries, Experiment, Sensor
 from reservoir_backend.twin.field import attach_probe_series, pressure_field, step_pressure
 from reservoir_backend.grid.cartesian import CartesianGrid
-from reservoir_backend.inverse.parameterization import RegionParameterization
+from reservoir_backend.inverse.log_conductivity import LogConductivityParameterization
+from reservoir_backend.physics.conductivity import FractureConductivityModel
 from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec, stack_observations
 
 
 def _tiny_twin() -> DigitalTwin:
     grid = CartesianGrid.uniform((0.12, 0.06, 0.06), 0.03)
-    inj = FlowPort.at_point(grid, "INJ", "injector", "rate", (0.015, 0.03, 0.03), sw_inj=0.85)
+    inj = FlowPort.at_point(grid, "INJ", "injector", "rate", (0.015, 0.03, 0.03))
     prod = FlowPort.at_point(grid, "PROD", "producer", "pressure", (0.105, 0.03, 0.03))
     times = np.array([2.0, 4.0, 6.0])
     controls = [
         ControlSeries("INJ", "rate", times, np.full(times.size, 1.0e-8)),
-        ControlSeries("INJ", "composition", times, np.full(times.size, 0.85)),
-        ControlSeries("PROD", "pressure", times, np.full(times.size, 1.0e5)),
+        ControlSeries("INJ", "composition", times, np.full(times.size, 0.95)),
+        ControlSeries("PROD", "pressure", times, np.full(times.size, 1.18e7)),
     ]
-    sensors = [Sensor("P1", "pressure", 0.04, 0.03, 0.03, sigma=2.0e3)]
+    sensors = [Sensor("P1", "pressure", 0.04, 0.03, 0.03, sigma=2.0e3, medium="fracture")]
     experiment = Experiment(
         size_m=grid.size_m(),
         sensors=sensors,
         controls=controls,
         observations=[],
     )
-    physics = PhysicsSpec(sw_init=0.20, p_init=1.2e5, dt_init=1.0, dt_max=2.0, implicit_transport=True)
-    param = RegionParameterization(np.zeros(grid.n_cells, dtype=np.int64), phi=0.20)
+    fluid = fluid_from_name("example")
+    physics = PhysicsSpec(
+        p_init=1.2e7,
+        dt_init=0.5,
+        dt_max=2.0,
+        max_steps=80,
+        model="compositional_dpdp",
+        fluid=fluid,
+        k_matrix_m2=1.0e-15,
+        phi_fracture=0.02,
+    )
+    cond = FractureConductivityModel(
+        n_cells=grid.n_cells, fracture_mask=np.ones(grid.n_cells, dtype=bool), k_matrix_m2=1.0e-15
+    )
+    param = LogConductivityParameterization(n_zones=1, phi=0.08, conductivity=cond)
     return DigitalTwin(
         grid,
         experiment,
@@ -102,7 +117,7 @@ def test_pressure_field_csv_ixyzp_known_k(tmp_path) -> None:
         assert "so" in cols
     if out.sg is not None:
         assert "sg" in cols
-    assert out.phi == 0.20
+    assert out.phi == 0.08
     assert "phi" in cols
 
 def test_known_sw_series_used_not_ignored() -> None:

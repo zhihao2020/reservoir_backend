@@ -1,5 +1,5 @@
-# apply --demo entry for the EXAMPLE compositional twin.
-# Does not replace examples/lab/lab_apply.yaml (30 cm waterflood).
+# apply --demo entry for the optional single-porosity compositional twin.
+# Product path is examples/lab_v1/ (compositional DPDP).
 geometry:
   size_m: [4.0, 3.0, 1.0]
 

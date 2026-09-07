@@ -1,5 +1,9 @@
-# V1 product case: 30 cm compositional DPDP, face inject/produce, scalar log Cf.
+# V1 product case: 30 cm compositional DPDP FIM.
+# Invert θ = (log C_f, log T_mf) from a history window, then freeze θ and
+# forward the full well-control schedule. k_m, φ_m, φ_f, PVT are fixed.
 # Do not run 30³ ES-MDA in CI. Use case_dev.yaml / scripts with --dev.
+#
+# Config contract: case.yaml + pvt.yaml + wells.yaml + controls.csv + observations.
 geometry:
   size_m: [0.30, 0.30, 0.30]
 
@@ -31,17 +35,7 @@ rock:
   porosity: 0.08
   k_matrix_m2: 1.0e-15
 
-ports:
-  - name: INJ
-    role: injector
-    control: rate
-    perforation: face
-    face: xmin
-  - name: PROD
-    role: producer
-    control: pressure
-    perforation: face
-    face: xmax
+wells: wells.yaml
 
 sensors_defaults:
   probe_diameter_m: 0.006
@@ -50,7 +44,7 @@ sensors: sensors.csv
 
 inverse:
   parameterization: log_cf_tmf
-  algorithm: auto
+  algorithm: esmda
   ensemble_size: 12
   assimilation_steps: 4
   seed: 3

@@ -11,14 +11,14 @@ from reservoir_backend.twin.field import pressure_field, step_pressure
 
 # probes + p(t) -> batch invert K -> p on every cell at report times
 out = pressure_field(
-    "examples/lab/lab_30cm.yaml",
+    "examples/lab_v1/case_dev.yaml",
     probes=[("P1", 0.08, 0.15, 0.05), ("P2", 0.22, 0.15, 0.25)],
     series={"times_s": t, "values": p_by_probe, "sigma": 2e3},  # or a CSV path
 )
 # out.pressure.shape == (n_times, n_cells)
 
 # Skip invert when K (or a calibrate posterior) is already known
-out = pressure_field("examples/lab/lab_30cm.yaml", k=k_mean, report_times=t)
+out = pressure_field("examples/lab_v1/case_dev.yaml", k=k_mean, report_times=t)
 
 # One solver dt on a fixed-K twin (not an invert)
 state = step_pressure(twin, k_mean, state=state, dt=twin.physics.dt_init)
@@ -32,13 +32,13 @@ controls. `DigitalTwin.reconstruct` is unchanged: ensemble UQ at **one** time.
 
 ```bash
 # Batch invert then write p(t). Case YAML has sensors; CSV is p(t).
-reservoir reconstruct examples/lab/lab_30cm.yaml --series observations.csv --output results/field
+reservoir reconstruct examples/lab_v1/case_dev.yaml --series observations.csv --output results/field
 
 # K already known: forward only
-reservoir reconstruct examples/lab/lab_30cm.yaml --k k.npy --report-times times.npy --output results/field
+reservoir reconstruct examples/lab_v1/case_dev.yaml --k k.npy --report-times times.npy --output results/field
 
 # Same multi-time dump after the existing invert command
-reservoir invert examples/lab/lab_30cm.yaml --self-check --write-field --output results/inv
+reservoir invert examples/lab/lab_cf.yaml --self-check --write-field --output results/inv
 ```
 
 Writes `pressure.npy` / `pressure_field.npz` with shape `(n_times, n_cells)`,

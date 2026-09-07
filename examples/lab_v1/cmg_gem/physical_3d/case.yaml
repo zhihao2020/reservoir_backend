@@ -8,6 +8,7 @@ grid:
   nx: 15
   ny: 15
   nz: 15
+  kdir: down   # GEM *KDIR DOWN: Plane K=1 is the top. Our k=1 is zmin.
 
 physics:
   model: compositional
@@ -28,6 +29,7 @@ rock:
   porosity: 0.0367
   k_m2: 1.776e-17
   k_matrix_m2: 1.776e-17
+  kv_kh: 0.1   # GEM *PERMK = 0.1 * PERMI
 
 # GEM *KDIR *DOWN: k=1 is the top. Our Cartesian k=1 is the bottom (z up).
 # GEM 1:11 (top) → our 5:15; GEM 11:15 (bottom) → our 1:5.
@@ -80,12 +82,12 @@ sensors_defaults:
 sensors: sensors.csv
 
 inverse:
-  parameterization: log_conductivity
+  parameterization: log_permeability
   algorithm: auto
   ensemble_size: 4
   assimilation_steps: 3
   seed: 3
-  cf_ref_m2: 1.776e-17
+  k_ref_m2: 1.776e-17
   prior_mean: -1.2
   prior_std: 0.8
   k_matrix_m2: 1.776e-17

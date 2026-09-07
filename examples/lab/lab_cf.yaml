@@ -1,6 +1,6 @@
-# V1 lab apply path: scalar log(C_f/C_ref) + compositional DPDP + ES-MDA.
+# Coarse DPDP apply fixture: invert (log C_f, log T_mf) then compositional FIM.
 #   reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab_cf
-# Coarse mesh so ensemble forwards finish quickly. 30³ is the scale gate, not apply.
+# k_m, φ_m, φ_f, PVT are fixed. 30³ is the scale gate, not apply.
 geometry:
   size_m: [0.30, 0.10, 0.10]
 
@@ -12,7 +12,8 @@ grid:
 
 physics:
   model: compositional_dpdp
-  fluid: example
+  fluid:
+    file: ../lab_v1/pvt.yaml
   temperature_k: 350.0
   z_init: [0.55, 0.45]
   z_inj: [0.95, 0.05]
@@ -30,19 +31,7 @@ rock:
   porosity: 0.08
   k_matrix_m2: 1.0e-15
 
-ports:
-  - name: INJ
-    role: injector
-    control: rate
-    perforation: column
-    x: 0.05
-    y: 0.05
-  - name: PROD
-    role: producer
-    control: pressure
-    perforation: column
-    x: 0.25
-    y: 0.05
+wells: wells_cf.yaml
 
 sensors_defaults:
   probe_diameter_m: 0.006
@@ -53,15 +42,17 @@ sensors:
   - {name: P_out, kind: pressure, x: 0.20, y: 0.05, z: 0.05, sigma: 2.0e4}
 
 inverse:
-  parameterization: log_conductivity
+  parameterization: log_cf_tmf
   algorithm: auto
   ensemble_size: 6
   assimilation_steps: 2
   seed: 3
-  prior_mean: 0.0
-  prior_std: 0.8
+  prior_mean: [0.0, 0.0]
+  prior_std: [0.8, 0.5]
   k_matrix_m2: 1.0e-15
   phi_fracture: 0.02
+  tmf_multiplier_ref: 1.0
+  cf_ref_m2: 1.0e-12
 
 experiment:
   history_end_s: 6

@@ -11,9 +11,8 @@ import yaml
 from reservoir_backend.domain.types import ControlSeries, Experiment, ObservationSeries, Sensor
 from reservoir_backend.io.grid_cfg import grid_from_cfg
 from reservoir_backend.io.parameterization_cfg import parameterization_from_cfg
-from reservoir_backend.io.pvt_cfg import pvt_from_cfg, pvt_preset_name
 from reservoir_backend.physics.capillary import capillary_from_name
-from reservoir_backend.physics.relperm import CoreyThreePhase, CoreyTwoPhase
+from reservoir_backend.physics.relperm import CoreyTwoPhase
 from reservoir_backend.io.well_load import ports_from_cfg
 from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec
 from reservoir_backend.io.units import to_m2, to_m3_s, to_metres, to_pa, to_seconds
@@ -174,9 +173,14 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
     cfg_dir = Path(cfg_dir)
     grid = grid_from_cfg(cfg, cfg_dir=cfg_dir)
     phys_cfg = cfg.get("physics") or {}
-    model = str(phys_cfg.get("model", "two_phase_immiscible")).lower()
+    model = str(phys_cfg.get("model", "compositional_dpdp")).lower()
     dpdp = model in {"dpdp", "compositional_dpdp", "dual", "dual_compositional"}
     compositional = model in {"compositional", "comp", "eos"} or dpdp
+    if not compositional:
+        raise ValueError(
+            "black-oil models were removed; set physics.model to "
+            "compositional_dpdp (product) or compositional"
+        )
     cap_name = phys_cfg.get("capillary", "brooks_corey")
     if cap_name is True:
         cap_name = "brooks_corey"
@@ -235,6 +239,10 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                     kwargs["mu_liquid"] = float(extra["mu_liquid"])
                 if extra.get("mu_vapor") is not None and "mu_vapor" not in kwargs:
                     kwargs["mu_vapor"] = float(extra["mu_vapor"])
+                if extra.get("visc_model") is not None and "visc_model" not in kwargs:
+                    kwargs["visc_model"] = str(extra["visc_model"])
+                if extra.get("phaseid") is not None and "phaseid" not in kwargs:
+                    kwargs["phaseid"] = str(extra["phaseid"])
                 for src, dest in (
                     ("sorg", "sorg"),
                     ("sgr", "sgr"),
@@ -250,36 +258,16 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
             fluid = CompSpec(eos=eos, **kwargs)
         else:
             fluid = fluid_from_name(preset, **kwargs)
-        pvt = pvt_from_cfg({"pvt": "incompressible"}, p_init=p_init, model="two_phase_immiscible", cfg_dir=cfg_dir)
-        relperm = CoreyTwoPhase(mu_w=pvt.mu_w, mu_o=pvt.mu_o)
+        relperm = CoreyTwoPhase()
         three = None
         single = False
         implicit = True
-        fully_implicit = False
-    else:
-        pvt = pvt_from_cfg(phys_cfg, p_init=p_init, model=model, cfg_dir=cfg_dir)
-        relperm = CoreyTwoPhase(mu_w=pvt.mu_w, mu_o=pvt.mu_o)
-        three = (
-            CoreyThreePhase(mu_w=pvt.mu_w, mu_o=pvt.mu_o, mu_g=pvt.mu_g)
-            if model in {"three_phase", "three_phase_immiscible", "c"}
-            else None
-        )
-        single = model in {"single_phase", "single", "a"}
-        default_transport = "explicit" if single else "implicit"
-        transport = str(phys_cfg.get("transport", default_transport)).lower()
-        implicit = transport in {"implicit", "impl", "true", "1", "on"}
-        fim_raw = phys_cfg.get("fully_implicit", True)
-        fully_implicit = str(fim_raw).lower() in {"1", "true", "yes", "on", "fim"} if not isinstance(fim_raw, bool) else bool(fim_raw)
-        if fully_implicit:
-            implicit = True
-        if fully_implicit and three is None:
-            from reservoir_backend.twin.offline import three_phase_for_fim
-            three = three_phase_for_fim(relperm)
+        fully_implicit = True
     physics = PhysicsSpec(
         relperm=relperm,
         three_phase=three,
         capillary=capillary,
-        pvt=pvt,
+        pvt=None,
         single_phase=single,
         sw_init=float(phys_cfg.get("sw_init", relperm.swi)),
         sg_init=float(phys_cfg.get("sg_init", 0.0)),
@@ -292,7 +280,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
         max_steps=int(phys_cfg.get("max_steps", 12000)),
         implicit_transport=bool(implicit),
         fully_implicit=bool(fully_implicit),
-        model="compositional_dpdp" if dpdp else ("compositional" if compositional else model),
+        model="compositional_dpdp" if dpdp else "compositional",
         fluid=fluid,
         temperature_k=float(phys_cfg.get("temperature_k", 350.0)),
         z_init=None if phys_cfg.get("z_init") is None else np.asarray(phys_cfg.get("z_init"), dtype=float),
@@ -316,12 +304,13 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
                 )
             )
         ),
+        kz_over_kx=float(
+            phys_cfg.get(
+                "kz_over_kx",
+                (cfg.get("rock") or {}).get("kv_kh", (cfg.get("rock") or {}).get("kz_over_kx", 1.0)),
+            )
+        ),
     )
-    if not compositional:
-        assert abs(float(physics.relperm.mu_o) - float(pvt.mu_o)) < 1.0e-15
-        assert abs(float(physics.relperm.mu_w) - float(pvt.mu_w)) < 1.0e-15
-        if pvt_preset_name(phys_cfg, model=model) == "cmg_seawater" and not pvt.has_live_oil():
-            raise ValueError("physics.pvt=cmg_seawater must load live-oil tables")
 
     ports = ports_from_cfg(cfg, grid, cfg_dir=cfg_dir)
 
@@ -462,10 +451,12 @@ def inverse_spec_from_cfg(inv: dict[str, Any]) -> InverseSpec:
         pm = np.asarray(pm, dtype=float)
     if isinstance(ps, list):
         ps = np.asarray(ps, dtype=float)
-    kind = str(inv.get("parameterization", "region")).lower()
+    kind = str(inv.get("parameterization", "log_cf_tmf")).lower()
     algo_raw = inv.get("algorithm")
     if algo_raw is None:
-        algorithm = "auto" if kind in _CF_KINDS else "lm"
+        algorithm = "esmda" if kind in {"log_cf_tmf", "cf_tmf", "joint_cf_tmf"} else (
+            "auto" if kind in _CF_KINDS else "lm"
+        )
     else:
         algorithm = str(algo_raw).strip().lower()
     if kind in {"log_cf_tmf", "cf_tmf", "joint_cf_tmf"}:

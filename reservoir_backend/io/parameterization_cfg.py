@@ -63,7 +63,10 @@ def region_ids(grid: CartesianGrid, inv: dict[str, Any], cfg_dir: Path) -> np.nd
 
 def parameterization_from_cfg(grid: CartesianGrid, cfg: dict[str, Any], cfg_dir: Path):
     inv = cfg.get("inverse") or {}
-    kind = str(inv.get("parameterization", "region")).lower()
+    model = str((cfg.get("physics") or {}).get("model", "compositional_dpdp")).lower()
+    dpdp = model in {"dpdp", "compositional_dpdp", "dual", "dual_compositional"}
+    default_kind = "log_cf_tmf" if dpdp else "log_permeability"
+    kind = str(inv.get("parameterization", default_kind)).lower()
     phi = float((cfg.get("rock") or {}).get("porosity", 0.20))
     if kind in {"region", "contrast"}:
         rid = region_ids(grid, inv, Path(cfg_dir))
@@ -78,7 +81,15 @@ def parameterization_from_cfg(grid: CartesianGrid, cfg: dict[str, Any], cfg_dir:
                 log_contrast_std=float(inv.get("log_contrast_std", 1.0)),
             )
         return RegionParameterization(rid, phi=phi)
-    if kind in {"log_conductivity", "cf", "scalar_cf", "fracture_conductivity"}:
+    if kind in {
+        "log_conductivity",
+        "cf",
+        "scalar_cf",
+        "fracture_conductivity",
+        "log_permeability",
+        "log_k",
+        "permeability",
+    }:
         inv_cf = dict(inv)
         if not inv.get("region_map") and inv.get("n_regions") is None:
             inv_cf["n_regions"] = 1
@@ -97,11 +108,12 @@ def parameterization_from_cfg(grid: CartesianGrid, cfg: dict[str, Any], cfg_dir:
         if isinstance(ps, list):
             ps = float(np.asarray(ps, dtype=float).ravel()[0])
         phi_f = float(inv.get("phi_fracture", (cfg.get("physics") or {}).get("phi_fracture", 0.02)))
+        c_ref = inv.get("k_ref_m2", inv.get("cf_ref_m2", 1.0e-13))
         return LogConductivityParameterization(
             n_zones=1,
             phi=phi,
             phi_fracture=phi_f,
-            c_ref_m2=float(inv.get("cf_ref_m2", 1.0e-13)),
+            c_ref_m2=float(c_ref),
             conductivity=cond,
             prior_mean=float(pm),
             prior_std=float(ps),
@@ -123,5 +135,6 @@ def parameterization_from_cfg(grid: CartesianGrid, cfg: dict[str, Any], cfg_dir:
             prior_std=ps,
         )
     raise ValueError(
-        f"unknown inverse.parameterization {kind!r}; use region, contrast, log_conductivity, or log_cf_tmf"
+        f"unknown inverse.parameterization {kind!r}; use region, contrast, "
+        "log_conductivity, log_permeability, or log_cf_tmf"
     )

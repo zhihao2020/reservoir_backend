@@ -1,7 +1,9 @@
 # lab_v1 — 30 cm shale-oil laboratory digital twin
 
-This is the **unique V1 product case**. `examples/lab/lab_cf.yaml` is a coarse
-development fixture. `lab_apply.yaml` is a leftover two-region waterflood demo.
+This is the **unique V1 product case**: compositional DPDP FIM, invert
+\(\theta=(\log C_f,\log T_{mf})\), then freeze \(\theta\) and forward the full
+well-control schedule. `k_m`, \(\phi_m\), \(\phi_f\), and PVT are fixed.
+`examples/lab/lab_cf.yaml` is a coarse development fixture.
 
 `make_lab_v1_face_twin()` (0.30×0.20×0.10 m, 4×2×1) is a **scientific
 diagnostic fixture (M1a)**, not a coarsened 30 cm product model. M1b is
@@ -12,8 +14,8 @@ diagnostic fixture (M1a)**, not a coarsened 30 cm product model. M1b is
 Inputs: \(Q_{inj}(t)\), \(P_{prod}(t)\), \(P_{obs}\), \(S_{obs}(\sigma,x,y,z,t)\).
 
 Outputs: reconstructed \(p\), \(S_w,S_o,S_g\), \(z_i\), and
-\(\theta=(\log C_f,\log\beta_{mf})\) with \(T_{mf}=\beta_{mf}T_{mf}^{ref}\).
-Invert is `algorithm: auto` (LM first; ES-MDA if identifiability or hold-out is weak, or `uq: true`).
+\(\theta=(\log C_f,\log T_{mf})\) with \(T_{mf}=\beta_{mf}T_{mf}^{ref}\).
+Product invert is ES-MDA. `case_dev.yaml` may still use `algorithm: auto` (LM first).
 
 Saturation is already inverted upstream. Raw Archie / EM / acoustic inversion,
 PINN, SRV, DFM/EDFM, AMR, thermal, zonal \(C_f\), per-cell \(K\), and fracture

@@ -1,8 +1,7 @@
-# Compositional ↔ black-oil FIM wiring contract
+# Compositional FIM wiring contract
 
-Status: **EXAMPLE path open**. Black-oil residual code stays frozen.
-Do **not** edit `reservoir_backend/solver/fi.py`.
-Standalone compositional kernel is `eos/` + `comp/` + `solver/fi_comp.py` (EXAMPLE C1–nC10).
+Status: **product path is compositional DPDP FIM**. Black-oil residual code was removed.
+Standalone compositional kernel is `eos/` + `comp/` + `solver/fi_comp.py` + `solver/fi_comp_dual.py`.
 
 Licensed adaptation of OPM / GEOS *concepts* is allowed for structure.
 Product identifiers must still follow `docs/fim_name_map.md` (no upstream class names).

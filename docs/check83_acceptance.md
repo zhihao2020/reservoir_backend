@@ -45,7 +45,7 @@ Experiment YAML → invert (LM) → post_ensemble (Ne=8, optional) → forecast 
 ```bash
 pytest tests/inverse/test_post_ensemble.py tests/twin/test_check83_report.py tests/inverse/test_forecast.py -q
 
-reservoir apply examples/lab/lab_apply.yaml --demo --output results/lab
+reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab
 # 期望：invert.json, check83.json, residuals.csv；post_ensemble 开启时有 k_std.npy
 ```
 
