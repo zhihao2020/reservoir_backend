@@ -117,6 +117,10 @@ def test_one_cell_newton_with_elasticity_drops_residual() -> None:
     r1 = float(np.linalg.norm(res1))
     assert r1 / r0 < 1.0e-4
     np.testing.assert_array_equal(rock.permeability, np.full(1, 1.0e-13))
+    assert out.displacement is not None
+    ru = el.momentum_residual(out.displacement, out.pressure)
+    assert float(np.linalg.norm(ru)) < 1.0e-8 * max(float(np.mean(np.abs(el.K.diagonal()))), 1.0)
+    np.testing.assert_allclose(out.displacement, el.solve_u(out.pressure), rtol=1.0e-8, atol=1.0e-16)
 
 
 def test_yaml_youngs_modulus_sets_stiffness() -> None:
@@ -129,6 +133,73 @@ def test_yaml_youngs_modulus_sets_stiffness() -> None:
     th_soft = CartesianElasticity(grid, soft).volumetric_strain(p)
     th_stiff = CartesianElasticity(grid, stiff).volumetric_strain(p)
     np.testing.assert_allclose(float(np.mean(th_soft)) / float(np.mean(th_stiff)), 4.0, rtol=2.0e-3)
+
+
+def test_saddle_blocks_match_fd() -> None:
+    grid = CartesianGrid.uniform((0.04, 0.04, 0.04), 0.02)
+    gm = GeomechSpec(enabled=True, E=20.0e9, nu=0.22, biot=1.0, p_ref=5.0e7, boundary="unconstrained")
+    el = CartesianElasticity(grid, gm)
+    rock = Rock.uniform(grid.n_cells, k=1.0e-13, phi=0.0367)
+    rock.cpor = 1.2e-9
+    rock.prpor = 5.0e7
+    rock.biot = 1.0
+    p = np.full(grid.n_cells, 5.1e7)
+    u = el.solve_u(p)
+    exp_cpor = np.exp(rock.cpor * (p - rock.prpor))
+    nc, nu = 1, 2
+    n_flow = grid.n_cells * nu
+    j_fu, j_uf = el.flow_displacement_blocks(exp_cpor, nu, nc, n_flow)
+    vol = grid.cell_volumes()
+    pv0 = rock.pore_volume(vol, p, vol_strain=el.strain_from_u(u))
+    eps = 1.0e-10
+    for j in (0, 3, min(el.ndof - 1, 11)):
+        u2 = u.copy()
+        u2[j] += eps
+        pv2 = rock.pore_volume(vol, p, vol_strain=el.strain_from_u(u2))
+        d_vol = -(pv2 - pv0) / eps
+        got = np.asarray(j_fu[:, j].todense()).ravel()[np.arange(grid.n_cells) * nu + nc]
+        np.testing.assert_allclose(got, d_vol, rtol=2.0e-4, atol=1.0e-16)
+    r0 = el.momentum_residual(u, p)
+    p2 = p.copy()
+    p2[0] += 1.0
+    d_mom = el.momentum_residual(u, p2) - r0
+    got_m = np.asarray(j_uf[:, nc].todense()).ravel()
+    np.testing.assert_allclose(got_m, d_mom, rtol=1.0e-8, atol=1.0e-12)
+
+
+def test_simultaneous_newton_matches_sequential_u() -> None:
+    grid = CartesianGrid.uniform((0.06, 0.06, 0.06), 0.03)
+    rock = Rock.uniform(grid.n_cells, k=1.0e-13, phi=0.20)
+    gm = GeomechSpec(enabled=True, E=20.0e9, nu=0.22, biot=1.0, p_ref=1.2e7)
+    el = CartesianElasticity(grid, gm)
+    spec = fluid_from_name("example", temperature_k=350.0)
+    p = np.full(grid.n_cells, 1.2e7)
+    moles = moles_from_z(spec, p, spec.z_init, rock.porosity * grid.cell_volumes())
+    p_bad = p * 1.05
+    out = solve_comp_step(
+        grid, rock, spec, [], {}, moles, p_bad, dt=1.0, t=0.0, max_newton=12, tol=1.0e-8, elasticity=el
+    )
+    assert out is not None
+    assert out.displacement is not None
+    u_seq = el.solve_u(out.pressure)
+    np.testing.assert_allclose(out.displacement, u_seq, rtol=1.0e-7, atol=1.0e-14)
+    ru = el.momentum_residual(out.displacement, out.pressure)
+    kscale = max(float(np.mean(np.abs(el.K.diagonal()))), 1.0)
+    assert float(np.linalg.norm(ru)) / kscale < 1.0e-10
+    theta = el.strain_from_u(out.displacement)
+    expected = gm.biot * (out.pressure - gm.p_ref) / gm.K_dr
+    np.testing.assert_allclose(theta, expected, rtol=5.0e-3)
+
+
+def test_geomech_off_unknowns_are_flow_only() -> None:
+    grid = CartesianGrid.uniform((0.04, 0.04, 0.04), 0.02)
+    rock = Rock.uniform(grid.n_cells, k=1.0e-13, phi=0.20)
+    spec = fluid_from_name("example", temperature_k=350.0)
+    p = np.full(grid.n_cells, 1.2e7)
+    moles = moles_from_z(spec, p, spec.z_init, rock.porosity * grid.cell_volumes())
+    out = solve_comp_step(grid, rock, spec, [], {}, moles, p * 1.06, dt=1.0, t=0.0, max_newton=12, tol=1.0e-8)
+    assert out is not None
+    assert out.displacement is None
 
 
 def test_physical_3d_yaml_enables_geomech_product_stays_off() -> None:

@@ -20,6 +20,7 @@ rename contract for FIM work under `reservoir_backend/solver/`.
 | Peaceman geometric WI | `wi_base` first field |
 | local dense AD dual | `CellAD` in `solver/adnum.py` |
 | residual-consistent Jacobian | `_jacobian_residual_coloring` |
+| Biot simultaneous (flow + elasticity) | packed moles, p, then reduced `u` |
 
 Forbidden examples in product code (non-exhaustive):
 

@@ -194,32 +194,89 @@ def _isotropic_C(lam: float, mu: float) -> NDArray[np.float64]:
 
 
 class CartesianElasticity:
-    """Factorized hex8 elasticity on a Cartesian grid. Reused every Newton step."""
+    """Hex8 elasticity. Quasi-static Biot: Ku = α Q (p − p_ref), θ = Qᵀ u / V.
+
+    Displacement is a Newton unknown together with moles and pressure
+    (MRST Biot saddle point: momentum + mass/volume).
+    """
 
     def __init__(self, grid: CartesianGrid, spec: GeomechSpec):
         self.grid = grid
         self.spec = spec
-        self._factor, self._Q = self._assemble()
+        self.K, self.Q = self._assemble()
+        self.ndof = int(self.K.shape[0])
+        self._factor = None
         self._p_last: NDArray[np.float64] | None = None
         self._theta_last: NDArray[np.float64] | None = None
+        self._u_last: NDArray[np.float64] | None = None
+
+    def k_solve(self, rhs: NDArray[np.float64]) -> NDArray[np.float64]:
+        if self.ndof == 0:
+            return np.zeros(0)
+        if self._factor is None:
+            self._factor = splu(self.K.tocsc())
+        return np.asarray(self._factor.solve(np.asarray(rhs, dtype=float).ravel()), dtype=float).ravel()
+
+    def solve_u(self, pressure: NDArray[np.float64]) -> NDArray[np.float64]:
+        p = np.asarray(pressure, dtype=float).ravel()
+        if self.ndof == 0:
+            return np.zeros(0)
+        dp = p - float(self.spec.p_ref)
+        return self.k_solve(float(self.spec.biot) * (self.Q @ dp))
+
+    def strain_from_u(self, u: NDArray[np.float64]) -> NDArray[np.float64]:
+        if self.ndof == 0:
+            return np.zeros(self.grid.n_cells)
+        vol = self.grid.cell_volumes()
+        return (self.Q.T @ np.asarray(u, dtype=float).ravel()) / np.maximum(vol, 1.0e-30)
+
+    def momentum_residual(self, u: NDArray[np.float64], pressure: NDArray[np.float64]) -> NDArray[np.float64]:
+        if self.ndof == 0:
+            return np.zeros(0)
+        dp = np.asarray(pressure, dtype=float).ravel() - float(self.spec.p_ref)
+        return self.K @ np.asarray(u, dtype=float).ravel() - float(self.spec.biot) * (self.Q @ dp)
 
     def volumetric_strain(self, pressure: NDArray[np.float64]) -> NDArray[np.float64]:
         p = np.asarray(pressure, dtype=float).ravel()
         if self._p_last is not None and np.array_equal(self._p_last, p):
             return self._theta_last
-        if self._factor is None:
-            theta = np.zeros(self.grid.n_cells)
-            self._p_last = np.asarray(p, dtype=float).copy()
-            self._theta_last = theta
-            return theta
-        dp = p - float(self.spec.p_ref)
-        rhs = float(self.spec.biot) * (self._Q @ dp)
-        u = self._factor.solve(rhs)
-        vol = self.grid.cell_volumes()
-        theta = (self._Q.T @ u) / np.maximum(vol, 1.0e-30)
+        u = self.solve_u(p)
+        theta = self.strain_from_u(u)
         self._p_last = np.asarray(p, dtype=float).copy()
         self._theta_last = theta
+        self._u_last = u
         return theta
+
+    def flow_displacement_blocks(self, exp_cpor: NDArray[np.float64], nu: int, nc: int, n_flow: int):
+        """Sparse J_fu (volume vs u) and J_uf (momentum vs p).
+
+        Volume: ``R_vol = V_fluid − φV exp(cpor Δp) (1 + (α/φ) θ)``, ``θ = Qᵀ u / V``.
+        So ``dR_vol/du = −α exp(cpor Δp) Qᵀ`` on the pressure/volume row.
+        Momentum: ``R_u = K u − α Q (p − p_ref)``, so ``dR_u/dp = −α Q``.
+        """
+        n_cells = self.grid.n_cells
+        n_u = self.ndof
+        if n_u == 0:
+            z1 = sparse.csc_matrix((n_flow, 0))
+            z2 = sparse.csc_matrix((0, n_flow))
+            return z1, z2
+        alpha = float(self.spec.biot)
+        scale = -alpha * np.asarray(exp_cpor, dtype=float).ravel()
+        Q = self.Q.tocsc()
+        qt = (sparse.diags(scale) @ Q.T).tocsr()
+        vol_rows = np.arange(n_cells, dtype=np.int64) * int(nu) + int(nc)
+        mapper = sparse.csc_matrix(
+            (np.ones(n_cells), (vol_rows, np.arange(n_cells, dtype=np.int64))),
+            shape=(n_flow, n_cells),
+        )
+        j_fu = (mapper @ qt).tocsc()
+        p_cols = np.arange(n_cells, dtype=np.int64) * int(nu) + int(nc)
+        Qcoo = Q.tocoo()
+        j_uf = sparse.csc_matrix(
+            (-alpha * Qcoo.data, (Qcoo.row, p_cols[Qcoo.col])),
+            shape=(n_u, n_flow),
+        )
+        return j_fu, j_uf
 
     def _nxyz(self) -> tuple[int, int, int, int]:
         nx, ny, nz = self.grid.nx, self.grid.ny, self.grid.nz
@@ -279,11 +336,12 @@ class CartesianElasticity:
                             keep[3 * n : 3 * n + 3] = False
             idx_keep = np.where(keep)[0]
             if idx_keep.size == 0:
-                return None, sparse.csr_matrix((0, n_cells))
+                empty = sparse.csc_matrix((0, 0))
+                return empty, sparse.csr_matrix((0, n_cells))
             K = K[idx_keep][:, idx_keep]
             Q = Q[idx_keep]
         else:
             diag = np.asarray(K.diagonal(), dtype=float)
             scale = max(float(np.mean(np.abs(diag))), 1.0)
             K = K + sparse.diags(1.0e-8 * scale * np.ones(ndof))
-        return splu(K.tocsc()), Q.tocsr()
+        return K.tocsc(), Q.tocsr()

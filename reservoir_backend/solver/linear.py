@@ -8,7 +8,7 @@ import time
 import numpy as np
 from numpy.typing import NDArray
 from scipy import sparse
-from scipy.sparse.linalg import gmres, spilu, spsolve
+from scipy.sparse.linalg import gmres, spilu, splu, spsolve
 from scipy.sparse.linalg import LinearOperator
 
 from reservoir_backend.exceptions import PhysicsConvergenceError
@@ -200,6 +200,78 @@ def _schur_pressure(j: sparse.spmatrix, pdofs: NDArray[np.int64]):
     dnn = np.where(np.abs(dnn) < 1.0e-30, 1.0, dnn)
     schur = jpp - (jpn @ sparse.diags(1.0 / dnn) @ jnp)
     return schur.tocsc(), pdofs
+
+
+def solve_flow_displacement(
+    j_ff: sparse.spmatrix,
+    j_fu: sparse.spmatrix,
+    j_uf: sparse.spmatrix,
+    k_solve,
+    res_f: NDArray[np.float64],
+    res_u: NDArray[np.float64],
+    row_s: NDArray[np.float64],
+) -> LinearSolveResult:
+    """Simultaneous step: eliminate ``u`` with ``K^{-1}``, GMRES on the flow Schur.
+
+    ``(J_ff - J_fu K^{-1} J_uf) dx_f = -R_f + J_fu K^{-1} R_u``,
+    then ``du = K^{-1}(-R_u - J_uf dx_f)``. ``J_ff`` SuperLU is the preconditioner.
+    Does not factor the packed saddle (hex8 ``K`` fill-in on 15³ is too heavy).
+    """
+    rf = np.asarray(res_f, dtype=float).ravel()
+    ru = np.asarray(res_u, dtype=float).ravel()
+    s = np.asarray(row_s, dtype=float).ravel()
+    n_f = int(rf.size)
+    j_ff = j_ff.tocsc()
+    j_fu = j_fu.tocsc()
+    j_uf = j_uf.tocsc()
+    ku = np.asarray(k_solve(ru), dtype=float).ravel()
+    b = s * (-rf + np.asarray(j_fu @ ku, dtype=float).ravel())
+    a_s = j_ff.tocsr().multiply(s[:, None]).tocsc()
+    t0 = time.perf_counter()
+    lu = splu(a_s)
+    setup_s = time.perf_counter() - t0
+
+    def matvec(x):
+        xv = np.asarray(x, dtype=float).ravel()
+        coupling = np.asarray(j_fu @ k_solve(j_uf @ xv), dtype=float).ravel()
+        return s * (np.asarray(j_ff @ xv, dtype=float).ravel() - coupling)
+
+    def prec(x):
+        return np.asarray(lu.solve(np.asarray(x, dtype=float).ravel()), dtype=float).ravel()
+
+    op = LinearOperator((n_f, n_f), matvec=matvec)
+    prec_op = LinearOperator((n_f, n_f), matvec=prec)
+    niter = [0]
+
+    def _cb(_r):
+        niter[0] += 1
+
+    t1 = time.perf_counter()
+    try:
+        x, info = gmres(
+            op, b, M=prec_op, rtol=1.0e-8, atol=0.0, restart=30, maxiter=60,
+            callback=_cb, callback_type="pr_norm",
+        )
+    except TypeError:
+        x, info = gmres(op, b, M=prec_op, tol=1.0e-8, restart=30, maxiter=60, callback=_cb)
+    solve_s = time.perf_counter() - t1
+    x = np.asarray(x, dtype=float).ravel()
+    fallback = False
+    if int(info) != 0 or x.size != n_f or not np.all(np.isfinite(x)):
+        x = prec(b)
+        fallback = True
+        niter[0] = 0
+    du = np.asarray(k_solve(-ru - np.asarray(j_uf @ x, dtype=float).ravel()), dtype=float).ravel()
+    return LinearSolveResult(
+        x=np.concatenate([x, du]),
+        method="schur_ff_fallback" if fallback else "schur_gmres",
+        iterations=niter[0],
+        final_residual=0.0,
+        setup_s=setup_s,
+        solve_s=solve_s,
+        preconditioner="flow_splu",
+        fallback_used=fallback,
+    )
 
 
 def solve_newton_system(

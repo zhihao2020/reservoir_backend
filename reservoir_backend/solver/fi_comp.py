@@ -1,5 +1,7 @@
 """Fully implicit compositional Newton. Unknowns (n_i, p) per cell.
 
+When YAML geomech is on, displacement is packed after the flow unknowns
+(momentum + mass/volume as one Newton; hex8 K and Biot Q).
 Jacobian: cell-local flash FD + analytic TPFA (same residual as Newton).
 Linear solve: compiled SuperLU / ILU-GMRES / CPR via ``solver.linear``.
 Names follow docs/fim_name_map.md (no upstream IDs).
@@ -29,7 +31,7 @@ from reservoir_backend.ports.flow import FlowPort
 from reservoir_backend.solver.dpdp_blocks import assemble_single_jacobian
 from reservoir_backend.solver.timestep import clip_dt_to_report_times, dt_from_newton_iters, index_nearest_time
 from reservoir_backend.solver.trajectory import MassBalance, StepReport, Trajectory
-from reservoir_backend.solver.linear import solve_newton_system
+from reservoir_backend.solver.linear import solve_flow_displacement, solve_newton_system
 
 
 @dataclass
@@ -42,6 +44,7 @@ class CompStepResult:
     q_src: NDArray[np.float64]
     residual_ratio: float = 0.0
     accepted_loose: bool = False
+    displacement: NDArray[np.float64] | None = None
 
 
 LAST_NEWTON_FAIL: dict = {}
@@ -229,6 +232,20 @@ def _scale_rows(n_cells: int, nc: int, n_scale: float, pv_scale: float) -> NDArr
     return s
 
 
+def _result(n, p, n_its, rates, bhp, q_src, rnorm, r0, *, u=None, loose=False) -> CompStepResult:
+    return CompStepResult(
+        moles=n,
+        pressure=p,
+        newton_iters=n_its,
+        port_rates=rates,
+        port_bhp=bhp,
+        q_src=q_src,
+        residual_ratio=rnorm / r0,
+        accepted_loose=loose,
+        displacement=None if u is None else np.asarray(u, dtype=float).ravel().copy(),
+    )
+
+
 def solve_comp_step(
     grid: CartesianGrid,
     rock: Rock,
@@ -243,8 +260,15 @@ def solve_comp_step(
     max_newton: int = 20,
     tol: float = 1.0e-6,
     elasticity=None,
+    displacement=None,
 ) -> CompStepResult | None:
-    """One fully implicit compositional step, or None on Newton failure."""
+    """One fully implicit compositional step, or None on Newton failure.
+
+    With elasticity and free dofs, the unknown is ``[moles, p | u]``. Residual
+    concatenates mass/volume with ``K u − α Q (p − p_ref)``. The drained
+    Schur ``α²/K_dr`` is not added on the volume diagonal: that term belongs
+    to sequential ``u(p)``, not the saddle.
+    """
     if elasticity is not None:
         rock.biot = float(elasticity.spec.biot)
         rock.k_dry = 0.0
@@ -259,10 +283,31 @@ def solve_comp_step(
     pv_scale = max(float(np.mean(pv)), 1.0e-12)
     row_s = _scale_rows(n_cells, nc, n_scale, pv_scale)
     nu = nc + 1
-    n_u = n_cells * nu
+    n_flow = n_cells * nu
+    n_disp = int(getattr(elasticity, "ndof", 0) or 0) if elasticity is not None else 0
+    coupled = n_disp > 0
+    if coupled:
+        u_in = None if displacement is None else np.asarray(displacement, dtype=float).ravel()
+        if u_in is not None and u_in.size == n_disp:
+            u = u_in.copy()
+        else:
+            u = elasticity.solve_u(p)
+        kdiag = np.abs(np.asarray(elasticity.K.diagonal(), dtype=float))
+        mom_s = 1.0 / max(float(np.mean(kdiag)), 1.0)
+        row_s = np.concatenate([row_s, np.full(n_disp, mom_s)])
+    else:
+        u = np.zeros(0)
+    n_tot = n_flow + n_disp
     p_scale = max(float(np.mean(np.abs(p))), 1.0e5)
 
-    def residual_of(nm, pr, props=None, reflash=None, *, need_bhp=False):
+    def _done(n_its, rates, bhp, q_src, rnorm, *, loose=False) -> CompStepResult:
+        if coupled:
+            elasticity._p_last = np.asarray(p, dtype=float).copy()
+            elasticity._u_last = np.asarray(u, dtype=float).copy()
+            elasticity._theta_last = elasticity.strain_from_u(u)
+        return _result(n, p, n_its, rates, bhp, q_src, rnorm, r0, u=u if coupled else None, loose=loose)
+
+    def residual_of(nm, pr, uu, props=None, reflash=None, *, need_bhp=False):
         from reservoir_backend.comp.properties import flash_state
 
         if props is None:
@@ -274,32 +319,38 @@ def solve_comp_step(
         q_src, rates, bhp = well_molar_sources(
             grid, rock, ports, controls, pr, props_q, spec, t + dt, need_bhp=need_bhp
         )
-        theta = None if elasticity is None else elasticity.volumetric_strain(pr)
-        res, props_out = coupled_residual(
+        if elasticity is None:
+            theta = None
+        elif n_disp == 0:
+            theta = np.zeros(n_cells)
+        else:
+            theta = elasticity.strain_from_u(uu)
+        res_f, props_out = coupled_residual(
             grid, rock, spec, nm, pr, n0, dt, q_src, t_geom, props=props_q, vol_strain=theta
         )
+        if coupled:
+            res = np.concatenate([res_f, elasticity.momentum_residual(uu, pr)])
+        else:
+            res = res_f
         return res, props_out, rates, bhp, q_src
 
     def assemble_jacobian(nm, pr, props0):
         jac, _ = assemble_single_jacobian(
             grid, spec, nm, pr, props0, dt, t_geom, n_scale, p_scale, rock=rock
         )
-        if elasticity is not None:
-            alpha = float(elasticity.spec.biot)
-            kd = max(float(elasticity.spec.K_dr), 1.0)
-            phi = np.maximum(np.asarray(rock.porosity, dtype=float).ravel(), 1.0e-8)
-            pv_cpor = rock.pore_volume(grid.cell_volumes(), pr, vol_strain=np.zeros(n_cells))
-            extra = (pv_cpor / phi) * (alpha * alpha / kd)
-            idx = np.arange(n_cells) * nu + nc
-            jac = jac + sparse.csc_matrix((-extra, (idx, idx)), shape=jac.shape)
         if ports:
             jac = jac + _well_jacobian(
                 grid, rock, spec, ports, controls, nm, pr, props0, dt, t + dt, n_scale, p_scale
             )
-        return jac.tocsr().multiply(row_s[:, None]).tocsc()
+        if not coupled:
+            return jac.tocsr().multiply(row_s[:, None]).tocsc()
+        dp = np.asarray(pr, dtype=float).ravel() - float(rock.prpor)
+        exp_cpor = np.exp(float(rock.cpor) * dp)
+        j_fu, j_uf = elasticity.flow_displacement_blocks(exp_cpor, nu, nc, n_flow)
+        return jac, j_fu, j_uf
 
     try:
-        res, props, rates, bhp, q_src = residual_of(n, p, need_bhp=True)
+        res, props, rates, bhp, q_src = residual_of(n, p, u, need_bhp=True)
     except Exception as exc:
         return _newton_fail("residual", error=str(exc))
     r0 = float(np.linalg.norm(res * row_s))
@@ -313,16 +364,8 @@ def solve_comp_step(
     for n_its in range(1, int(max_newton) + 1):
         rnorm = float(np.linalg.norm(res * row_s))
         if _residual_tight(rnorm, r0, tol) or _residual_floor(rnorm, r0):
-            _, _, rates, bhp, q_src = residual_of(n, p, props=props, need_bhp=True)
-            return CompStepResult(
-                moles=n,
-                pressure=p,
-                newton_iters=n_its,
-                port_rates=rates,
-                port_bhp=bhp,
-                q_src=q_src,
-                residual_ratio=rnorm / r0,
-            )
+            _, _, rates, bhp, q_src = residual_of(n, p, u, props=props, need_bhp=True)
+            return _done(n_its, rates, bhp, q_src, rnorm)
         rebuild = jac_s is None or jac_age >= refresh_every
         if rebuild:
             try:
@@ -330,41 +373,44 @@ def solve_comp_step(
             except Exception as exc:
                 return _newton_fail("jacobian", error=str(exc), n_its=n_its)
             jac_age = 0
-        rhs = -res * row_s
         try:
-            lin = solve_newton_system(jac_s, rhs, n_comp=nc, continua=1)
+            if coupled:
+                j_ff, j_fu, j_uf = jac_s
+                lin = solve_flow_displacement(
+                    j_ff, j_fu, j_uf, elasticity.k_solve, res[:n_flow], res[n_flow:], row_s[:n_flow]
+                )
+            else:
+                lin = solve_newton_system(jac_s, -res * row_s, n_comp=nc, continua=1)
             du = np.asarray(lin.x, dtype=float).ravel()
         except Exception as exc:
             return _newton_fail("linear", error=str(exc), n_its=n_its)
-        if du.size != n_u or not np.all(np.isfinite(du)):
+        if du.size != n_tot or not np.all(np.isfinite(du)):
             return _newton_fail("step_not_finite", n_its=n_its)
-        du = _clip_comp_step(du, n, n_cells, nc)
+        du_flow = _clip_comp_step(du[:n_flow], n, n_cells, nc)
+        du_u = du[n_flow:]
         improved = False
         for alpha in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625):
-            dn, dp = unpack_unknowns(alpha * du, n_cells, nc)
+            dn, dp = unpack_unknowns(alpha * du_flow, n_cells, nc)
             n_try = np.maximum(n + dn, 1.0e-16)
             p_try = np.clip(p + dp, 1.0e4, 1.0e9)
+            u_try = u + alpha * du_u
             try:
-                res_try, props_try, rates_try, bhp_try, q_try = residual_of(n_try, p_try, need_bhp=False)
+                res_try, props_try, rates_try, bhp_try, q_try = residual_of(
+                    n_try, p_try, u_try, need_bhp=False
+                )
             except Exception:
                 continue
             r_try = float(np.linalg.norm(res_try * row_s))
             if np.isfinite(r_try) and r_try < rnorm * (1.0 - 1.0e-4 * alpha):
-                n, p, res, props, rates, bhp, q_src = n_try, p_try, res_try, props_try, rates_try, bhp_try, q_try
+                n, p, u = n_try, p_try, u_try
+                res, props, rates, bhp, q_src = res_try, props_try, rates_try, bhp_try, q_try
                 improved = True
                 break
         if not improved:
             if _residual_ok(rnorm, r0, tol):
-                _, _, rates, bhp, q_src = residual_of(n, p, props=props, need_bhp=True)
-                return CompStepResult(
-                    moles=n,
-                    pressure=p,
-                    newton_iters=n_its,
-                    port_rates=rates,
-                    port_bhp=bhp,
-                    q_src=q_src,
-                    residual_ratio=rnorm / r0,
-                    accepted_loose=not _residual_tight(rnorm, r0, tol),
+                _, _, rates, bhp, q_src = residual_of(n, p, u, props=props, need_bhp=True)
+                return _done(
+                    n_its, rates, bhp, q_src, rnorm, loose=not _residual_tight(rnorm, r0, tol)
                 )
             if rebuild:
                 return _newton_fail(
@@ -380,17 +426,8 @@ def solve_comp_step(
             continue
         jac_age += 1
     if _residual_ok(rnorm, r0, tol):
-        _, _, rates, bhp, q_src = residual_of(n, p, props=props, need_bhp=True)
-        return CompStepResult(
-            moles=n,
-            pressure=p,
-            newton_iters=n_its,
-            port_rates=rates,
-            port_bhp=bhp,
-            q_src=q_src,
-            residual_ratio=rnorm / r0,
-            accepted_loose=not _residual_tight(rnorm, r0, tol),
-        )
+        _, _, rates, bhp, q_src = residual_of(n, p, u, props=props, need_bhp=True)
+        return _done(n_its, rates, bhp, q_src, rnorm, loose=not _residual_tight(rnorm, r0, tol))
     return _newton_fail("max_newton", n_its=n_its, rnorm=float(rnorm), r0=float(r0))
 
 
@@ -480,6 +517,7 @@ def simulate_comp(
         st = state0.copy()
     moles = np.asarray(st.moles, dtype=float)
     p = np.asarray(st.pressure, dtype=float).ravel()
+    u_disp = None if elasticity is None else np.zeros(elasticity.ndof)
     moles0 = moles.copy()
     injected = np.zeros(spec.nc)
     produced = np.zeros(spec.nc)
@@ -509,7 +547,9 @@ def simulate_comp(
             if (t_end - t) <= float(dt_min):
                 break
             raise TimeStepUnderflow(f"failed to accept a step at t={t} last={LAST_NEWTON_FAIL}")
-        nxt = solve_comp_step(grid, rock, spec, ports, cmap, moles, p, dt, t, elasticity=elasticity)
+        nxt = solve_comp_step(
+            grid, rock, spec, ports, cmap, moles, p, dt, t, elasticity=elasticity, displacement=u_disp
+        )
         if nxt is None:
             if progress_path:
                 print(
@@ -524,6 +564,8 @@ def simulate_comp(
         injected = injected + inj
         produced = produced + prod
         moles, p = nxt.moles, nxt.pressure
+        if nxt.displacement is not None:
+            u_disp = nxt.displacement
         t = t + dt
         n_acc += 1
         props = flash_state(spec, p, moles)
