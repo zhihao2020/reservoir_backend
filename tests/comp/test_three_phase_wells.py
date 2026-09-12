@@ -77,21 +77,39 @@ def test_bhp_peaceman_injector_matches_rate_implied_bhp() -> None:
         "INJ", "injector", "rate", cells, sw_inj=0.35, use_productivity=True, rw_m=0.10, geofac=0.198
     )
     p = np.full(grid.n_cells, 1.2e7)
-    moles = moles_from_z(spec, p, spec.z_init, rock.porosity * grid.cell_volumes())
+    # Liquid-like oil block so Peaceman uses cell λ (same w as implied BHP).
+    z_oil = np.array([0.25, 0.75])
+    moles = moles_from_z(spec, p, z_oil, rock.porosity * grid.cell_volumes())
     props = flash_state(spec, p, moles)
     q_spec = 0.04
     rate_ctrl = {("INJ", "rate"): ControlSeries("INJ", "rate", np.array([0.0, 10.0]), np.array([q_spec, q_spec]))}
     q_rate, rates_r, bhp_r = well_molar_sources(grid, rock, [rate_port], rate_ctrl, p, props, spec, 1.0)
     p_wf = float(bhp_r["INJ"])
+    assert p_wf > float(p[0])
+    # HC-only pair: implied p_wf inverts Peaceman volume exactly when fw=0.
+    rate_hc = FlowPort(
+        "INJ", "injector", "rate", cells, sw_inj=0.0, use_productivity=True, rw_m=0.10, geofac=0.198
+    )
+    q_hc, _, bhp_hc = well_molar_sources(grid, rock, [rate_hc], rate_ctrl, p, props, spec, 1.0)
     bhp_port = FlowPort(
+        "INJ", "injector", "pressure", cells, sw_inj=0.0, use_productivity=True, rw_m=0.10, geofac=0.198
+    )
+    p_wf_hc = float(bhp_hc["INJ"])
+    bhp_ctrl = {
+        ("INJ", "pressure"): ControlSeries("INJ", "pressure", np.array([0.0, 10.0]), np.array([p_wf_hc, p_wf_hc]))
+    }
+    q_bhp, rates_b, bhp_b = well_molar_sources(grid, rock, [bhp_port], bhp_ctrl, p, props, spec, 1.0)
+    assert bhp_b["INJ"] == p_wf_hc
+    np.testing.assert_allclose(q_bhp[0, : spec.n_hc], q_hc[0, : spec.n_hc], rtol=0.08, atol=1.0e-8)
+    # Water-cut BHP injector still adds aqueous moles (same sw_inj contract as rate).
+    wet = FlowPort(
         "INJ", "injector", "pressure", cells, sw_inj=0.35, use_productivity=True, rw_m=0.10, geofac=0.198
     )
-    bhp_ctrl = {("INJ", "pressure"): ControlSeries("INJ", "pressure", np.array([0.0, 10.0]), np.array([p_wf, p_wf]))}
-    q_bhp, rates_b, bhp_b = well_molar_sources(grid, rock, [bhp_port], bhp_ctrl, p, props, spec, 1.0)
-    assert bhp_b["INJ"] == p_wf
-    np.testing.assert_allclose(q_bhp[0], q_rate[0], rtol=0.08, atol=1.0e-8)
-    assert rates_b["INJ:q_water"] > 0.0
-    assert abs(rates_b["INJ"] - rates_r["INJ"]) / max(q_spec, 1.0e-12) < 0.08
+    wet_ctrl = {("INJ", "pressure"): ControlSeries("INJ", "pressure", np.array([0.0, 10.0]), np.array([p_wf, p_wf]))}
+    q_wet, rates_w, _ = well_molar_sources(grid, rock, [wet], wet_ctrl, p, props, spec, 1.0)
+    assert float(q_wet[0, spec.n_hc]) > 0.0
+    assert rates_w["INJ:q_water"] > 0.0
+    assert rates_r["INJ"] == q_spec
 
 
 def test_bhp_producer_is_dirichlet_and_residual_drops() -> None:

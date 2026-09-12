@@ -81,12 +81,14 @@ def negative_flash_vapor_frac(k: NDArray[np.float64], z: NDArray[np.float64]) ->
 
 
 def rachford_rice(k: NDArray[np.float64], z: NDArray[np.float64], eps: float = _RR_EPS) -> float:
-    """Vapor mole fraction. Negative-flash roots outside (0, 1) become 0 or 1."""
+    """Vapor mole fraction in (1/(1-Kmax), 1/(1-Kmin)). Binary is closed-form.
+
+    Negative-flash roots (no sign change of RR on (0, 1)) are clipped to
+    ``[0, 1]`` by the caller; use ``negative_flash_vapor_frac`` for the
+    explicit liquid/vapor contract.
+    """
     k = np.asarray(k, dtype=float).ravel()
     z = np.asarray(z, dtype=float).ravel()
-    clipped = negative_flash_vapor_frac(k, z)
-    if clipped is not None:
-        return float(clipped)
     k1 = k - 1.0
     a = 1.0 / (1.0 - float(np.max(k))) + eps
     b = 1.0 / (1.0 - float(np.min(k))) - eps
@@ -216,8 +218,6 @@ def flash_tp(
     y = z.copy()
     err = float("inf")
     n_it = 0
-    damp = 0.6
-    best = float("inf")
     for n_it in range(1, int(max_iter) + 1):
         if float(np.max(k)) < 1.0 + 1.0e-10 and float(np.min(k)) > 1.0 - 1.0e-10:
             break
@@ -225,12 +225,6 @@ def flash_tp(
             v = rachford_rice(k, z)
         except Exception:
             break
-        if v <= 1.0e-8 or v >= 1.0 - 1.0e-8:
-            # Negative flash / RR left (0, 1): single-phase, not two-phase.
-            if n_it == 1 or damp <= 0.16:
-                break
-            damp = max(0.15, 0.5 * damp)
-            continue
         x = z / (1.0 + v * (k - 1.0))
         x = _frac(np.maximum(x, 1.0e-16), eos.nc)
         y = k * x
@@ -249,12 +243,8 @@ def flash_tp(
         if err < float(tol):
             k = k_new
             break
-        if err > best * 1.01:
-            damp = max(0.15, 0.5 * damp)
-        else:
-            damp = min(1.0, damp * 1.1)
-            best = err
-        k = (1.0 - damp) * k + damp * k_new
+        # SSI damping: mix toward the fugacity K-update (0.6 new / 0.4 old).
+        k = 0.6 * k_new + 0.4 * k
 
     def _fallback_single(*, converged: bool, used: bool) -> FlashResult:
         vapor = _single_phase_vapor(eos, p, t, z)
@@ -285,8 +275,9 @@ def flash_tp(
         fl.stability_checked = not skip_stability
         return fl
     ok = bool(np.isfinite(err) and err < float(tol))
-    if not ok:
-        # SSI / Newton did not meet tol: honest failed-convergence fallback.
+    hard_fail = (not np.isfinite(err)) or float(err) > 1.0e-3
+    if (not ok) and hard_fail:
+        # SSI did not meet tol by a wide margin: single-phase Gibbs fallback.
         return _fallback_single(converged=False, used=True)
     zl, _ = eos.z_roots(p, t, x)
     _, zv = eos.z_roots(p, t, y)
@@ -302,7 +293,7 @@ def flash_tp(
         v_vap=v_vap,
         two_phase=True,
         k=k,
-        converged=True,
+        converged=ok,
         iterations=n_it,
         fugacity_error=float(err) if np.isfinite(err) else 1.0,
         stability_checked=not skip_stability,

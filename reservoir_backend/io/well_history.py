@@ -209,6 +209,10 @@ def export_case_well_history(
         else:
             filled[: min(n, theta.size)] = theta[: min(n, theta.size)]
         theta = filled
+    if dt_init is not None:
+        twin.physics.dt_init = float(dt_init)
+    if dt_max is not None:
+        twin.physics.dt_max = float(dt_max)
     if twin.uses_dpdp():
         traj = twin.simulate(parameters=theta, t_end=t_end)
     else:
