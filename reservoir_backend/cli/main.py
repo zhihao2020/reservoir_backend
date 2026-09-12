@@ -101,7 +101,11 @@ def cmd_simulate(case: Path, output: Path | None) -> int:
             },
         )
         _write_json(output / "simulate.json", payload)
+        _write_json(output / "run.json", payload)
     return 0
+
+
+cmd_run = cmd_simulate
 
 
 def cmd_invert(
@@ -321,13 +325,22 @@ def cmd_apply(case: Path, output: Path | None, *, demo: bool = False) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="reservoir",
-        description="Lab compositional DPDP twin: invert history, then forward F(θ)",
+        description=(
+            "Case-driven laboratory twin. "
+            "Forward: run <case.yaml>. Invert history: apply."
+        ),
+        epilog="example: python -m reservoir_backend run examples/lab/lab_cf.yaml",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("validate", "simulate"):
-        p = sub.add_parser(name)
-        p.add_argument("case", type=Path)
-        p.add_argument("--output", type=Path, default=None)
+    run_help = {
+        "run": "forward a case (grid / wells / fluid / schedule live in the YAML)",
+        "simulate": "same as run",
+        "validate": "load a case and print geometry / ports / parameterization",
+    }
+    for name in ("run", "validate", "simulate"):
+        p = sub.add_parser(name, help=run_help[name])
+        p.add_argument("case", type=Path, help="case YAML; carries grid, wells, fluid, schedule")
+        p.add_argument("--output", type=Path, default=None, help="optional directory for JSON / fields")
     fc_p = sub.add_parser("forecast", help="freeze θ from --posterior and run compositional F")
     fc_p.add_argument("case", type=Path)
     fc_p.add_argument("--output", type=Path, default=None)
@@ -359,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.cmd == "validate":
         return cmd_validate(args.case, args.output)
-    if args.cmd == "simulate":
+    if args.cmd in {"run", "simulate"}:
         return cmd_simulate(args.case, args.output)
     if args.cmd == "invert":
         return cmd_invert(

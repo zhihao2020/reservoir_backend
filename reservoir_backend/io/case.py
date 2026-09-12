@@ -191,6 +191,37 @@ def _read_sensors_csv(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def _fluid_card_path(fluid_raw: dict[str, Any]) -> str | None:
+    """CMG-habit fluid pointer. ``file`` / ``gem_deck`` / ``eos_yaml`` share load_eos_card."""
+    for key in ("file", "gem_deck", "eos_yaml"):
+        val = fluid_raw.get(key)
+        if val:
+            return str(val)
+    return None
+
+
+def _controls_src(cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> Any:
+    """Well-control schedule. ``schedule`` is the CMG-habit alias of ``controls``."""
+    return (
+        exp_cfg.get("controls")
+        or exp_cfg.get("schedule")
+        or cfg.get("controls")
+        or cfg.get("schedule")
+        or []
+    )
+
+
+def _load_control_table(src: Any, cfg_dir: Path) -> list[dict[str, Any]]:
+    if isinstance(src, dict):
+        path = src.get("file")
+        if not path:
+            raise ValueError("schedule/controls mapping needs file")
+        return _read_control_csv(Path(cfg_dir) / str(path))
+    if isinstance(src, str):
+        return _read_control_csv(Path(cfg_dir) / src)
+    return list(src)
+
+
 def _maybe_convert(value: float, unit: str | None, kind: str) -> float:
     if not unit:
         return float(value)
@@ -228,7 +259,9 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
     p_init = float(phys_cfg.get("p_init", 1.0e6))
     fluid = None
     if compositional:
-        fluid_raw = phys_cfg.get("fluid", "example")
+        fluid_raw = phys_cfg.get("fluid")
+        if fluid_raw is None:
+            fluid_raw = cfg.get("fluid", "example")
         from reservoir_backend.comp.fluid import CompSpec, fluid_from_name
         from reservoir_backend.io.eos_load import load_eos_card
 
@@ -253,7 +286,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
         card_path = None
         preset = "example"
         if isinstance(fluid_raw, dict):
-            raw_path = fluid_raw.get("file") or fluid_raw.get("gem_deck")
+            raw_path = _fluid_card_path(fluid_raw)
             if raw_path:
                 card_path = Path(cfg_dir) / str(raw_path)
                 if not card_path.is_file():
@@ -391,9 +424,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
 
     exp_cfg = cfg.get("experiment") or {}
     controls: list[ControlSeries] = []
-    controls_src = exp_cfg.get("controls") or cfg.get("controls") or []
-    if isinstance(controls_src, str):
-        controls_src = _read_control_csv(Path(cfg_dir) / controls_src)
+    controls_src = _load_control_table(_controls_src(cfg, exp_cfg), cfg_dir)
     for c in controls_src:
         kind = str(c["kind"])
         unit = c.get("unit")

@@ -20,7 +20,14 @@ python -m pip install -e ".[dev]"
 
 ## 用户怎么用
 
-主命令是 `reservoir apply`：历史窗反演，然后组分正演整段井控。日常和 CI 用 `case_dev.yaml`，不要在 CI 里跑 30³ ES-MDA。
+正演一条 case：YAML 里写好 grid / wells / fluid / schedule，不必再堆 CLI 旗标。
+
+```bash
+python -m reservoir_backend run examples/lab/lab_cf.yaml
+python -m reservoir_backend run examples/run/case.yaml --output results/run
+```
+
+`run` 就是原来的 `simulate`。历史窗反演仍用 `reservoir apply`。日常和 CI 用 `case_dev.yaml`，不要在 CI 里跑 30³ ES-MDA。CMG 字段对照：[`docs/case_schema.md`](docs/case_schema.md)。
 
 配置五件套（路径写在 `case.yaml` 里）：
 
@@ -58,11 +65,11 @@ time_s,sensor,kind,value,sigma,holdout
 
 ## 其他命令
 
-`invert` / `simulate` 仅调试。`forecast` **不再反演**，必须带 `--posterior invert.json`。
+`invert` 仅调试。`forecast` **不再反演**，必须带 `--posterior invert.json`。
 
 ```bash
-reservoir validate examples/lab_v1/case_dev.yaml
-reservoir simulate examples/lab/lab_cf.yaml --output results/sim
+python -m reservoir_backend validate examples/lab_v1/case_dev.yaml
+python -m reservoir_backend run      examples/lab/lab_cf.yaml --output results/sim
 reservoir invert   examples/lab/lab_cf.yaml --self-check --output results/inv
 reservoir forecast examples/lab/lab_cf.yaml --posterior results/inv/invert.json --output results/fc
 ```
