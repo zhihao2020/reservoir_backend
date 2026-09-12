@@ -34,7 +34,10 @@ A mapping `{file: ...}` is the same shape as `wells.file`.
 
 CMG-habit keys: `examples/run/case.yaml`. LITERATURE EXAMPLE (public C1–nC10,
 not a Jiyang GEM card, not for CMG-GEM product nRMSE):
-`examples/compositional/literature_tiny.yaml`.
+`examples/compositional/literature_tiny.yaml`. Typical CO2 huff-n-puff
+(inject–soak–produce, 1+4, same public EOS family):
+`examples/compositional/literature_hnp_1inj4prod.yaml`. Both are literature
+EXAMPLE only; PLACEHOLDER well-history nRMSE is not a product score.
 
 ```yaml
 grid: {type: cartesian, nx: 3, ny: 1, nz: 1}

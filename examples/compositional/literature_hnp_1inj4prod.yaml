@@ -1,0 +1,84 @@
+# LITERATURE EXAMPLE shale-oil CO2 huff-n-puff (inject–soak–produce).
+# Public OPM CO2/C1/nC10 EOS only. 1 injector + 4 producers, tiny 3×3×1.
+# NOT a Jiyang GEM card. NOT 济阳/现场. NOT for CMG-GEM product nRMSE.
+# PLACEHOLDER well-history nRMSE is literature-only, not a product score.
+# True CMG-GEM compare still needs a user-exported .gem + well-history CSV.
+# Missing fluid.gem_deck is a hard error (refuse invented Tc/Pc).
+#
+#   python -m reservoir_backend run examples/compositional/literature_hnp_1inj4prod.yaml
+marker: literature
+pattern: hz_1inj4prod
+notes: literature EXAMPLE CO2 HnP only; not a Jiyang GEM card
+
+geometry:
+  size_m: [0.30, 0.30, 0.10]
+
+grid:
+  type: cartesian
+  nx: 3
+  ny: 3
+  nz: 1
+
+physics:
+  model: compositional
+  temperature_k: 350.0
+  # Oil-rich feed; CO2-rich inject stream (first component on the public card).
+  z_init: [0.05, 0.25, 0.70]
+  z_inj: [0.95, 0.04, 0.01]
+  capillary: none
+  gravity: false
+  p_init: 1.2e7
+  dt_init: 0.5
+  dt_max: 2.0
+  dt_min: 1.0e-6
+  max_steps: 12
+
+rock:
+  porosity: 0.20
+
+# Published OPM 1D_COMP card (same numbers as fixtures/comp_c1c10co2.yaml).
+fluid:
+  file: fixtures/literature_c1_nc10_co2.yaml
+
+# Same 1+4 EXAMPLE pattern as comp_example_1inj4prod_monthly.yaml, tiny grid.
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    ijk: [2, 2, 1]
+  - name: PROD1
+    role: producer
+    control: pressure
+    ijk: [1, 1, 1]
+  - name: PROD2
+    role: producer
+    control: pressure
+    ijk: [3, 1, 1]
+  - name: PROD3
+    role: producer
+    control: pressure
+    ijk: [1, 3, 1]
+  - name: PROD4
+    role: producer
+    control: pressure
+    ijk: [3, 3, 1]
+
+# inject 0–1 s, soak 1–2 s, produce 2–4 s. Producers sit at p_init until produce.
+schedule:
+  - {port: INJ, kind: rate, times: [0, 1, 2, 4], values: [2.0e-4, 0.0, 0.0, 0.0]}
+  - {port: PROD1, kind: pressure, times: [0, 1, 2, 4], values: [1.2e7, 1.2e7, 1.18e7, 1.18e7]}
+  - {port: PROD2, kind: pressure, times: [0, 1, 2, 4], values: [1.2e7, 1.2e7, 1.18e7, 1.18e7]}
+  - {port: PROD3, kind: pressure, times: [0, 1, 2, 4], values: [1.2e7, 1.2e7, 1.18e7, 1.18e7]}
+  - {port: PROD4, kind: pressure, times: [0, 1, 2, 4], values: [1.2e7, 1.2e7, 1.18e7, 1.18e7]}
+
+# PLACEHOLDER ruler. Same columns as a GEM export; literature-only, not product nRMSE.
+well_history:
+  - {sensor: INJ, kind: bhp, times: [0, 1, 2, 4], values: [1.20e7, 1.20e7, 1.20e7, 1.20e7], sigma: 1.0e5}
+  - {sensor: INJ, kind: q_inj, times: [0, 1, 2, 4], values: [4.7e-6, 0.0, 0.0, 0.0], sigma: 1.0e-6}
+  - {sensor: PROD1, kind: bhp, times: [0, 1, 2, 4], values: [1.20e7, 1.20e7, 1.18e7, 1.18e7], sigma: 1.0e5}
+  - {sensor: PROD2, kind: bhp, times: [0, 1, 2, 4], values: [1.20e7, 1.20e7, 1.18e7, 1.18e7], sigma: 1.0e5}
+  - {sensor: PROD3, kind: bhp, times: [0, 1, 2, 4], values: [1.20e7, 1.20e7, 1.18e7, 1.18e7], sigma: 1.0e5}
+  - {sensor: PROD4, kind: bhp, times: [0, 1, 2, 4], values: [1.20e7, 1.20e7, 1.18e7, 1.18e7], sigma: 1.0e5}
+
+sensors:
+  - {name: P_mid, kind: pressure, x: 0.15, y: 0.15, z: 0.05, sigma: 2.0e4}

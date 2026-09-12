@@ -1,0 +1,32 @@
+# LITERATURE EXAMPLE EOS card. Copied public OPM 1D_COMP table already in-repo.
+# NOT a Jiyang GEM card. NOT 济阳/现场. NOT for CMG-GEM product nRMSE.
+#
+# Same numbers as examples/compositional/fixtures/comp_c1c10co2.yaml
+# (OPM opm-tests compositional/1D_COMP.DATA: CO2 / methane / n-decane).
+# PCRIT in the DATA file is bar. Do not invent field Tc/Pc.
+#
+# True CMG-GEM compare still needs a user-exported .gem + well-history CSV.
+# Missing fluid.gem_deck is a hard error (refuse invented Tc/Pc).
+marker: literature
+temperature_k: 350.0
+names: [CO2, C1, nC10]
+z_initial: [0.05, 0.25, 0.70]
+z_inj: [0.95, 0.04, 0.01]
+tc_k: [304.128, 190.564, 617.7]
+pc_bar: [73.773, 45.992, 21.03]
+omega: [0.22394, 0.01142, 0.4884]
+mw_g_mol: [44.00, 16.04, 142.28]
+kij:
+  - [0.0, 0.0, 0.0]
+  - [0.0, 0.0, 0.0]
+  - [0.0, 0.0, 0.0]
+# Pa·s. EXAMPLE constants from the same public card, not a Jiyang fit.
+mu_liquid: 3.0e-4
+mu_vapor: 2.0e-5
+# Match GEM *SGT linear 0–1 (no residual). CompSpec default Corey is example-only.
+sorg: 0.0
+sgr: 0.0
+n_oil: 1.0
+n_gas: 1.0
+kro0: 1.0
+krg0: 1.0
