@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from reservoir_backend.eos.flash import FlashResult, _RR_EPS, flash_tp
+from reservoir_backend.eos.flash import FlashResult, _RR_EPS, _single_phase_vapor, flash_tp
 from reservoir_backend.eos.pr import R_GAS, PengRobinson, _SQRT2, _frac
 
 _SS_MAX = 20
@@ -130,8 +130,24 @@ def z_roots_batch(
 
 
 def rachford_rice_batch(k: NDArray[np.float64], z: NDArray[np.float64], eps: float = _RR_EPS) -> NDArray[np.float64]:
-    k = np.asarray(k, dtype=float)
+    k = np.clip(np.asarray(k, dtype=float), 1.0e-8, 1.0e8)
     z = np.asarray(z, dtype=float)
+    z = z / np.maximum(z.sum(axis=1, keepdims=True), 1.0e-30)
+    k1 = k - 1.0
+    f0 = np.sum(z * k1, axis=1)
+    f1 = np.sum(z * k1 / k, axis=1)
+    out = np.full(k.shape[0], 0.5)
+    liq = (~np.isfinite(f1) & np.isfinite(f0)) | (f0 <= 0.0)
+    vap = (~np.isfinite(f0) & np.isfinite(f1)) | ((~liq) & (f1 >= 0.0))
+    both_bad = (~np.isfinite(f0)) & (~np.isfinite(f1))
+    out = np.where(liq | both_bad, 0.0, out)
+    out = np.where(vap, 1.0, out)
+    pending = ~(liq | vap | both_bad)
+    if not np.any(pending):
+        return out
+    idx = np.where(pending)[0]
+    k = k[idx]
+    z = z[idx]
     k1 = k - 1.0
     kmax = np.max(k, axis=1)
     kmin = np.min(k, axis=1)
@@ -147,7 +163,8 @@ def rachford_rice_batch(k: NDArray[np.float64], z: NDArray[np.float64], eps: flo
         v = np.clip(v_bin, lo, hi)
         v = np.where(use, v, 0.5 * (lo + hi))
         v = np.where(bad, 0.5, v)
-        return v
+        out[idx] = v
+        return out
     v = 0.5 * (lo + hi)
     for _ in range(12):
         denom = v[:, None] * k1 + 1.0
@@ -167,7 +184,8 @@ def rachford_rice_batch(k: NDArray[np.float64], z: NDArray[np.float64], eps: flo
         if float(np.max(np.abs(r))) < 1.0e-12:
             break
     v = np.where(bad, 0.5, v)
-    return np.clip(v, 0.0, 1.0)
+    out[idx] = np.clip(v, 0.0, 1.0)
+    return out
 
 
 def tpd_batch(
@@ -422,6 +440,24 @@ def flash_batch(
             n_it[im] = ita[mid]
             err[im] = np.where(np.isfinite(e_m), e_m, 1.0)
             k[im] = ka[mid]
+            failed = ~conv[im]
+            if np.any(failed):
+                iff = im[failed]
+                vap_s = np.array(
+                    [_single_phase_vapor(eos, float(p[j]), t, z[j]) for j in iff],
+                    dtype=bool,
+                )
+                zl, zv, vl, vv, vf = _single_arrays(eos, p[iff], t, z[iff], vap_s)
+                out_v[iff] = vf
+                out_x[iff] = z[iff]
+                out_y[iff] = z[iff]
+                out_zl[iff] = zl
+                out_zv[iff] = zv
+                out_vl[iff] = vl
+                out_vv[iff] = vv
+                two_phase[iff] = False
+                conv[iff] = False
+                fallback[iff] = True
     return FlashArrays(
         vapor_frac=out_v,
         x=out_x,

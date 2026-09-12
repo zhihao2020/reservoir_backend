@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from reservoir_backend.eos.pr import R_GAS, PengRobinson, _frac
+from reservoir_backend.eos.pr import R_GAS, PengRobinson, _SQRT2, _frac
 from reservoir_backend.eos.stability import is_unstable, wilson_k
 
 _RR_EPS = 1.0e-11
@@ -52,10 +52,41 @@ class FlashResult:
         return 1.0 - self.sl
 
 
+def negative_flash_vapor_frac(k: NDArray[np.float64], z: NDArray[np.float64]) -> float | None:
+    """Return 0 (liquid) or 1 (vapor) when RR has no root in (0, 1).
+
+    ``f(0) <= 0`` would be a negative-flash ``V < 0``; ``f(1) >= 0`` would be
+    ``V > 1``. Neither is labelled two-phase.
+    """
+    k = np.clip(np.asarray(k, dtype=float).ravel(), 1.0e-8, 1.0e8)
+    z = np.asarray(z, dtype=float).ravel()
+    total = float(np.sum(z))
+    if total <= 0.0:
+        return 0.0
+    z = z / total
+    k1 = k - 1.0
+    f0 = float(np.sum(z * k1))
+    f1 = float(np.sum(z * k1 / k))
+    if not np.isfinite(f0) and not np.isfinite(f1):
+        return 0.0
+    if not np.isfinite(f0):
+        return 1.0
+    if not np.isfinite(f1):
+        return 0.0
+    if f0 <= 0.0:
+        return 0.0
+    if f1 >= 0.0:
+        return 1.0
+    return None
+
+
 def rachford_rice(k: NDArray[np.float64], z: NDArray[np.float64], eps: float = _RR_EPS) -> float:
-    """Vapor mole fraction in (1/(1-Kmax), 1/(1-Kmin)). Binary is closed-form."""
+    """Vapor mole fraction. Negative-flash roots outside (0, 1) become 0 or 1."""
     k = np.asarray(k, dtype=float).ravel()
     z = np.asarray(z, dtype=float).ravel()
+    clipped = negative_flash_vapor_frac(k, z)
+    if clipped is not None:
+        return float(clipped)
     k1 = k - 1.0
     a = 1.0 / (1.0 - float(np.max(k))) + eps
     b = 1.0 / (1.0 - float(np.min(k))) - eps
@@ -92,6 +123,37 @@ def rachford_rice(k: NDArray[np.float64], z: NDArray[np.float64], eps: float = _
         else:
             hi = v
     return float(np.clip(v, 0.0, 1.0))
+
+
+def _g_res_over_rt(zz: float, a_red: float, b_red: float) -> float:
+    """Cubic residual Gibbs / RT used to pick liquid vs vapor on fallback."""
+    b_red = max(float(b_red), 1.0e-18)
+    zz = float(zz)
+    arg = (zz + (1.0 + _SQRT2) * b_red) / max(zz + (1.0 - _SQRT2) * b_red, 1.0e-18)
+    return (zz - 1.0) - float(np.log(max(zz - b_red, 1.0e-18))) - (
+        float(a_red) / (2.0 * _SQRT2 * b_red)
+    ) * float(np.log(max(arg, 1.0e-18)))
+
+
+def _single_phase_vapor(eos: PengRobinson, pressure: float, temperature: float, z: NDArray[np.float64]) -> bool:
+    """Liquid or vapor by residual Gibbs when the flash is forced single-phase."""
+    z = _frac(z, eos.nc)
+    try:
+        a_red, b_red, *_ = eos.reduced_ab(pressure, temperature, z)
+        zl, zv = eos.z_roots(pressure, temperature, z)
+    except (ValueError, FloatingPointError):
+        return True
+    if abs(float(zv) - float(zl)) < 1.0e-8:
+        return float(zl) >= 0.35
+    g_l = _g_res_over_rt(zl, a_red, b_red)
+    g_v = _g_res_over_rt(zv, a_red, b_red)
+    if not np.isfinite(g_l) and not np.isfinite(g_v):
+        return True
+    if not np.isfinite(g_l):
+        return True
+    if not np.isfinite(g_v):
+        return False
+    return g_v < g_l
 
 
 def _single(eos: PengRobinson, pressure: float, temperature: float, z: NDArray[np.float64], *, vapor: bool) -> FlashResult:
@@ -154,6 +216,8 @@ def flash_tp(
     y = z.copy()
     err = float("inf")
     n_it = 0
+    damp = 0.6
+    best = float("inf")
     for n_it in range(1, int(max_iter) + 1):
         if float(np.max(k)) < 1.0 + 1.0e-10 and float(np.min(k)) > 1.0 - 1.0e-10:
             break
@@ -161,19 +225,47 @@ def flash_tp(
             v = rachford_rice(k, z)
         except Exception:
             break
+        if v <= 1.0e-8 or v >= 1.0 - 1.0e-8:
+            # Negative flash / RR left (0, 1): single-phase, not two-phase.
+            if n_it == 1 or damp <= 0.16:
+                break
+            damp = max(0.15, 0.5 * damp)
+            continue
         x = z / (1.0 + v * (k - 1.0))
         x = _frac(np.maximum(x, 1.0e-16), eos.nc)
         y = k * x
         y = _frac(np.maximum(y, 1.0e-16), eos.nc)
-        ln_l = eos.ln_fugacity_coeff(p, t, x, vapor=False)
-        ln_v = eos.ln_fugacity_coeff(p, t, y, vapor=True)
+        try:
+            ln_l = eos.ln_fugacity_coeff(p, t, x, vapor=False)
+            ln_v = eos.ln_fugacity_coeff(p, t, y, vapor=True)
+        except (ValueError, FloatingPointError):
+            err = float("inf")
+            break
         k_new = np.exp(np.clip(ln_l - ln_v, -20.0, 20.0))
         k_new = np.clip(k_new, 1.0e-8, 1.0e8)
         err = float(np.max(np.abs(np.log(np.maximum(k_new, 1.0e-30) / np.maximum(k, 1.0e-30)))))
+        if not np.isfinite(err):
+            break
         if err < float(tol):
             k = k_new
             break
-        k = 0.6 * k_new + 0.4 * k
+        if err > best * 1.01:
+            damp = max(0.15, 0.5 * damp)
+        else:
+            damp = min(1.0, damp * 1.1)
+            best = err
+        k = (1.0 - damp) * k + damp * k_new
+
+    def _fallback_single(*, converged: bool, used: bool) -> FlashResult:
+        vapor = _single_phase_vapor(eos, p, t, z)
+        fl = _single(eos, p, t, z, vapor=vapor)
+        fl.k = k
+        fl.iterations = n_it
+        fl.fugacity_error = float(err) if np.isfinite(err) else 1.0
+        fl.converged = bool(converged)
+        fl.stability_checked = not skip_stability
+        fl.fallback_used = bool(used)
+        return fl
 
     v = float(np.clip(v, 0.0, 1.0))
     if v <= 1.0e-8:
@@ -192,11 +284,14 @@ def flash_tp(
         fl.converged = True
         fl.stability_checked = not skip_stability
         return fl
+    ok = bool(np.isfinite(err) and err < float(tol))
+    if not ok:
+        # SSI / Newton did not meet tol: honest failed-convergence fallback.
+        return _fallback_single(converged=False, used=True)
     zl, _ = eos.z_roots(p, t, x)
     _, zv = eos.z_roots(p, t, y)
     v_liq = max(zl * R_GAS * t / max(p, 1.0e-12) - eos.peneloux_shift(x, t), 1.0e-12)
     v_vap = max(zv * R_GAS * t / max(p, 1.0e-12) - eos.peneloux_shift(y, t), 1.0e-12)
-    ok = bool(np.isfinite(err) and err < float(tol))
     return FlashResult(
         vapor_frac=v,
         x=x,
@@ -207,7 +302,7 @@ def flash_tp(
         v_vap=v_vap,
         two_phase=True,
         k=k,
-        converged=ok,
+        converged=True,
         iterations=n_it,
         fugacity_error=float(err) if np.isfinite(err) else 1.0,
         stability_checked=not skip_stability,
