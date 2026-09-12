@@ -233,6 +233,7 @@ def well_molar_sources(
             rates[port.name + ":q_oil"] = q_oil
             rates[port.name + ":q_gas"] = q_gas
             rates[port.name + ":q_inj"] = float(q_tot) * _VM_STD_GAS
+            rates[port.name + ":q_water"] = float(q_w)
             if need_bhp:
                 bhp[port.name] = _implied_rate_bhp(spec, z, q_tot, p[cells], w, fw=fw)
             else:
@@ -273,6 +274,7 @@ def well_molar_sources(
             rates[port.name + ":q_oil"] = q_oil
             rates[port.name + ":q_gas"] = q_gas
             rates[port.name + ":q_inj"] = float(inj_vol)
+            rates[port.name + ":q_water"] = 0.0
             bhp[port.name] = float(p_wf)
             continue
         q_l = wi * props.lam_l[cells] * dp
@@ -294,5 +296,10 @@ def well_molar_sources(
         rates[port.name + ":q_oil"] = q_oil
         rates[port.name + ":q_gas"] = q_gas
         rates[port.name + ":q_inj"] = 0.0
+        q_water = 0.0
+        if spec.has_water:
+            xi_w = float(np.mean(props.xi_w[cells]))
+            q_water = water_src / max(xi_w, 1.0e-12)
+        rates[port.name + ":q_water"] = float(q_water)
         bhp[port.name] = float(p_wf)
     return q, rates, bhp

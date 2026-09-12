@@ -190,7 +190,7 @@ class ObservationOperator:
                     f"phase_rate sensor {sensor.name}: missing rate for port {sensor.port_name}"
                 )
             return float(rates[sensor.port_name])
-        if sensor.kind in {"q_oil", "q_gas", "q_inj"}:
+        if sensor.kind in {"q_oil", "q_gas", "q_inj", "q_water"}:
             if not sensor.port_name:
                 raise InvalidObservation(f"{sensor.kind} sensor {sensor.name} needs port_name")
             rates = port_rates or {}

@@ -1,9 +1,11 @@
 # 示例：实验室 300 mm 试块怎么跑
 
-用户入口是 `reservoir apply`。一次历史反演，再组分正演整段井控。
+正演：`python -m reservoir_backend run <case.yaml>`（YAML 带着 grid / wells / fluid / schedule）。
+历史反演再正演整段井控：`reservoir apply`。
 
 | 目录 | 用途 |
 |------|------|
+| `run/` | 最短正向入口：CMG 习惯字段 + `wells.file` 片段 |
 | `lab_v1/` | **产品 Case**：30 cm 组分 DPDP FIM + 面注采 + \(\theta=(\log C_f,\log T_{mf})\) |
 | `lab/` | 粗网格夹具 `lab_cf.yaml` |
 | `compositional/` | 可选单孔组分孪生 |
@@ -12,6 +14,8 @@
 配置合同：`case.yaml` + `pvt.yaml` + `wells.yaml` + `controls.csv` + 观测 CSV。
 
 ```bash
+python -m reservoir_backend run examples/run/case.yaml
+python -m reservoir_backend run examples/lab/lab_cf.yaml
 reservoir apply examples/lab_v1/case_dev.yaml --demo --output results/lab_v1_demo
 reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab_cf
 ```

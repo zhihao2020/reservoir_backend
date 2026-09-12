@@ -13,7 +13,7 @@ class Sensor:
     """Measurement geometry. Coordinates are SI metres, independent of the grid."""
 
     name: str
-    kind: str  # pressure | saturation | oil_saturation | gas_saturation | phase_rate | bhp | q_oil | q_gas | q_inj
+    kind: str  # pressure | saturation | oil_saturation | gas_saturation | phase_rate | bhp | q_oil | q_gas | q_water | q_inj
     # acoustic / em / resistivity alias saturation once xyz exists; do not invent coordinates.
     x: float
     y: float
@@ -53,6 +53,8 @@ class Sensor:
             kind = "q_gas"
         elif kind in {"q_inj", "inj_rate", "injection_rate"}:
             kind = "q_inj"
+        elif kind in {"q_water", "qwat"}:
+            kind = "q_water"
         else:
             raise ValueError(f"unsupported sensor kind: {self.kind}")
         object.__setattr__(self, "kind", kind)
@@ -185,6 +187,8 @@ class ObservationSeries:
             kind = "q_gas"
         elif kind in {"q_inj", "inj_rate", "injection_rate"}:
             kind = "q_inj"
+        elif kind in {"q_water", "qwat"}:
+            kind = "q_water"
         else:
             raise ValueError(f"unsupported observation kind: {self.kind}")
         object.__setattr__(self, "kind", kind)

@@ -1,0 +1,49 @@
+# Short forward case. CMG-habit keys: *GRID → grid, *WELL → wells.file,
+# *EOS → fluid.eos_yaml, well-control *TIME → schedule.
+# Numbers are the published C1–nC10 EXAMPLE card, not a Jiyang GEM deck.
+#
+#   python -m reservoir_backend run examples/run/case.yaml
+geometry:
+  size_m: [0.30, 0.10, 0.10]
+
+grid:
+  type: cartesian
+  nx: 3
+  ny: 1
+  nz: 1
+
+physics:
+  model: compositional_dpdp
+  temperature_k: 350.0
+  z_init: [0.55, 0.45]
+  z_inj: [0.95, 0.05]
+  capillary: none
+  gravity: false
+  p_init: 1.2e7
+  dt_init: 0.5
+  dt_max: 2.0
+  dt_min: 1.0e-6
+  max_steps: 12
+  shape_factor: 40.0
+  phi_fracture: 0.02
+
+rock:
+  porosity: 0.08
+  k_matrix_m2: 1.0e-15
+
+# Same pointer as physics.fluid.{file,gem_deck,eos_yaml}.
+fluid:
+  eos_yaml: ../lab_v1/pvt.yaml
+
+# CMG *WELL / *PERF snippet. YAML ports/wells.yaml also work.
+wells:
+  file: wells.inc
+
+# Alias of experiment.controls / controls. CSV or inline list.
+schedule: schedule.csv
+
+# Well-history ruler (rates/BHP nRMSE). Same schema as a GEM export.
+well_history: well_history.csv
+
+sensors:
+  - {name: P_mid, kind: pressure, x: 0.15, y: 0.05, z: 0.05, sigma: 2.0e4}

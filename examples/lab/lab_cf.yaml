@@ -1,4 +1,5 @@
 # Coarse DPDP apply fixture: invert (log C_f, log T_mf) then compositional FIM.
+#   python -m reservoir_backend run examples/lab/lab_cf.yaml
 #   reservoir apply examples/lab/lab_cf.yaml --demo --output results/lab_cf
 # k_m, φ_m, φ_f, PVT are fixed. 30³ is the scale gate, not apply.
 geometry:
