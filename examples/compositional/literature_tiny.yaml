@@ -1,0 +1,61 @@
+# LITERATURE EXAMPLE tiny forward. Public C1–nC10 EOS only.
+# NOT a Jiyang GEM card. NOT for CMG-GEM product nRMSE.
+# True CMG-GEM compare still needs a user-exported .gem + well-history CSV.
+# Missing fluid.gem_deck is a hard error (refuse invented Tc/Pc).
+#
+#   python -m reservoir_backend run examples/compositional/literature_tiny.yaml
+marker: literature
+notes: literature EXAMPLE only; not a Jiyang GEM card
+
+geometry:
+  size_m: [0.30, 0.10, 0.10]
+
+grid:
+  type: cartesian
+  nx: 3
+  ny: 1
+  nz: 1
+
+physics:
+  model: compositional
+  temperature_k: 350.0
+  z_init: [0.55, 0.45]
+  z_inj: [0.95, 0.05]
+  capillary: none
+  gravity: false
+  p_init: 1.2e7
+  dt_init: 0.5
+  dt_max: 2.0
+  dt_min: 1.0e-6
+  max_steps: 8
+
+rock:
+  porosity: 0.20
+
+# Published literature card (Reid / Katz–Firoozabadi / OPM Vc). Not a GEM deck.
+fluid:
+  file: fixtures/literature_c1_nc10.yaml
+
+ports:
+  - name: INJ
+    role: injector
+    control: rate
+    ijk: [[1, 1, 1]]
+  - name: PROD
+    role: producer
+    control: pressure
+    ijk: [[3, 1, 1]]
+
+schedule:
+  - {port: INJ, kind: rate, times: [0, 2], values: [2.0e-4, 2.0e-4]}
+  - {port: INJ, kind: composition, times: [0, 2], values: [0.95, 0.95]}
+  - {port: PROD, kind: pressure, times: [0, 2], values: [1.18e7, 1.18e7]}
+
+# PLACEHOLDER ruler. Same columns as a GEM export; not product nRMSE.
+well_history:
+  - {sensor: INJ, kind: bhp, times: [0, 2], values: [1.20e7, 1.20e7], sigma: 1.0e5}
+  - {sensor: INJ, kind: q_inj, times: [0, 2], values: [4.7e-6, 4.7e-6], sigma: 1.0e-6}
+  - {sensor: PROD, kind: bhp, times: [0, 2], values: [1.18e7, 1.18e7], sigma: 1.0e5}
+
+sensors:
+  - {name: P_mid, kind: pressure, x: 0.15, y: 0.05, z: 0.05, sigma: 2.0e4}

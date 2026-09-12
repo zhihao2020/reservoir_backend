@@ -32,7 +32,9 @@ A mapping `{file: ...}` is the same shape as `wells.file`.
 
 ## Minimal forward case
 
-See `examples/run/case.yaml`:
+CMG-habit keys: `examples/run/case.yaml`. LITERATURE EXAMPLE (public C1–nC10,
+not a Jiyang GEM card, not for CMG-GEM product nRMSE):
+`examples/compositional/literature_tiny.yaml`.
 
 ```yaml
 grid: {type: cartesian, nx: 3, ny: 1, nz: 1}
