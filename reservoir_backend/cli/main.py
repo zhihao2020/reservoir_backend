@@ -10,7 +10,7 @@ import numpy as np
 
 from reservoir_backend.cli.reporting import emit_invert_artifacts
 from reservoir_backend.io.case import load_case
-from reservoir_backend.io.well_history import score_well_history
+from reservoir_backend.io.well_history import score_well_history, write_well_history_csv
 from reservoir_backend.twin.offline import Posterior, mass_report
 from reservoir_backend.twin.run_report import build_forecast_report, write_run_report
 from reservoir_backend.solver.trajectory import Trajectory
@@ -108,6 +108,7 @@ def cmd_simulate(case: Path, output: Path | None) -> int:
         _write_json(output / "run.json", payload)
         if hist is not None:
             _write_json(output / "well_history.json", hist)
+        write_well_history_csv(output / "well_history.csv", traj, twin.ports)
     return 0
 
 

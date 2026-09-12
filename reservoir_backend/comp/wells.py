@@ -253,13 +253,22 @@ def well_molar_sources(
             q_vol = wi * lam_conn * dp
             n_dot = np.zeros(n_hc)
             inj_vol = 0.0
+            water_src = 0.0
+            fw = float(np.clip(port.sw_inj, 0.0, 1.0)) if spec.has_water else 0.0
+            v_hc = 1.0 / max(float(xi_inj), 1.0e-12)
+            v_inj = (1.0 - fw) * v_hc + fw * float(spec.water_vw(p_wf) if spec.has_water else v_hc)
             for i, c in enumerate(cells):
                 qv = float(q_vol[i])
                 if qv >= 0.0:
-                    qm = qv * xi_inj
+                    q_mol_tot = qv / max(v_inj, 1.0e-18)
+                    qm = q_mol_tot * (1.0 - fw)
                     q[int(c), :n_hc] += qm * z_inj[:n_hc]
                     n_dot += qm * z_inj[:n_hc]
                     inj_vol += qv
+                    if spec.has_water and fw > 0.0:
+                        dw = q_mol_tot * fw
+                        q[int(c), n_hc] += dw
+                        water_src += float(dw)
                 else:
                     q_l = wi[i] * props.lam_l[int(c)] * dp[i]
                     q_v = wi[i] * props.lam_v[int(c)] * dp[i]
@@ -269,12 +278,12 @@ def well_molar_sources(
                     )
                     q[int(c), :n_hc] += src_b
                     n_dot += src_b
-            rates[port.name] = float(np.sum(n_dot))
+            rates[port.name] = float(np.sum(n_dot) + water_src)
             q_oil, q_gas = _surface_oil_gas(spec, n_dot)
             rates[port.name + ":q_oil"] = q_oil
             rates[port.name + ":q_gas"] = q_gas
             rates[port.name + ":q_inj"] = float(inj_vol)
-            rates[port.name + ":q_water"] = 0.0
+            rates[port.name + ":q_water"] = float(water_src)
             bhp[port.name] = float(p_wf)
             continue
         q_l = wi * props.lam_l[cells] * dp
@@ -292,7 +301,8 @@ def well_molar_sources(
                 water_src += float(dw)
         n_dot = np.sum(src, axis=0)
         rates[port.name] = float(np.sum(src) + water_src)
-        q_oil, q_gas = _surface_oil_gas(spec, n_dot)
+        stream = n_dot if float(np.sum(n_dot)) >= 0.0 else -n_dot
+        q_oil, q_gas = _surface_oil_gas(spec, stream)
         rates[port.name + ":q_oil"] = q_oil
         rates[port.name + ":q_gas"] = q_gas
         rates[port.name + ":q_inj"] = 0.0

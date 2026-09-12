@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from reservoir_backend.eos.flash import FlashResult, _RR_EPS, flash_tp
+from reservoir_backend.eos.flash import FlashResult, _RR_EPS, _single_phase_vapor, flash_tp
 from reservoir_backend.eos.pr import R_GAS, PengRobinson, _SQRT2, _frac
 
 _SS_MAX = 20
@@ -422,6 +422,24 @@ def flash_batch(
             n_it[im] = ita[mid]
             err[im] = np.where(np.isfinite(e_m), e_m, 1.0)
             k[im] = ka[mid]
+            hard = (~np.isfinite(err[im])) | (err[im] > 1.0e-3)
+            if np.any(hard):
+                iff = im[hard]
+                vap_s = np.array(
+                    [_single_phase_vapor(eos, float(p[j]), t, z[j]) for j in iff],
+                    dtype=bool,
+                )
+                zl, zv, vl, vv, vf = _single_arrays(eos, p[iff], t, z[iff], vap_s)
+                out_v[iff] = vf
+                out_x[iff] = z[iff]
+                out_y[iff] = z[iff]
+                out_zl[iff] = zl
+                out_zv[iff] = zv
+                out_vl[iff] = vl
+                out_vv[iff] = vv
+                two_phase[iff] = False
+                conv[iff] = False
+                fallback[iff] = True
     return FlashArrays(
         vapor_frac=out_v,
         x=out_x,

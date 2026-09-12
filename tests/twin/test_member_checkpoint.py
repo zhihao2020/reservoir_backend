@@ -1,6 +1,7 @@
 """Gate 1: per-member DualState checkpoints and window-only online forward."""
 
 import numpy as np
+import pytest
 
 from reservoir_backend.comp.dual_state import DualCompositionalState
 from reservoir_backend.twin.loops import OnlineMemberState, TwinLoops
@@ -98,6 +99,12 @@ def test_from_posterior_without_member_states_does_not_clone_mean() -> None:
     class _Twin:
         _last_dual = object()
 
+    # t>0 without per-member DualState must refuse (do not clone the mean).
+    with pytest.raises(ValueError, match="DualState for every ensemble member"):
+        TwinLoops.from_posterior(_Twin(), post, slow_interval_s=30.0)  # type: ignore[arg-type]
+
+    # t=0 may start without duals; still do not clone twin._last_dual onto members.
+    post.history = Trajectory(times_s=np.array([0.0]), states=[], reports=[], port_rates=[])
     loops = TwinLoops.from_posterior(_Twin(), post, slow_interval_s=30.0)  # type: ignore[arg-type]
     assert loops.dual_states is None
 
