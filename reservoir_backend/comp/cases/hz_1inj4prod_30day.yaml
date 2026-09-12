@@ -6,6 +6,7 @@
 # Monthly stepping: dt_init = dt_max = 30 days (one calendar month).
 # Each period takes one accepted Newton step (dt clips to the period length).
 # inject 10 d + soak 20 d + produce 20 s = 30 days.
+# Writes fields CSV plus a PLACEHOLDER-friendly well-history CSV (rates, BHP).
 # Produce stays 20 s: longer specified-BHP produce chops on this Newton path
 # (same limit as the short HZ case). Opposite wells shut as before.
 
@@ -52,3 +53,4 @@ schedule:
 
 output:
   fields_csv: results/hz_1inj4prod_30day_fields.csv
+  well_history_csv: results/hz_1inj4prod_30day_well_history.csv

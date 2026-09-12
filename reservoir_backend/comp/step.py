@@ -55,6 +55,7 @@ class WellLedger:
     produced: NDArray[np.float64]
     dt_used: list[float] = field(default_factory=list)
     underflow: bool = False
+    bhp: float | None = None  # p_wf [Pa] at period end; None if shut / unused
 
 
 def accumulate_system(

@@ -9,7 +9,7 @@ not Jiyang GEM.
     python -m reservoir_backend.comp.case_run
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle.yaml --fields results/fields.csv
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_two_cycle_gem.yaml --fields results/fields.csv
-    python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_30day.yaml --fields results/fields.csv
+    python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_30day.yaml --fields results/fields.csv --wells results/wells.csv
     python -m reservoir_backend.comp.case_run reservoir_backend/comp/cases/hz_1inj4prod_three_phase.yaml --fields results/fields.csv
 """
 
@@ -139,10 +139,120 @@ def format_metrics(metrics: dict[str, Any]) -> str:
     lines.append(f"dt < DT_MIN {'yes' if metrics.get('dt_below_dt_min') else 'no'}")
     if metrics.get("fields_csv"):
         lines.append(f"fields csv {metrics['fields_csv']}")
+    if metrics.get("well_history_csv"):
+        lines.append(f"well history csv {metrics['well_history_csv']}")
     return "\n".join(lines)
 
 
 FIELD_CSV_COLUMNS = ("cell", "i", "j", "k", "p", "z_CO2", "Sw", "So", "Sg")
+# PLACEHOLDER-friendly well-history schema. rate_mol_s / bhp_pa are
+# taken from the EXAMPLE run; volumetric rate columns stay PLACEHOLDER
+# until a later volumetric export exists.
+WELL_HISTORY_PLACEHOLDER = "PLACEHOLDER"
+WELL_HISTORY_CSV_COLUMNS = (
+    "time_s",
+    "cycle",
+    "period",
+    "well",
+    "role",
+    "rate_mol_s",
+    "bhp_pa",
+    "q_oil_m3_s",
+    "q_gas_m3_s",
+    "q_water_m3_s",
+)
+
+
+def resolve_well_history_csv_path(
+    *,
+    cli_path: str | None,
+    yaml_cfg: dict[str, Any],
+    json_path: str | None,
+    case_name: str,
+    fields_csv: str | None = None,
+) -> Path:
+    """CLI --wells, else next to --fields, then YAML, then --json, else results/."""
+    if cli_path:
+        return Path(cli_path)
+    if fields_csv:
+        fp = Path(fields_csv)
+        stem = fp.stem[: -len("_fields")] if fp.stem.endswith("_fields") else fp.stem
+        return fp.with_name(f"{stem}_well_history.csv")
+    ypath = (yaml_cfg.get("output") or {}).get("well_history_csv")
+    if ypath:
+        return Path(str(ypath))
+    if json_path:
+        jp = Path(json_path)
+        return jp.with_name(f"{jp.stem}_well_history.csv")
+    return Path("results") / f"{case_name}_well_history.csv"
+
+
+def _period_molar_rate(injected: Any, produced: Any, dt_used: list[float], role: str) -> float:
+    dt = float(sum(dt_used))
+    if dt <= 0.0:
+        return 0.0
+    moles = np.asarray(injected if role == "injector" else produced, dtype=float)
+    return float(moles.sum()) / dt
+
+
+def well_history_from_multi(multi) -> list[dict[str, Any]]:
+    """One INJ + one PROD row per inject/soak/produce period. EXAMPLE numbers."""
+    rows: list[dict[str, Any]] = []
+    t = 0.0
+    for i_cyc, rec in enumerate(multi.cycles, 1):
+        led = rec.ledger
+        for period, period_led in (
+            ("inject", led.inject),
+            ("soak", led.soak),
+            ("produce", led.produce),
+        ):
+            dt = float(sum(period_led.dt_used))
+            t += dt
+            bhp = period_led.bhp
+            bhp_txt = WELL_HISTORY_PLACEHOLDER if bhp is None else float(bhp)
+            inj_rate = _period_molar_rate(
+                period_led.injected, period_led.produced, period_led.dt_used, "injector"
+            )
+            prod_rate = _period_molar_rate(
+                period_led.injected, period_led.produced, period_led.dt_used, "producer"
+            )
+            if period != "inject":
+                inj_rate = 0.0
+            if period != "produce":
+                prod_rate = 0.0
+            inj_bhp = bhp_txt if period == "inject" else WELL_HISTORY_PLACEHOLDER
+            prod_bhp = bhp_txt if period == "produce" else WELL_HISTORY_PLACEHOLDER
+            for well, role, rate, well_bhp in (
+                ("INJ", "injector", inj_rate, inj_bhp),
+                ("PROD", "producer", prod_rate, prod_bhp),
+            ):
+                rows.append(
+                    {
+                        "time_s": t,
+                        "cycle": i_cyc,
+                        "period": period,
+                        "well": well,
+                        "role": role,
+                        "rate_mol_s": rate,
+                        "bhp_pa": well_bhp,
+                        "q_oil_m3_s": WELL_HISTORY_PLACEHOLDER,
+                        "q_gas_m3_s": WELL_HISTORY_PLACEHOLDER,
+                        "q_water_m3_s": WELL_HISTORY_PLACEHOLDER,
+                    }
+                )
+    return rows
+
+
+def write_well_history_csv(path: str | Path, rows: list[dict[str, Any]]) -> Path:
+    """Write PLACEHOLDER-friendly rates / BHP history from an EXAMPLE case_run."""
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(WELL_HISTORY_CSV_COLUMNS))
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row[key] for key in WELL_HISTORY_CSV_COLUMNS})
+    return out
 
 
 def resolve_fields_csv_path(
@@ -239,6 +349,7 @@ def run_example_case(
     path: str | Path | None = None,
     *,
     fields_csv: str | Path | None = None,
+    well_history_csv: str | Path | None = None,
     json_path: str | None = None,
 ) -> dict[str, Any]:
     """Run the YAML case with the already-tested HZ 1+4 two-cycle physics."""
@@ -311,6 +422,15 @@ def run_example_case(
     )
     write_fields_csv(csv_path, grid, fields, mix, **sat_kw)
     metrics["fields_csv"] = str(csv_path)
+    wells_path = resolve_well_history_csv_path(
+        cli_path=None if well_history_csv is None else str(well_history_csv),
+        yaml_cfg=cfg,
+        json_path=json_path,
+        case_name=str(cfg["name"]),
+        fields_csv=None if fields_csv is None else str(fields_csv),
+    )
+    write_well_history_csv(wells_path, well_history_from_multi(multi))
+    metrics["well_history_csv"] = str(wells_path)
     return metrics
 
 
@@ -329,8 +449,19 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> dict[st
         default=None,
         help="optional per-cell p, z_CO2, Sw CSV (default: results/<name>_fields.csv)",
     )
+    parser.add_argument(
+        "--wells",
+        dest="well_history_csv",
+        default=None,
+        help="optional well-history rates/BHP CSV (default: results/<name>_well_history.csv)",
+    )
     args = parser.parse_args(argv)
-    metrics = run_example_case(args.case, fields_csv=args.fields_csv, json_path=args.json_path)
+    metrics = run_example_case(
+        args.case,
+        fields_csv=args.fields_csv,
+        well_history_csv=args.well_history_csv,
+        json_path=args.json_path,
+    )
     out = stdout or sys.stdout
     print(format_metrics(metrics), file=out)
     if args.json_path:

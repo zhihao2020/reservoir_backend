@@ -214,6 +214,56 @@ def test_three_phase_specified_bhp_produce_pwf_is_not_unknown() -> None:
     assert np.allclose(out.s_oil + out.s_gas + out.s_water, 1.0, atol=1e-12)
 
 
+def test_three_phase_rate_produce_has_bhp_unknown() -> None:
+    """Rate-control produce: p_wf is a Newton unknown; ||R|| drops; So+Sg+Sw=1."""
+    mix = _example_binary()
+    grid = CartesianGrid.uniform((2.0, 1.0, 1.0), 1.0)
+    z = np.array([[0.40, 0.60], [0.40, 0.60]])
+    p0 = np.array([5.0e6, 5.0e6])
+    vp = 0.2 * grid.cell_volumes()
+    state = accumulate_three_phase(z, 250.0, p0, mix, vp, np.array([0.25, 0.25]))
+    prod = example_producer(grid, 0, 1.0e-12, mix, molar_rate=5.0e-5)
+    report = implicit_newton_step_three_phase(
+        state, 250.0, p0, mix, grid, 1.0e-12, vp, 0.25 * SECONDS_PER_DAY, producers=(prod,)
+    )
+    assert report.has_pressure_unknown
+    assert report.has_bhp_unknown
+    assert report.bhp is not None
+    assert np.isfinite(report.bhp)
+    assert report.n_unknowns == grid.n_cells * (mix.n_components + 2) + 1
+    assert report.newton_converged
+    assert report.n_newton >= 1
+    r0, r1 = report.residual_hist[0], report.residual_hist[-1]
+    assert r0 > 0.0
+    assert r1 < r0 / 100.0
+    out = report.state
+    assert np.allclose(out.s_oil + out.s_gas + out.s_water, 1.0, atol=1e-12)
+
+
+def test_three_phase_inject_pwf_rises_with_sw() -> None:
+    """Peaceman HC mobility is (1−Sw): wetter cell needs a higher inject p_wf."""
+    mix = _example_binary()
+    grid = CartesianGrid.uniform((2.0, 1.0, 1.0), 1.0)
+    z = np.array([[0.40, 0.60], [0.40, 0.60]])
+    p0 = np.array([5.0e6, 5.0e6])
+    vp = 0.2 * grid.cell_volumes()
+    inj = example_rate_injector(grid, 0, 1.0e-18, mix, rate=1.0e-4)
+    dry = accumulate_three_phase(z, 250.0, p0, mix, vp, np.array([0.05, 0.05]))
+    wet = accumulate_three_phase(z, 250.0, p0, mix, vp, np.array([0.50, 0.50]))
+    r_dry = implicit_newton_step_three_phase(
+        dry, 250.0, p0, mix, grid, 1.0e-18, vp, 0.25 * SECONDS_PER_DAY, injectors=(inj,)
+    )
+    r_wet = implicit_newton_step_three_phase(
+        wet, 250.0, p0, mix, grid, 1.0e-18, vp, 0.25 * SECONDS_PER_DAY, injectors=(inj,)
+    )
+    assert r_dry.has_bhp_unknown and r_wet.has_bhp_unknown
+    assert r_dry.newton_converged and r_wet.newton_converged
+    assert r_dry.bhp is not None and r_wet.bhp is not None
+    assert r_wet.bhp > r_dry.bhp
+    assert np.allclose(r_dry.state.s_oil + r_dry.state.s_gas + r_dry.state.s_water, 1.0, atol=1e-12)
+    assert np.allclose(r_wet.state.s_oil + r_wet.state.s_gas + r_wet.state.s_water, 1.0, atol=1e-12)
+
+
 def test_three_phase_newton_pressure_driven_residual_drops() -> None:
     """Water is in the Newton residual; ||R|| drops; mass and So+Sg+Sw=1 hold."""
     mix = _example_binary()

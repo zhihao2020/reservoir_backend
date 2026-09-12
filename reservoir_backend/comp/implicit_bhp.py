@@ -594,4 +594,5 @@ def run_implicit_period_bhp(
     )
     out.pressure = p
     out.bhp = last_bhp
+    ledger.bhp = last_bhp
     return current, out

@@ -9,6 +9,7 @@ from reservoir_backend.eos import (
     michelsen_stability,
     solve_rachford_rice,
 )
+from reservoir_backend.eos.flash import _damped_k_update
 
 
 def _assert_finite_single_phase(result) -> None:
@@ -83,3 +84,54 @@ def test_failed_ssi_falls_back_to_single_phase() -> None:
     assert result.converged is False
     _assert_finite_single_phase(result)
     assert result.n_iter == 1
+
+
+def test_max_iter_zero_falls_back_to_single_phase() -> None:
+    """Unstable EXAMPLE CO2–C1 window with max_iter=0: no SSI, usable single-phase."""
+    mix = example_eight_component_mixture().subset(["C1", "CO2"])
+    result = flash_tp(np.array([0.40, 0.60]), 250.0, 5.0e6, mix, max_iter=0)
+    assert result.converged is False
+    assert result.n_iter == 0
+    _assert_finite_single_phase(result)
+
+
+def test_allow_negative_rr_still_clips_to_single_phase() -> None:
+    """``allow_negative`` is accepted and still returns V in {0, 1}, not two-phase."""
+    V, state = solve_rachford_rice(
+        np.array([0.20, 0.80]), np.array([1.2, 0.5]), allow_negative=True
+    )
+    assert state == "liquid"
+    assert V == 0.0
+    V, state = solve_rachford_rice(
+        np.array([0.80, 0.20]), np.array([10.0, 0.8]), allow_negative=True
+    )
+    assert state == "vapor"
+    assert V == 1.0
+
+
+def test_rr_extreme_k_is_finite_single_phase() -> None:
+    """Singular / clipped K cannot emit NaN or two-phase V outside (0, 1)."""
+    z = np.array([0.50, 0.50])
+    V, state = solve_rachford_rice(z, np.array([1.0e-20, 1.0e20]))
+    assert state in ("liquid", "vapor", "two-phase")
+    assert np.isfinite(V)
+    assert 0.0 <= V <= 1.0
+    if state != "two-phase":
+        assert V in (0.0, 1.0)
+    V0, s0 = solve_rachford_rice(z, np.array([1.0, 1.0]))
+    assert s0 in ("liquid", "vapor")
+    assert V0 in (0.0, 1.0)
+
+
+def test_ssi_damping_update_stays_finite() -> None:
+    """Damped SSI ln-K step stays in the published K clip; not a GEM card."""
+    k0 = np.array([2.0, 0.4])
+    k_ss = np.array([20.0, 0.04])
+    k_half = _damped_k_update(k0, k_ss, 0.5)
+    k_full = _damped_k_update(k0, k_ss, 1.0)
+    assert np.all(np.isfinite(k_half))
+    assert np.all(np.isfinite(k_full))
+    assert np.all(k_half > 0.0) and np.all(k_full > 0.0)
+    # Half-step is between the current K and the undamped SSI update.
+    assert np.all((k_half - k0) * (k_ss - k0) > 0.0)
+    assert np.max(np.abs(np.log(k_half) - np.log(k0))) < np.max(np.abs(np.log(k_full) - np.log(k0)))

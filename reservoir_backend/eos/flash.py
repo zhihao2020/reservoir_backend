@@ -153,6 +153,22 @@ def solve_rachford_rice(
     return V, "two-phase"
 
 
+def _damped_k_update(
+    K: NDArray[np.float64], K_ss: NDArray[np.float64], damp: float
+) -> NDArray[np.float64]:
+    """Successive-substitution ``ln K`` step with a clipped relaxation factor.
+
+    Rewrite of the published SSI update (Michelsen; MRST / Open-DARTS style
+    successive substitution on fugacity equality). Does not import
+    ``references/``. ``damp`` in ``(0, 1]``; result stays in ``[_K_MIN, _K_MAX]``.
+    """
+    d = float(np.clip(damp, 0.05, 1.0))
+    k0 = np.clip(np.asarray(K, dtype=float), _K_MIN, _K_MAX)
+    k1 = np.clip(np.asarray(K_ss, dtype=float), _K_MIN, _K_MAX)
+    ln_k = np.log(k0) + d * (np.log(k1) - np.log(k0))
+    return np.clip(np.exp(np.clip(ln_k, np.log(_K_MIN), np.log(_K_MAX))), _K_MIN, _K_MAX)
+
+
 def _phase_compositions(
     z: NDArray[np.float64], K: NDArray[np.float64], V: float, state: str
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -300,11 +316,16 @@ def flash_tp(
     V = 0.5
     state = "vapor"
     K_prev = K.copy()
+    dln_prev: NDArray[np.float64] | None = None
+
+    if int(max_iter) <= 0:
+        state = _single_phase_by_gibbs(z_arr, T, p, mixture)
+        return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, 0, False, state, **pack)
 
     for it in range(1, max_iter + 1):
-        if float(np.max(np.abs(K - 1.0))) < _TRIVIAL_K:
+        if (not np.all(np.isfinite(K))) or float(np.max(np.abs(K - 1.0))) < _TRIVIAL_K:
             state = _single_phase_by_gibbs(z_arr, T, p, mixture)
-            return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, it, True, state, **pack)
+            return _result(T, p, z_arr, z_arr, z_arr, 0.0, np.ones_like(z_arr) if not np.all(np.isfinite(K)) else K, it, True, state, **pack)
 
         V, state = solve_rachford_rice(z_arr, K)
         x, y = _phase_compositions(z_arr, K, V, state)
@@ -323,24 +344,44 @@ def flash_tp(
             ln_f_v = np.log(phi_v) + np.log(np.clip(y, 1.0e-16, None))
             residual = float(np.max(np.abs(ln_f_l - ln_f_v)))
         except (ValueError, FloatingPointError):
+            if damp > 0.16:
+                K = K_prev.copy()
+                damp = max(0.15, 0.5 * damp)
+                continue
             state = _single_phase_by_gibbs(z_arr, T, p, mixture)
             return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, it, False, state, **pack)
         if not np.isfinite(residual):
+            if damp > 0.16:
+                K = K_prev.copy()
+                damp = max(0.15, 0.5 * damp)
+                continue
             state = _single_phase_by_gibbs(z_arr, T, p, mixture)
             return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, it, False, state, **pack)
         if residual < tol:
             return _result(T, p, z_arr, x, y, V, K, it, True, "two-phase", **pack)
 
         K_ss = np.clip(phi_l / np.clip(phi_v, 1.0e-30, None), _K_MIN, _K_MAX)
-        if residual > best_res * 1.01:
+        if not np.all(np.isfinite(K_ss)):
+            if damp > 0.16:
+                K = K_prev.copy()
+                damp = max(0.15, 0.5 * damp)
+                continue
+            state = _single_phase_by_gibbs(z_arr, T, p, mixture)
+            return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, it, False, state, **pack)
+        dln = np.log(K_ss) - np.log(K)
+        oscillating = dln_prev is not None and float(np.dot(dln, dln_prev)) < 0.0
+        if residual > best_res * 1.01 or oscillating:
             damp = max(0.15, 0.5 * damp)
         else:
             damp = min(1.0, damp * 1.1)
             best_res = residual
         K_prev = K.copy()
-        ln_k = np.log(K) + damp * (np.log(K_ss) - np.log(K))
-        K = np.clip(np.exp(np.clip(ln_k, np.log(_K_MIN), np.log(_K_MAX))), _K_MIN, _K_MAX)
+        dln_prev = dln
+        K = _damped_k_update(K, K_ss, damp)
+        if not np.all(np.isfinite(K)):
+            state = _single_phase_by_gibbs(z_arr, T, p, mixture)
+            return _result(T, p, z_arr, z_arr, z_arr, 0.0, K_prev, it, False, state, **pack)
 
-    # SSI / Newton did not meet ``tol``: honest failed-convergence fallback.
+    # SSI did not meet ``tol``: honest failed-convergence fallback.
     state = _single_phase_by_gibbs(z_arr, T, p, mixture)
     return _result(T, p, z_arr, z_arr, z_arr, 0.0, K, max_iter, False, state, **pack)

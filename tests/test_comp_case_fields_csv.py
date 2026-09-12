@@ -5,7 +5,13 @@ from pathlib import Path
 
 import numpy as np
 
-from reservoir_backend.comp.case_run import FIELD_CSV_COLUMNS, write_fields_csv
+from reservoir_backend.comp.case_run import (
+    FIELD_CSV_COLUMNS,
+    WELL_HISTORY_CSV_COLUMNS,
+    WELL_HISTORY_PLACEHOLDER,
+    write_fields_csv,
+    write_well_history_csv,
+)
 from reservoir_backend.comp.step import CompFields
 from reservoir_backend.eos import example_eight_component_mixture
 from reservoir_backend.grid.cartesian import CartesianGrid
@@ -50,3 +56,28 @@ def test_write_fields_csv_sw_so_sg_sum_to_one(tmp_path: Path) -> None:
     assert abs(float(rows[0]["Sw"]) - 0.25) < 1e-12
     for row in rows:
         assert abs(float(row["So"]) + float(row["Sg"]) + float(row["Sw"]) - 1.0) < 1e-12
+
+
+def test_write_well_history_csv_has_rate_and_bhp_columns(tmp_path: Path) -> None:
+    rows = [
+        {
+            "time_s": 864000.0,
+            "cycle": 1,
+            "period": "inject",
+            "well": "INJ",
+            "role": "injector",
+            "rate_mol_s": 1.0e-4,
+            "bhp_pa": 5.1e6,
+            "q_oil_m3_s": WELL_HISTORY_PLACEHOLDER,
+            "q_gas_m3_s": WELL_HISTORY_PLACEHOLDER,
+            "q_water_m3_s": WELL_HISTORY_PLACEHOLDER,
+        }
+    ]
+    path = write_well_history_csv(tmp_path / "wells.csv", rows)
+    with path.open(encoding="utf-8", newline="") as fh:
+        out = list(csv.DictReader(fh))
+    assert tuple(out[0].keys()) == WELL_HISTORY_CSV_COLUMNS
+    assert "rate_mol_s" in out[0] and "bhp_pa" in out[0]
+    assert float(out[0]["rate_mol_s"]) == 1.0e-4
+    assert float(out[0]["bhp_pa"]) == 5.1e6
+    assert out[0]["q_oil_m3_s"] == WELL_HISTORY_PLACEHOLDER

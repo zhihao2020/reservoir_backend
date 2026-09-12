@@ -91,7 +91,7 @@ from reservoir_backend.comp.step import (
     _apply_producers,
     _fields_from_moles,
 )
-from reservoir_backend.comp.well import RateInjector, RateProducer
+from reservoir_backend.comp.well import RateInjector, RateProducer, well_cell_molar_z
 from reservoir_backend.eos.peng_robinson import EosMixture
 from reservoir_backend.grid.cartesian import CartesianGrid
 
@@ -414,6 +414,63 @@ def _hc_mobility(cell: CellFlash, s_water: float, mu_liquid: float, mu_vapor: fl
     return max(0.0, 1.0 - float(s_water)) * _mobility(cell, mu_liquid, mu_vapor)
 
 
+def _apply_peaceman_bhp_three_phase(
+    n_hat: NDArray[np.float64],
+    state: ThreePhaseState,
+    p: NDArray[np.float64],
+    p_wf: float,
+    T: float,
+    mixture: EosMixture,
+    mode: str,
+    injectors,
+    producers,
+    dt: float,
+    mu_liquid: float,
+    mu_vapor: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Specified-BHP Peaceman sources on HC moles. Mobility uses ``(1−S_w)``.
+
+    Same signed linear PI as ``_peaceman_rate_three_phase`` / two-phase
+    ``_apply_peaceman_bhp``. Water is not injected or produced (HC wells).
+    Cap so moles stay non-negative.
+    """
+    out = np.asarray(n_hat, dtype=float).copy()
+    injected = np.zeros(out.shape[1], dtype=float)
+    produced = np.zeros(out.shape[1], dtype=float)
+    if mode == "inject_bhp":
+        z = np.asarray(injectors[0].z_inj, dtype=float)
+        z = z / max(float(z.sum()), 1.0e-30)
+        xi = 1.0 / max(_v_mix(flash_cell(z, T, float(p_wf), mixture)), 1.0e-30)
+        for w in injectors:
+            c = int(w.cell)
+            lam = _hc_mobility(state.hc.cells[c], float(state.s_water[c]), mu_liquid, mu_vapor)
+            q = xi * float(w.well_index) * lam * (float(p_wf) - float(p[c]))
+            dn = q * float(dt) * z
+            if q >= 0.0:
+                out[c] += dn
+                injected += dn
+            else:
+                taken = np.minimum(-dn, np.clip(out[c], 0.0, None))
+                out[c] -= taken
+                produced += taken
+    elif mode == "produce_bhp":
+        for w in producers:
+            c = int(w.cell)
+            cell = state.hc.cells[c]
+            xi = cell.xi_liquid * cell.S_liquid + cell.xi_vapor * cell.S_vapor
+            lam = _hc_mobility(cell, float(state.s_water[c]), mu_liquid, mu_vapor)
+            pwf_c = float(w.bhp) if getattr(w, "bhp", None) is not None else float(p_wf)
+            q = max(xi, 0.0) * float(w.well_index) * lam * (float(p[c]) - pwf_c)
+            if q <= 0.0:
+                continue
+            z = well_cell_molar_z(cell)
+            dn = q * float(dt) * z
+            taken = np.minimum(dn, np.clip(out[c], 0.0, None))
+            out[c] -= taken
+            produced += taken
+    return out, injected, produced
+
+
 def _peaceman_rate_three_phase(
     mode: str,
     state: ThreePhaseState,
@@ -488,18 +545,35 @@ def _rhs_three_phase(
     n_w_hat = _apply_divergence(n_w_old.reshape(-1, 1), w_flux.reshape(-1, 1), faces, dt).ravel()
     injected = np.zeros(n_hc_old.shape[1], dtype=float)
     produced = np.zeros(n_hc_old.shape[1], dtype=float)
-    if injectors:
-        n_hc_hat, injected = _apply_injectors(n_hc_hat, injectors, dt)
-    if producers:
-        n_hc_hat, produced = _apply_producers(
+    mode = _well_mode(injectors, producers)
+    if mode in ("inject_bhp", "produce_bhp"):
+        n_hc_hat, injected, produced = _apply_peaceman_bhp_three_phase(
             n_hc_hat,
-            state.hc.cells,
-            producers,
+            state,
             p,
+            _bhp_from_wells(mode, injectors, producers),
+            T,
+            mixture,
+            mode,
+            injectors,
+            producers,
             dt,
-            mu_liquid=mu_liquid,
-            mu_vapor=mu_vapor,
+            mu_liquid,
+            mu_vapor,
         )
+    else:
+        if injectors:
+            n_hc_hat, injected = _apply_injectors(n_hc_hat, injectors, dt)
+        if producers:
+            n_hc_hat, produced = _apply_producers(
+                n_hc_hat,
+                state.hc.cells,
+                producers,
+                p,
+                dt,
+                mu_liquid=mu_liquid,
+                mu_vapor=mu_vapor,
+            )
     return n_hc_hat, n_w_hat, state, injected, produced
 
 
@@ -772,6 +846,7 @@ def run_implicit_period_three_phase(
     residual_hists: list[list[float]] = []
     p = np.asarray(pressure, dtype=float).ravel()
     wf = p_wf
+    last_bhp = wf
     while t < float(duration) - 1.0e-12:
         dt = min(dt, float(duration) - t, float(dt_max))
         report = implicit_newton_step_three_phase(
@@ -798,6 +873,7 @@ def run_implicit_period_three_phase(
         if report.pressure is not None:
             p = np.asarray(report.pressure, dtype=float).ravel()
         wf = report.bhp
+        last_bhp = report.bhp
         t += float(dt)
         inj = report.injected if report.injected is not None else np.zeros(n_comp, dtype=float)
         prd = report.produced if report.produced is not None else np.zeros(n_comp, dtype=float)
@@ -807,6 +883,7 @@ def run_implicit_period_three_phase(
         residual_hists.append(list(report.residual_hist))
         n_accepted += 1
         dt = min(float(grow) * dt, float(dt_max))
+    ledger.bhp = last_bhp
     return current, ledger, residual_hists, n_accepted
 
 
