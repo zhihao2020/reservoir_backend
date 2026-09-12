@@ -81,6 +81,15 @@ def test_q_oil_sensor_reads_port_phase_rate() -> None:
     assert abs(op.sample(sensor, state, port_rates=rates) - 3.5e-5) < 1.0e-12
 
 
+def test_q_water_sensor_reads_port_phase_rate() -> None:
+    grid = CartesianGrid.uniform((0.3, 0.3, 0.3), 0.1)
+    state = State(pressure=np.full(grid.n_cells, 1.2e5), sw=np.full(grid.n_cells, 0.2))
+    op = ObservationOperator(grid, [])
+    sensor = Sensor("p1w", "q_water", 0.0, 0.15, 0.15, port_name="P1", sigma=1.0e-6)
+    rates = {"P1:q_water": 2.0e-6}
+    assert abs(op.sample(sensor, state, port_rates=rates) - 2.0e-6) < 1.0e-12
+
+
 def test_bhp_sensor_reads_port_bhp() -> None:
     grid = CartesianGrid.uniform((0.3, 0.3, 0.3), 0.1)
     state = State(pressure=np.full(grid.n_cells, 1.2e5), sw=np.full(grid.n_cells, 0.2))

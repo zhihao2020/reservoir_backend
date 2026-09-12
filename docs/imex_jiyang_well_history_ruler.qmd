@@ -1,0 +1,53 @@
+---
+title: "Well-history ruler (rates / BHP nRMSE)"
+date: last-modified
+format:
+  html:
+    toc: true
+---
+
+IMEX / GEM CO2 HnP comparison is **well rates and BHP only**.
+Not field L2, not cell $K$, not Dice.
+
+## Command
+
+```bash
+python -m reservoir_backend run examples/run/case.yaml --output results/run
+python -m reservoir_backend run config/fixtures/jiyang_hnp_well_history.yaml
+```
+
+`run` forwards the case, then writes `well_history` nRMSE / MAE keyed by
+`well:kind` for `holdout=0`. Optional `--output` also writes `well_history.json`.
+
+## CSV schema
+
+Columns: `time_s,well,kind,value,sigma,holdout`
+
+`kind` $\in$ `{bhp, q_oil, q_gas, q_water, q_inj}`
+
+`well` is the port name (`INJ`, `PROD`, …). The same reader as
+`experiment.observations` accepts `well` as the sensor column.
+
+Case pointer (first present):
+
+- `well_history:` / `ruler:` / `experiment.well_history`
+- or `experiment.observations` if the CSV is already that file
+
+PLACEHOLDER rows live in `config/fixtures/jiyang_hnp_well_history.csv`.
+Swap that file for a GEM well-history export. **Do not invent Jiyang Tc/Pc.**
+There is no in-tree Jiyang `.gem`; EXAMPLE fluid is enough for the scaffold.
+
+## What F exports
+
+Trajectory `port_bhp[well]` and `port_rates["well:kind"]` already come out of
+compositional wells (`q_oil`, `q_gas`, `q_inj`, `bhp`). `q_water` is a reporting
+key: `0` on the EXAMPLE card (no water), or produced water volume when
+`has_water` is on. Residual math is unchanged.
+
+Rate-controlled injectors report `q_inj` as F's surface-volume hook
+(`q_mol * v_std`), not the raw YAML `schedule` number. PLACEHOLDER CSV values
+are not GEM truth; replace them with an export before reading nRMSE as a ruler.
+
+## Not this ruler
+
+Field maps, cell $K$, Dice, invert CLI, `cmg_harness`.

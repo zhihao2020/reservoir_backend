@@ -10,6 +10,7 @@ import numpy as np
 
 from reservoir_backend.cli.reporting import emit_invert_artifacts
 from reservoir_backend.io.case import load_case
+from reservoir_backend.io.well_history import score_well_history
 from reservoir_backend.twin.offline import Posterior, mass_report
 from reservoir_backend.twin.run_report import build_forecast_report, write_run_report
 from reservoir_backend.solver.trajectory import Trajectory
@@ -89,6 +90,9 @@ def cmd_simulate(case: Path, output: Path | None) -> int:
         "so_final_mean": float(np.mean(last.so())),
         "theta": theta.tolist(),
     }
+    hist = score_well_history(twin.experiment.observations, traj)
+    if hist is not None:
+        payload["well_history"] = hist
     print(json.dumps(payload, indent=2))
     if output:
         _save_fields(
@@ -102,6 +106,8 @@ def cmd_simulate(case: Path, output: Path | None) -> int:
         )
         _write_json(output / "simulate.json", payload)
         _write_json(output / "run.json", payload)
+        if hist is not None:
+            _write_json(output / "well_history.json", hist)
     return 0
 
 

@@ -46,6 +46,11 @@ def test_run_cmg_habit_example(tmp_path: Path) -> None:
     assert len(report["times_s"]) >= 1
     assert (tmp_path / "simulate.json").is_file()
     assert (tmp_path / "pressure.npy").is_file()
+    assert (tmp_path / "well_history.json").is_file()
+    hist = json.loads((tmp_path / "well_history.json").read_text(encoding="utf-8"))
+    assert "nrmse" in hist and "mae" in hist
+    assert hist["holdout"] is False
+    assert "INJ:bhp" in hist["nrmse"] or hist["missing"]
 
 
 def test_run_existing_lab_cf(tmp_path: Path) -> None:

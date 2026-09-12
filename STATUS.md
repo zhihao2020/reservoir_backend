@@ -19,6 +19,7 @@
 | 线性高斯 LM | 已验证 | `inverse.lm.run_lm` | `tests/inverse/test_lm_linear.py` |
 | 冻结 θ 的正演 | MVP | `DigitalTwin.forward_from_posterior` | `tests/inverse/test_forecast.py` |
 | CLI run/validate/simulate/invert/forecast/apply | MVP | `reservoir`；`run` = 正演 | `tests/cli/test_cli.py`；schema：`docs/case_schema.md` |
+| Well-history rates/BHP nRMSE | MVP | `run` + `well_history` CSV | `tests/io/test_well_history.py`；`docs/imex_jiyang_well_history_ruler.qmd` |
 | 实验室 apply（历史反演 → 组分正演） | 已验证 | `reservoir apply` | `tests/cli/test_apply.py` |
 | 测点 CSV（SI / 分钟·kPa、hold-out、无 --demo） | 已验证 | `io.case` / `apply` | `tests/cli/test_apply.py`、`tests/io/test_case_csv.py` |
 | 点估计场 \(F(\hat\theta)\) | MVP | `DigitalTwin.reconstruct` | `tests/inverse/test_reconstruct_uq.py` |

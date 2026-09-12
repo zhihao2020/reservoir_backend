@@ -1,0 +1,42 @@
+# PLACEHOLDER well-history ruler for CMG-GEM CO2 HnP.
+# Schema: time_s,well,kind,value,sigma,holdout
+# kind ∈ {bhp, q_oil, q_gas, q_water, q_inj}
+# Swap the CSV for a real GEM export; do not invent Jiyang Tc/Pc.
+# Fluid is the published EXAMPLE preset, not a Jiyang .gem.
+#
+#   python -m reservoir_backend run config/fixtures/jiyang_hnp_well_history.yaml
+geometry:
+  size_m: [0.30, 0.10, 0.10]
+
+grid:
+  type: cartesian
+  nx: 3
+  ny: 1
+  nz: 1
+
+physics:
+  model: compositional_dpdp
+  fluid: example
+  temperature_k: 350.0
+  capillary: none
+  gravity: false
+  p_init: 1.2e7
+  dt_init: 0.5
+  dt_max: 2.0
+  max_steps: 12
+  shape_factor: 40.0
+  phi_fracture: 0.02
+
+rock:
+  porosity: 0.08
+  k_matrix_m2: 1.0e-15
+
+wells:
+  - {name: INJ, role: injector, control: rate, ijk: [1, 1, 1]}
+  - {name: PROD, role: producer, control: pressure, ijk: [3, 1, 1]}
+
+schedule:
+  - {port: INJ, kind: rate, times: [0, 2], values: [2.0e-4, 2.0e-4]}
+  - {port: PROD, kind: pressure, times: [0, 2], values: [1.18e7, 1.18e7]}
+
+well_history: jiyang_hnp_well_history.csv

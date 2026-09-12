@@ -1,0 +1,13 @@
+time_s,well,kind,value,sigma,holdout
+0,INJ,bhp,1.20e7,1.0e5,0
+2,INJ,bhp,1.20e7,1.0e5,0
+0,INJ,q_inj,2.0e-4,2.0e-5,0
+2,INJ,q_inj,2.0e-4,2.0e-5,0
+0,PROD,bhp,1.18e7,1.0e5,0
+2,PROD,bhp,1.18e7,1.0e5,0
+0,PROD,q_oil,1.0e-8,1.0e-8,0
+2,PROD,q_oil,1.0e-8,1.0e-8,0
+0,PROD,q_gas,1.0e-8,1.0e-8,0
+2,PROD,q_gas,1.0e-8,1.0e-8,1
+0,PROD,q_water,0.0,1.0e-8,0
+2,PROD,q_water,0.0,1.0e-8,0

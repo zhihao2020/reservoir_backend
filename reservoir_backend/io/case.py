@@ -14,6 +14,7 @@ from reservoir_backend.io.parameterization_cfg import parameterization_from_cfg
 from reservoir_backend.physics.capillary import capillary_from_name
 from reservoir_backend.physics.geomech import geomech_from_cfg
 from reservoir_backend.physics.relperm import CoreyTwoPhase
+from reservoir_backend.io.well_history import WELL_KINDS
 from reservoir_backend.io.well_load import ports_from_cfg
 from reservoir_backend.twin.offline import DigitalTwin, InverseSpec, PhysicsSpec
 from reservoir_backend.io.units import to_m2, to_m3_s, to_metres, to_pa, to_seconds
@@ -120,7 +121,7 @@ def _read_observation_csv(
         if kind == "pressure" and unit:
             value = _maybe_convert(value, unit, "pressure")
             sigma = _maybe_convert(sigma, unit, "pressure")
-        elif kind == "phase_rate" and unit:
+        elif kind in {"phase_rate", "q_oil", "q_gas", "q_water", "q_inj"} and unit:
             value = _maybe_convert(value, unit, "rate")
             sigma = _maybe_convert(sigma, unit, "rate")
         grouped.setdefault(key, []).append((t, value, sigma, hold))
@@ -209,6 +210,92 @@ def _controls_src(cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> Any:
         or cfg.get("schedule")
         or []
     )
+
+
+def _load_observation_table(
+    src: Any,
+    cfg_dir: Path,
+    *,
+    time_unit: str | None = None,
+    pressure_unit: str | None = None,
+) -> list[dict[str, Any]]:
+    if isinstance(src, dict):
+        path = src.get("file")
+        if not path:
+            raise ValueError("observations/well_history mapping needs file")
+        src = str(path)
+    if isinstance(src, str):
+        return _read_observation_csv(
+            Path(cfg_dir) / src,
+            time_unit=time_unit,
+            pressure_unit=pressure_unit,
+        )
+    return list(src)
+
+
+def _first_table(*candidates: Any) -> Any:
+    for raw in candidates:
+        if raw not in (None, [], ""):
+            return raw
+    return None
+
+
+def _observation_rows(cfg: dict[str, Any], exp_cfg: dict[str, Any], cfg_dir: Path) -> list[dict[str, Any]]:
+    """Invert gauges plus optional well-history / ruler CSV. Same reader."""
+    time_unit = exp_cfg.get("observation_time_unit")
+    pressure_unit = exp_cfg.get("observation_pressure_unit")
+    obs = _first_table(exp_cfg.get("observations"), cfg.get("observations"))
+    ruler = _first_table(
+        exp_cfg.get("well_history"),
+        exp_cfg.get("ruler"),
+        cfg.get("well_history"),
+        cfg.get("ruler"),
+    )
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in (obs, ruler):
+        if raw in (None, [], ""):
+            continue
+        key = str(raw.get("file") if isinstance(raw, dict) else raw)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.extend(
+            _load_observation_table(
+                raw, cfg_dir, time_unit=time_unit, pressure_unit=pressure_unit
+            )
+        )
+    return rows
+
+
+def _ensure_well_sensors(sensors: list, observations: list, ports: list, grid: Any) -> None:
+    """Well-history CSV names wells. Attach a port sensor if the case omitted one."""
+    known = {s.name for s in sensors}
+    xyz_of: dict[str, tuple[float, float, float]] = {}
+    centers = grid.cell_centers()
+    for port in ports:
+        cells = np.asarray(port.cell_ids, dtype=np.int64)
+        if cells.size == 0:
+            continue
+        xyz = np.asarray(centers[int(cells[0])], dtype=float).ravel()
+        xyz_of[port.name] = (float(xyz[0]), float(xyz[1]), float(xyz[2]))
+    for obs in observations:
+        if obs.kind not in WELL_KINDS or obs.sensor_name in known:
+            continue
+        xyz = xyz_of.get(obs.sensor_name, (0.0, 0.0, 0.0))
+        sensors.append(
+            Sensor(
+                name=obs.sensor_name,
+                kind=obs.kind,
+                x=xyz[0],
+                y=xyz[1],
+                z=xyz[2],
+                port_name=obs.sensor_name,
+                sigma=float(np.mean(obs.sigma)),
+                medium="fracture",
+            )
+        )
+        known.add(obs.sensor_name)
 
 
 def _load_control_table(src: Any, cfg_dir: Path) -> list[dict[str, Any]]:
@@ -440,13 +527,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
 
     holdout = set(str(x) for x in (exp_cfg.get("holdout_sensors") or []))
     observations: list[ObservationSeries] = []
-    obs_src = exp_cfg.get("observations") or cfg.get("observations") or []
-    if isinstance(obs_src, str):
-        obs_src = _read_observation_csv(
-            Path(cfg_dir) / obs_src,
-            time_unit=exp_cfg.get("observation_time_unit"),
-            pressure_unit=exp_cfg.get("observation_pressure_unit"),
-        )
+    obs_src = _observation_rows(cfg, exp_cfg, cfg_dir)
     for o in obs_src:
         kind = str(o.get("kind", "pressure"))
         unit = o.get("unit")
@@ -454,7 +535,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
             "pressure"
             if kind in {"pressure", "bhp"}
             else "rate"
-            if kind in {"phase_rate", "q_oil", "q_gas", "q_inj"}
+            if kind in {"phase_rate", "q_oil", "q_gas", "q_water", "q_inj"}
             else None
         )
         values = np.asarray(o["values"], dtype=float)
@@ -477,6 +558,7 @@ def build_twin(cfg: dict[str, Any], *, cfg_dir: str | Path = ".") -> DigitalTwin
             )
         )
 
+    _ensure_well_sensors(sensors, observations, ports, grid)
     known = {s.name for s in sensors}
     unknown = sorted({o.sensor_name for o in observations} - known)
     if unknown:
