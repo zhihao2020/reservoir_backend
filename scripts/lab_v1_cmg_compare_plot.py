@@ -1,7 +1,6 @@
 """GEM hidden vs F_ours(theta_true) maps.
 
-Default: M2 4×4×2 DPDP (lab_v1_dev).
-Pass --case for physical_3d (15³ single-porosity compositional).
+Default: physical_3d 15³ single-porosity GEM ruler.
 """
 
 from __future__ import annotations
@@ -20,11 +19,16 @@ if str(ROOT) not in sys.path:
 from reservoir_backend.twin.cmg_benchmark import (
     PRESSURE_SPAN_FLOOR_PA,
     _k_to_our,
+    cache_manifest_matches,
     forward_at_theta,
+    forward_cache_manifest,
+    gem_footer_at,
     gem_kdir_down,
+    gem_summary_at,
     load_hidden_truth,
     load_twin_case,
     nrmse_range,
+    parse_gem_out_summaries,
     rmse,
     theta_true_from_spec,
     theta_true_from_twin,
@@ -399,7 +403,7 @@ def _plot_physical_3d(
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--case", type=Path, default=None, help="YAML case; default M2 case_dev DPDP")
+    p.add_argument("--case", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "physical_3d" / "case.yaml")
     p.add_argument(
         "--hidden",
         type=Path,
@@ -411,18 +415,8 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     case = Path(args.case) if args.case is not None else None
-    if hidden_default := args.hidden:
-        hidden = Path(hidden_default)
-    elif case is not None:
-        hidden = case.parent / "export" / "hidden"
-    else:
-        run = ROOT / "results" / "lab_v1" / "cmg_gem_run" / "hidden"
-        export = ROOT / "examples" / "lab_v1" / "cmg_gem" / "export" / "hidden"
-        hidden = run if (run / "pressure.npy").is_file() else export
-    dest = Path(args.out) if args.out is not None else (
-        ROOT / "results" / "lab_v1" / "cmg_gem_physical_3d_compare" if case is not None
-        else ROOT / "results" / "lab_v1" / "cmg_compare"
-    )
+    hidden = Path(args.hidden) if args.hidden is not None else (ROOT / "results" / "lab_v1" / "cmg_gem_physical_3d" / "hidden")
+    dest = Path(args.out) if args.out is not None else ROOT / "results" / "lab_v1" / "cmg_gem_physical_3d_compare"
     dest.mkdir(parents=True, exist_ok=True)
 
     import matplotlib
@@ -440,25 +434,40 @@ def main(argv=None) -> int:
     )
     cache = dest / "ours.npz"
     truncated = False
+    gm = getattr(twin.physics, "geomech", None)
+    manifest = forward_cache_manifest(
+        case=case,
+        times_s=times,
+        n_cells=twin.grid.n_cells,
+        shape=(twin.grid.nx, twin.grid.ny, twin.grid.nz),
+        t_end=None if args.t_end is None else float(args.t_end),
+        geomech=bool(gm is not None and getattr(gm, "enabled", False)),
+    )
     cache_valid = False
     if cache.is_file():
         with np.load(cache) as saved:
             cache_valid = (
-                "times_s" in saved and "truncated" in saved
-                and np.array_equal(saved["times_s"], times)
+                "times_s" in saved
+                and "truncated" in saved
                 and not bool(saved["truncated"])
+                and cache_manifest_matches(saved, manifest)
             )
     if cache_valid:
         blob = np.load(cache)
         truncated = bool(np.asarray(blob["truncated"]).reshape(-1)[0]) if "truncated" in blob.files else False
-        ours = {k: blob[k] for k in blob.files if k != "truncated"}
+        ours = {k: blob[k] for k in blob.files if k not in {"truncated", "manifest_json"}}
         if "times_s" in ours:
             times = np.asarray(ours["times_s"], dtype=float)
     else:
         ours, times, truncated = _forward_capped(twin, theta, times)
         ours = {k: np.asarray(v) for k, v in ours.items()}
         ours["times_s"] = times
-        np.savez(cache, truncated=np.array(truncated), **ours)
+        np.savez(
+            cache,
+            truncated=np.array(truncated),
+            manifest_json=np.array(json.dumps(manifest)),
+            **ours,
+        )
 
     # GEM ASCII reports are 0 / 0.01 / 0.14 / 1 / 3 d. Sample the field at t_ours.
     t_ours = float(times[-1])
@@ -483,15 +492,20 @@ def main(argv=None) -> int:
     p_ours = np.asarray(ours["pressure"][-1])
     lo = float(gem_times[gem_times <= t_ours + 1.0e-12].max()) if np.any(gem_times <= t_ours + 1.0e-12) else float(gem_times[0])
     hi = float(gem_times[gem_times >= t_ours - 1.0e-12].min()) if np.any(gem_times >= t_ours - 1.0e-12) else float(gem_times[-1])
+    residual = p_ours - p_gem
+    mean_bias = float(np.mean(residual))
+    centered = residual - mean_bias
     metrics = {
         "hidden": str(hidden),
         "case": None if case is None else str(case),
         "nrmse_p": nrmse_range(p_ours, p_gem),
         "nrmse_p_sigma": nrmse_range(p_ours, p_gem, span_floor=PRESSURE_SPAN_FLOOR_PA),
         "rmse_p_pa": rmse(p_ours, p_gem),
+        "rmse_p_centered_pa": float(np.sqrt(np.mean(centered * centered))),
         "rmse_p_inj_column_pa": _rmse_on_cells(p_ours, p_gem, _port_cells(twin, "INJ")),
         "gem_mean_offset_pa": float(np.mean(p_gem) - 5.0e7),
         "ours_mean_offset_pa": float(np.mean(p_ours) - 5.0e7),
+        "mean_bias_pa": mean_bias,
         "gem_pressure_min_max_pa": [float(p_gem.min()), float(p_gem.max())],
         "ours_pressure_min_max_pa": [float(p_ours.min()), float(p_ours.max())],
         "rmse_sg": None if sg_gem is None else rmse(np.asarray(ours["sg"][-1]), sg_gem),
@@ -501,8 +515,110 @@ def main(argv=None) -> int:
         "truncated": bool(truncated),
         "n_cells": int(twin.grid.n_cells),
         "shape": [int(twin.grid.nx), int(twin.grid.ny), int(twin.grid.nz)],
-        "note": "F_ours(k_GEM) vs GEM hidden (linear in t if no exact report). Not an M2a PASS claim.",
+        "note": "F_ours(k_GEM) vs GEM hidden. Score exact GEM reports only. Not an M2a PASS claim.",
+        "cache_manifest": manifest,
     }
+    gem_out = None
+    if case is not None:
+        cand = Path(case).parent / "sanwei_co2.out"
+        if not cand.is_file():
+            cand = ROOT / "results" / "lab_v1" / "cmg_gem_physical_3d" / "sanwei_co2.out"
+        if cand.is_file():
+            gem_out = cand
+    if gem_out is not None:
+        summaries = parse_gem_out_summaries(gem_out.read_text(encoding="utf-8", errors="replace"))
+        (dest / "gem_summary.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
+        foot = gem_footer_at(summaries, t_ours)
+        if foot is not None:
+            metrics["gem_footer_average_pa"] = foot["average_pa"]
+            metrics["gem_footer_min_max_pa"] = [foot["min_pa"], foot["max_pa"]]
+            metrics["gem_footer_mean_bias_pa"] = float(np.mean(p_ours) - foot["average_pa"])
+            metrics["gem_footer_min_ijk"] = foot["min_ijk"]
+            metrics["gem_footer_max_ijk"] = foot["max_ijk"]
+        rep = gem_summary_at(summaries, t_ours)
+        if rep is not None:
+            co2 = (rep.get("components") or {}).get("CO2") or {}
+            metrics["gem_co2_cum_inj_mol"] = co2.get("cum_inj_mol")
+            metrics["gem_co2_cum_prod_mol"] = co2.get("cum_prod_mol")
+            metrics["gem_total_cum_inj_mol"] = rep.get("total_cum_inj_mol")
+            metrics["gem_total_cum_prod_mol"] = rep.get("total_cum_prod_mol")
+            metrics["gem_total_accum_mol"] = rep.get("total_accum_mol")
+            conn_cmp = []
+            ours_by_ijk: dict[tuple, dict] = {}
+            if "moles" in ours:
+                from reservoir_backend.comp.properties import flash_state
+                from reservoir_backend.comp.wells import well_molar_sources
+
+                moles = np.asarray(ours["moles"][-1], dtype=float)
+                props = flash_state(twin.physics.fluid, p_ours, moles)
+                recs: list[dict] = []
+                cmap = {(c.port_name, c.kind): c for c in twin.experiment.controls}
+                rock = twin.rock_from_theta(theta)
+                well_molar_sources(
+                    twin.grid, rock, twin.ports, cmap, p_ours, props, twin.physics.fluid, t_ours,
+                    connections=recs,
+                )
+                ours_by_ijk = {(r["well"], tuple(r["gem_ijk"])): r for r in recs}
+                n_back = sum(1 for r in recs if r["well"] == "INJ" and r["backflow"])
+                n_fwd = sum(1 for r in recs if r["well"] == "INJ" and r["forward"])
+                metrics["inj_n_forward"] = n_fwd
+                metrics["inj_n_backflow"] = n_back
+            for row in rep.get("connections") or []:
+                ijk = tuple(row["ijk"])
+                rec = ours_by_ijk.get((row["well"], ijk))
+                i, j, gk = row["ijk"]
+                k0 = twin.grid.nz - int(gk)
+                cell = k0 * twin.grid.ny * twin.grid.nx + (int(j) - 1) * twin.grid.nx + (int(i) - 1)
+                item = {
+                    "well": row["well"],
+                    "ijk": row["ijk"],
+                    "gem_bhp_minus_block_pa": row["bhp_minus_block_pa"],
+                    "gem_reservoir_m3_day": row["reservoir_m3_day"],
+                    "ours_pblock_offset_pa": float(p_ours[cell] - 5.0e7),
+                }
+                if rec is not None:
+                    item["ours_bhp_minus_block_pa"] = rec["bhp_minus_block_pa"]
+                    item["ours_q_vol_m3_s"] = rec["q_vol_m3_s"]
+                    item["ours_forward"] = rec["forward"]
+                    item["ours_backflow"] = rec["backflow"]
+                    item["ours_mobility"] = rec["mobility"]
+                conn_cmp.append(item)
+            metrics["connections"] = conn_cmp
+            init = summaries.get("initial") or {}
+            if init.get("oil_total_mol") is not None and "moles" in ours:
+                n0 = np.asarray(ours["moles"][0], dtype=float)
+                metrics["ours_n0_mol"] = float(n0.sum())
+                metrics["gem_n0_mol"] = init["oil_total_mol"]
+                metrics["n0_ratio"] = float(n0.sum()) / float(init["oil_total_mol"])
+                gem_comp = init.get("components_mol") or {}
+                if "CO2" in gem_comp:
+                    metrics["ours_n0_co2_mol"] = float(n0[:, 0].sum())
+                    metrics["gem_n0_co2_mol"] = gem_comp["CO2"]
+            if "moles" in ours:
+                from reservoir_backend.comp.properties import flash_state as _flash
+
+                n0 = np.asarray(ours["moles"][0], dtype=float)
+                p0 = np.asarray(ours["pressure"][0], dtype=float)
+                a = _flash(twin.physics.fluid, p0, n0)
+                b = _flash(twin.physics.fluid, p0 + 1.0e5, n0)
+                metrics["c_fluid_1_per_pa"] = float(
+                    -np.mean((b.v_mix - a.v_mix) / np.maximum(a.v_mix, 1.0e-30)) / 1.0e5
+                )
+                rock = twin.rock_from_theta(theta)
+                metrics["cpor_1_per_pa"] = float(rock.cpor)
+                metrics["storage_note"] = (
+                    "c_fluid from PR v_mix at t=0; do not inflate cpor. "
+                    "INJ top BHP-Pblock sign follows pblock vs datum, not a separate λ bug."
+                )
+        if "injected_mol" in ours:
+            inj = np.asarray(ours["injected_mol"][-1], dtype=float).ravel()
+            prod = np.asarray(ours["produced_mol"][-1], dtype=float).ravel() if "produced_mol" in ours else np.zeros_like(inj)
+            metrics["ours_cum_inj_mol"] = inj.tolist()
+            metrics["ours_cum_prod_mol"] = prod.tolist()
+            metrics["ours_co2_cum_inj_mol"] = float(inj[0]) if inj.size else None
+            if metrics.get("gem_co2_cum_inj_mol") is not None and inj.size:
+                g = float(metrics["gem_co2_cum_inj_mol"])
+                metrics["co2_cum_inj_ratio"] = None if abs(g) < 1.0e-30 else float(inj[0]) / g
     (dest / "compare.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
     if twin.grid.nz <= 4 and case is None:

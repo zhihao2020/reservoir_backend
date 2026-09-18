@@ -1,0 +1,4 @@
+id,kind,x_m,y_m,z_m,x2_m,y2_m,z2_m
+INJ,injector,0.15,0.15,0.15,,,
+PROD1,producer,0.05,0.05,0.15,,,
+PROD2,producer,0.25,0.25,0.15,,,

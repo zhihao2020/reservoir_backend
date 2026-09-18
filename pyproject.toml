@@ -1,42 +1,32 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "reservoir-backend"
-version = "0.2.0"
-description = "Laboratory multiphase inverse digital twin"
+dynamic = ["version"]
+description = "Laboratory 3D shale-oil reconstruction: mesh, pressure, saturation, k/phi"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "numpy>=1.24",
-    "PyYAML>=6.0",
-    "scipy>=1.11",
+  "numpy",
+  "scipy",
+  "PyYAML",
 ]
-
-[project.scripts]
-reservoir = "reservoir_backend.cli.main:main"
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-]
-perf = [
-    "numba>=0.59",
-]
+dev = ["pytest"]
+pack = ["nuitka", "ordered-set", "zstandard"]
+
+[project.scripts]
+reservoir = "src.cli.main:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "src.version.__version__"}
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["reservoir_backend*"]
-exclude = ["tests*", "benchmarks*", "examples*", "scripts*", "docs*", "specs*", "results*", "accuracy_reports*", "validation_reports*", "profiling_reports*", "references*", "requirements*", "validation*", "scratch*"]
+include = ["src", "src.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
-markers = [
-    "slow: long DPDP/ES-MDA/scale cases (deselect with -m \"not slow\")",
-    "dpdp: dual-continuum compositional solver",
-    "assimilation: ES-MDA / parameter EnKF",
-    "scalability: 5^3 and larger DPDP forwards",
-]
-addopts = "-m \"not slow\""
+addopts = "-q"

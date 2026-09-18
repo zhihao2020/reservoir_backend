@@ -1,81 +1,26 @@
-# Python cache and bytecode
+# Bytecode / tooling
 __pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.py[cod]
-*$py.class
-
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
-
-# Build and packaging outputs
-build/
-dist/
 *.egg-info/
 .eggs/
-pip-wheel-metadata/
 
-# Test and coverage outputs
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
+# Nuitka / pack
+build/
+dist/
+*.so
+*.dist/
+*.build/
+src.build/
 
-# Local environment and editor files
-.env
-.env.*
-!.env.example
+# Local results (keep scripts, ignore bulky GEM dumps if re-added)
+results/**/*.out
+results/**/*.sr3
+results/**/*.irf
+
+# Editors
 .idea/
 .vscode/
 *.swp
-*.swo
-*~
-
-# Generated demo, validation, and profiling outputs
-results/*
-!results/.gitkeep
-validation_reports/*
-!validation_reports/.gitkeep
-profiling_reports/
-
-# Local scratch / one-off run artifacts (never commit)
-/scratch/
-/_*.py
-/_*.out
-/_*.err
-/_*.json
-/_*.pid
-/_*.status
-
-# Logs and temporary files
-*.log
-*.tmp
-*.temp
-*.bak
-
-# Regenerable CMG/IMEX text dumps (already-tracked ones stay tracked)
-*.out
-
-# OS metadata
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Local third-party trees and copyrighted papers (clone / download separately)
-# Keep references/README.md, fixtures/, extract_*.py, methods/ trackable.
-references/MRST-main/
-references/MRST-2026a/
-references/opm-simulators-master/
-references/opm-upscaling-master/
-references/GEOS-develop/
-references/JutulDarcy.jl-main/
-references/OpenPNM-dev/
-references/StrataTrapper-main/
-references/open-darts-main/
-references/ert-main/
-references/pyvplm-master/
-references/concecpt/
-references/1-s2.0-S0098300412000994-main.pdf
-references/*.pptx

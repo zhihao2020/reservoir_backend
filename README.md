@@ -1,91 +1,97 @@
-# Reservoir Backend
+# reservoir_backend 0.4.0
 
-300 mm 立方试块的**页岩油实验数字孪生**：先用一段观测反演 \(\theta=(\log C_f,\log T_{mf})\)，再冻结 \(\theta\) 做组分双重介质（DPDP）全隐式正演。
+Laboratory 3D reconstruction: probe/well series → full-grid pressure, saturation, porosity, permeability.
 
-```text
-观测 CSV [0, T_hist] + 井控 → ES-MDA 更新 (C_f, T_mf) → 冻结 θ → 组分 DPDP FIM 正演整段井控
-```
-
-- \(C_f = k_f b_f\)：裂缝网络沿程传输能力
-- \(T_{mf}\)：基质 \(\leftrightarrow\) 裂缝补给
-- 固定不反演：\(k_m,\varphi_m,\varphi_f\)、EOS/PVT、黏度、相对渗透率
-
-产品 Case：[`examples/lab_v1/`](examples/lab_v1/)。假设：[docs/model_assumptions.md](docs/model_assumptions.md)。
-
-## 安装
+库版本为 `src.version.__version__`（`0.4.0`）：
 
 ```bash
-python -m pip install -e ".[dev]"
+python -c "import src; print(src.__version__)"
+python -m src --version
+python -m src --help
 ```
 
-## 用户怎么用
-
-正演一条 case：YAML 里写好 grid / wells / fluid / schedule，不必再堆 CLI 旗标。
+## 从源码运行
 
 ```bash
-python -m reservoir_backend run examples/lab/lab_cf.yaml
-python -m reservoir_backend run examples/run/case.yaml --output results/run
+pip install -e ".[dev]"
+python -m src path/to/case.yaml                          # 离线：文件 → 文件
+python -m src path/to/case.yaml -o results/run           # 落盘（fields.npz / *.npy / *.csv / *.json）
+python -m src path/to/case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 --field-port 9002
 ```
 
-`run` 就是原来的 `simulate`。历史窗反演仍用 `reservoir apply`。日常和 CI 用 `case_dev.yaml`，不要在 CI 里跑 30³ ES-MDA。CMG 字段对照：[`docs/case_schema.md`](docs/case_schema.md)。
+`--tcp-port` 是测点/注采的入站 TCP（无默认值）；`--lab-port` / `--field-port` 是反演
+结果的两路 UDP 出站（实验 / 矿场尺度）；`--control-port` 是可选的控制端口（应答
+RESEND 重发请求）；`--window N` / `--invert-every S` 是**在线长会话性能**参数（见下）。
+不写 `-o` 不落盘。
 
-配置五件套（路径写在 `case.yaml` 里）：
+在线时 `case.yaml` 只做 init（网格、测点坐标、井轨迹、初值、相似比）；`observations` /
+`series` 可以没有（即使写了也会被忽略，观测一律走 TCP）。采集端连上 `--tcp-port` 后这条
+连接一直复用，每一拍一个长度前缀帧。进程在 `0.0.0.0` 上监听，`--ip` 只用于把结果发到
+仪表盘。
 
-| 文件 | 内容 |
-|------|------|
-| `case.yaml` | 网格、物理开关、反演、引用 |
-| `pvt.yaml` | EOS / 黏度 / 相对渗透率（不反演） |
-| `wells.yaml` | 井几何与完井 |
-| `controls.csv` | 井控时间序列 |
-| `observations.csv` | 反演用的那段数据 |
+二氧化碳吞吐在 YAML 里设 `inversion.model: black_oil_3phase`。注入走种类 2，采出
+水/油/气走种类 3/4/5。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/接口协议.md](docs/接口协议.md) | 协议 v2 逐字节规范（TCP/UDP 帧、枚举、manifest/results schema、单元排序、离线格式） |
+| [docs/联调指南.md](docs/联调指南.md) | 三角色三端口拓扑、启动顺序、分步走查、故障排查 |
+| [docs/案例库.md](docs/案例库.md) | 各案例用途/网格/模型/耗时 + `case.yaml` 字段参考 |
+| [docs/相似换算.md](docs/相似换算.md) | 几何-运动相似准则与跨尺度换算 |
+
+## 案例库
+
+`examples/` 下 5 类案例（`small` / `twod` / `model_compare` / `offline` / `online`），
+全部可直接运行，不依赖 GEM。发射/接收脚本 `examples/online/send_steps.py` /
+`examples/online/recv_fields.py` 是协议 v2 的参考实现，可对任意案例目录复用。
+
+## 协议 v2 速览
+
+- 字节序小端，`PROTOCOL_VERSION = 2`，魔术 `"RB"`。
+- **TCP 入站**：长度前缀帧 `[u32 len][u8 ver][u8 type][payload]`，消息 HELLO / READY /
+  STEP / ACK / NAK / BYE。后端发 HELLO（网格/测点/井/枚举/单位），采集端逐拍发 STEP，
+  后端回 ACK/NAK（含错误码）。控制消息 JSON，STEP 二进制。
+- **UDP 出站**：报头 `[2s"RB"][u8 ver][u8 type][u32 stream_id][u32 seq]`，消息 MANIFEST /
+  FIELD / RESULTS / END。FIELD 带 CRC32，END 带总报数与整体 CRC，接收端可检测丢包/损坏；
+  新增 RESULTS（井底压力、测点拟合误差等井级/测点级结果）。
+- 全场 flat 数组按 `cell = k*ny*nx + j*nx + i` 排序，reshape 成 `(nz, ny, nx)`。
+
+## 长会话性能（在线）
+
+在线模式用**滑动窗口 + 后台反演**，长时间跑不会越来越慢、也不会因反演慢阻塞采集：
+
+- 每拍只插值最新一拍（O(网格数)），结果立即发 UDP；
+- 岩石反演（k/φ）放**后台线程**、按 `--invert-every` 节流，k/φ 在下一拍随流更新；
+- `--window N` 只保留最近 N 拍历史（默认 24），`--window 0` 不限。
+
+详见 [`docs/联调指南.md` §8](docs/联调指南.md)。
+
+## 测试与自检
 
 ```bash
-reservoir apply examples/lab_v1/case_dev.yaml --demo --output results/lab_v1_demo
-reservoir apply examples/lab_v1/case_dev.yaml --output results/lab_v1
+python scripts/verify_examples.py   # 一键校验示例库（应打印 "all examples verified"）
+python -m pytest                    # 单元/接口测试
 ```
 
-有探头 CSV 时在 `experiment.observations` 写上路径，**不要** `--demo`。`--demo` 只是自检。粗网格夹具：`examples/lab/lab_cf.yaml`。
+**完整使用说明见 [docs/联调指南.md](docs/联调指南.md)**（从零到跑通的 step-by-step，
+含离线/在线/换自己采集端与大屏）。
 
-### 跑完看什么
+## Linux `.so` (GitHub)
 
-| 文件 | 含义 |
-|------|------|
-| `k.npy` | 后验裂缝连续体渗透率（由 \(C_f\) 展开） |
-| `pressure.npy`、`sw.npy`、`so.npy`、`sg.npy` | \(F(\hat\theta)\) 场 |
-| `apply.json` / `invert.json` | \(\theta\)、拟合 / hold-out |
+产物就是一个 `src.so`。numpy / scipy / PyYAML 仍用 pip 安装。
 
-### 测点 CSV
+- 手动：GitHub → Actions → **pack-linux** → Run workflow
+- 发版：`git tag v0.4.0 && git push origin v0.4.0`（附件 `reservoir-backend-*-linux-so.zip`）
+- 本机 Linux：`./build_linux.sh`
 
-```text
-time_s,sensor,kind,value,sigma,holdout
-100,P_in,pressure,1.20e7,2000,0
-```
-
-不要把定压井的流量当观测。CMG-GEM 只是交叉验证尺子，用户入口不必先跑 GEM。
-
-## 其他命令
-
-`invert` 仅调试。`forecast` **不再反演**，必须带 `--posterior invert.json`。
+解压后目录里只有 `src.so`（另有 `VERSION` / `README.txt`）：
 
 ```bash
-python -m reservoir_backend validate examples/lab_v1/case_dev.yaml
-python -m reservoir_backend run      examples/lab/lab_cf.yaml --output results/sim
-reservoir invert   examples/lab/lab_cf.yaml --self-check --output results/inv
-reservoir forecast examples/lab/lab_cf.yaml --posterior results/inv/invert.json --output results/fc
+pip install numpy scipy pyyaml
+PYTHONPATH=/path/with/src.so python3 -m src --version
+PYTHONPATH=/path/with/src.so python3 -m src case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 --field-port 9002
 ```
 
-## 当前物理
-
-- 正演：等温组分 DPDP FIM（Peng–Robinson + PT 闪蒸）。单孔组分 `physics.model: compositional` 可选。
-- 反演：\(\theta=(\log C_f,\log T_{mf})\)，产品默认 ES-MDA。
-- 黑油 IMPES / 顺序隐式 / 黑油 FIM 已删除。
-
-## 明确未做
-
-逐格 \(K\)、Archie/EM、热、MPFA、PINN。Online Parameter EnKF / UDP 冻到 M3。`references/` 只读对照。
-
-## 测试
-
-```bash
-pytest -q
-```
+`src.so` 旁边不要再放 `src/` 目录，否则 Python 会加载源码包而不是这个扩展。
