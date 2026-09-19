@@ -32,17 +32,18 @@ jobs:
           mkdir -p "$ISO/examples" "$ISO/scripts"
           cp -a examples/. "$ISO/examples/"
           cp scripts/verify_examples.py "$ISO/scripts/verify_examples.py"
+          cp reservoir.py "$ISO/reservoir.py"
           rm -rf "$ISO/src"
           test -f "$ISO/src.so"
           cd "$ISO"
           export PYTHONPATH="$ISO"
 
           python -c "import src; print('import', src.__version__); assert src.run_pipeline"
-          python -m src --version
+          python reservoir.py --version
 
           python scripts/verify_examples.py
 
-          python -m src examples/small/case.yaml -o "$ISO/results-small"
+          python reservoir.py examples/small/case.yaml -o "$ISO/results-small"
           python -c "import json; d=json.load(open('$ISO/results-small/results.json')); assert d['probes'] and d['wells']"
           echo "offline small ok"
 
@@ -59,7 +60,7 @@ jobs:
           echo $! > "$ISO/lab.pid"
           python examples/online/recv_fields.py --port 19002 --label field > "$ISO/field.log" 2>&1 &
           echo $! > "$ISO/field.pid"
-          python -m src examples/small/case.yaml --tcp-port 19000 --ip 127.0.0.1 \
+          python reservoir.py examples/small/case.yaml --tcp-port 19000 --ip 127.0.0.1 \
             --lab-port 19001 --field-port 19002 --window 24 --invert-every 60 \
             > "$ISO/backend.log" 2>&1 &
           echo $! > "$ISO/backend.pid"
