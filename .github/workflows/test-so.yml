@@ -1,0 +1,99 @@
+name: test-so
+
+# Load the published Linux src.so (not the source tree) and run the example library.
+on:
+  workflow_dispatch:
+  push:
+    branches: [pack-linux]
+
+jobs:
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python deps
+        run: python -m pip install --upgrade pip numpy scipy pyyaml
+
+      - name: Download published src.so
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v0.4.0 --repo "${{ github.repository }}" -p "reservoir-backend-0.4.0-linux-so.zip" -D /tmp
+
+      - name: Exercise src.so against examples
+        run: |
+          set -euo pipefail
+          ISO="$(mktemp -d)"
+          unzip -q /tmp/reservoir-backend-0.4.0-linux-so.zip -d "$ISO"
+          mkdir -p "$ISO/examples" "$ISO/scripts"
+          cp -a examples/. "$ISO/examples/"
+          cp scripts/verify_examples.py "$ISO/scripts/verify_examples.py"
+          rm -rf "$ISO/src"
+          test -f "$ISO/src.so"
+          cd "$ISO"
+          export PYTHONPATH="$ISO"
+
+          python -c "import src; print('import', src.__version__); assert src.run_pipeline"
+          python -m src --version
+
+          python scripts/verify_examples.py
+
+          python -m src examples/small/case.yaml -o "$ISO/results-small"
+          python -c "import json; d=json.load(open('$ISO/results-small/results.json')); assert d['probes'] and d['wells']"
+          echo "offline small ok"
+
+          cleanup() {
+            for name in lab field backend; do
+              if [[ -f "$ISO/$name.pid" ]]; then
+                kill "$(cat "$ISO/$name.pid")" 2>/dev/null || true
+              fi
+            done
+          }
+          trap cleanup EXIT
+
+          python examples/online/recv_fields.py --port 19001 --label lab > "$ISO/lab.log" 2>&1 &
+          echo $! > "$ISO/lab.pid"
+          python examples/online/recv_fields.py --port 19002 --label field > "$ISO/field.log" 2>&1 &
+          echo $! > "$ISO/field.pid"
+          python -m src examples/small/case.yaml --tcp-port 19000 --ip 127.0.0.1 \
+            --lab-port 19001 --field-port 19002 --window 24 --invert-every 60 \
+            > "$ISO/backend.log" 2>&1 &
+          echo $! > "$ISO/backend.pid"
+
+          for _ in $(seq 1 40); do
+            if grep -q '"mode": "tcp"' "$ISO/backend.log"; then
+              break
+            fi
+            sleep 0.25
+          done
+          if ! grep -q '"mode": "tcp"' "$ISO/backend.log"; then
+            echo "backend did not start" >&2
+            cat "$ISO/backend.log" >&2 || true
+            exit 1
+          fi
+
+          python examples/online/send_steps.py --host 127.0.0.1 --port 19000 \
+            --probes examples/small/probes.csv --wells examples/small/wells.csv \
+            --observations examples/small/observations.csv --series examples/small/series.csv \
+            | tee "$ISO/send.log"
+          sleep 2
+
+          echo "----- send -----"
+          cat "$ISO/send.log"
+          echo "----- lab -----"
+          cat "$ISO/lab.log"
+          echo "----- field -----"
+          cat "$ISO/field.log"
+          echo "----- backend -----"
+          cat "$ISO/backend.log"
+
+          grep -q "ACK seq=0" "$ISO/send.log"
+          grep -q "ACK seq=2" "$ISO/send.log"
+          grep -q "scale=lab" "$ISO/lab.log"
+          grep -q "results:" "$ISO/lab.log"
+          grep -q "scale=field" "$ISO/field.log"
+          echo "online small ok"
