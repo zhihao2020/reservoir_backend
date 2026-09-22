@@ -21,7 +21,8 @@ python -m src path/to/case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 -
 
 `--tcp-port` 是测点/注采的入站 TCP（无默认值）；`--lab-port` / `--field-port` 是反演
 结果的两路 UDP 出站（实验 / 矿场尺度）；`--control-port` 是可选的控制端口（应答
-RESEND 重发请求）。不写 `-o` 不落盘。
+RESEND 重发请求）。`--model {none,black_oil,compositional,fcm}` 选前向饱和度模型（覆盖
+YAML 里的 `forward.model`），默认 `none`（克里金，联调默认）。不写 `-o` 不落盘。
 
 在线时 `case.yaml` 只做 init（网格、测点坐标、井轨迹、初值、相似比）；`observations` /
 `series` 可以没有（即使写了也会被忽略，观测一律走 TCP）。采集端连上 `--tcp-port` 后这条
@@ -42,9 +43,9 @@ RESEND 重发请求）。不写 `-o` 不落盘。
 
 ## 案例库
 
-`examples/` 下 5 类案例（`small` / `twod` / `model_compare` / `offline` / `online`），
-全部可直接运行，不依赖 GEM。发射脚本 `examples/online/send_steps.py` 是协议 v2 的
-参考实现，可对任意案例目录复用。仪表盘（UDP 接收端）由对接方按协议实现。
+`examples/` 下 6 类案例（`small` / `twod` / `model_compare` / `offline` / `online` /
+`shale_oil`），全部可直接运行，不依赖 GEM。发射脚本 `examples/online/send_steps.py` 是协议
+v2 的参考实现，可对任意案例目录复用。仪表盘（UDP 接收端）由对接方按协议实现。
 
 ## 协议 v2 速览
 

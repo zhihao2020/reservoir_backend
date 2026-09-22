@@ -18,6 +18,7 @@ python scripts/verify_examples.py     # 应打印 "all examples verified"
 | 多模型对照 | `model_compare/` | 10×10×10 | total_mobility + 3phase | 验证两条反演路径 |
 | 离线文件 | `offline/` | 20×20×20 | black_oil_3phase | `-o` 输出格式 |
 | 在线对接 | `online/` | 60×60×60 | black_oil_3phase | GEM shailoil、16 测点 5 井 12 月 |
+| 页岩油 CO₂ | `shale_oil/` | 15×15×15 | black_oil_3phase | **真实 GEM 数据联调**、CO₂ 组分追踪 |
 
 ## 每个案例怎么跑
 
@@ -31,7 +32,8 @@ python -m src examples/<name>/case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-por
 
 ## 案例文件与生成
 
-除 `online/` 外，其余由 `scripts/gen_synthetic_case.py` 生成（确定性、无 GEM）：
+除 `online/`（GEM shailoil 合成重放）与 `shale_oil/`（真实 GEM 导出数据）外，其余由
+`scripts/gen_synthetic_case.py` 生成（确定性、无 GEM）：
 
 ```bash
 python scripts/gen_synthetic_case.py    # 重新生成 small/twod/model_compare/offline
