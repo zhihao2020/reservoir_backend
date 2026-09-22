@@ -576,7 +576,9 @@ def _implicit_compositional_step(
 
     Bg = float(params.bg)
     inv_Bg = 1.0 / max(Bg, 1.0e-12)
-    A_g = A + params.rho_g * A_grav
+    # Gas Darcy velocity v = -k lam (grad p + rho_g grad z); its divergence is
+    # A@lam - rho_g*A_grav@lam (A_grav@lam = div(k lam grad z)). rho_g > 0 sinks.
+    A_g = A - params.rho_g * A_grav
     n = int(sw0.size)
     I = identity(n, format="csr")
     sw = np.asarray(sw0, dtype=float).copy()
