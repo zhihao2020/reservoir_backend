@@ -65,7 +65,7 @@ def test_black_oil_forward_finite_and_conserved():
 
 def test_compositional_forward_finite_and_conserved():
     case, mesh, p, sw, so, sg = _setup()
-    params = replace(case.black_oil, c_sat=0.66)
+    params = replace(case.black_oil, rs_slope=1.0e-6)
     n_c = mesh.grid.n_cells
     fsw, fso, fsg = forward_saturations(
         "compositional", mesh.grid, p, np.full(n_c, case.k0), np.full(n_c, case.phi0),
@@ -84,7 +84,7 @@ def test_compositional_dissolves_gas():
     # black-oil model.
     _, _, fsg_bo = _run("black_oil")
     case, mesh, p, sw, so, sg = _setup()
-    params = replace(case.black_oil, c_sat=0.66)
+    params = replace(case.black_oil, rs_slope=1.0e-6)
     n_c = mesh.grid.n_cells
     _, _, fsg_c = forward_saturations(
         "compositional", mesh.grid, p, np.full(n_c, case.k0), np.full(n_c, case.phi0),
