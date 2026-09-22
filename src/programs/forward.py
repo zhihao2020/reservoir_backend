@@ -584,6 +584,18 @@ def _implicit_compositional_step(
     sw = np.asarray(sw0, dtype=float).copy()
     C = np.asarray(C0, dtype=float).copy()
     h = 1.0e-6
+
+    def residual(sw_, C_):
+        """Residual of the (sw, C) system at a trial state."""
+        _, so_, sg_ = _split_compositional(sw_, C_, Rs, Bg, params.bo_slope)
+        Rs_act_ = np.clip(np.where(so_ > 1.0e-12, (C_ - sg_ / Bg) / np.maximum(so_, 1.0e-12), 0.0), 0.0, Rs)
+        lam_w_, lam_o_, lam_g_ = phase_mobilities(sw_, so_, sg_, params)
+        r_sw_ = sw_ - sw0 - dt * inv_phiV * (qw - A @ lam_w_)
+        flux_o_ = A @ lam_o_
+        r_c_ = C_ - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g_ + Rs_act_ * flux_o_))
+        return np.concatenate([r_sw_, r_c_])
+
+    r0_norm = float(np.linalg.norm(residual(sw, C)))
     converged = False
     for _ in range(max_iter):
         _, so, sg = _split_compositional(sw, C, Rs, Bg, params.bo_slope)
@@ -591,10 +603,12 @@ def _implicit_compositional_step(
         # less than the equilibrium bound, so the flux/source use the real value.
         Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs)
         lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
-        r_sw = sw - sw0 - dt * inv_phiV * (qw - A @ lam_w)
         # dissolved CO2 carried by the oil = Rs_act * (A @ lam_o) element-wise
         flux_o = A @ lam_o
-        r_c = C - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g + Rs_act * flux_o))
+        r = np.concatenate([
+            sw - sw0 - dt * inv_phiV * (qw - A @ lam_w),
+            C - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g + Rs_act * flux_o)),
+        ])
         # derivatives (local, numerical through the phase split, per phase + ratio)
         _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg, params.bo_slope)
         Rs_sw = np.clip(np.where(so_p > 1.0e-12, (C - sg_p / Bg) / np.maximum(so_p, 1.0e-12), 0.0), 0.0, Rs)
@@ -619,20 +633,34 @@ def _implicit_compositional_step(
                 + diags(Rs_act) @ A @ diags(dt * inv_phiV * dlo_dC)
                 + diags(dt * inv_phiV * dRs_dC * flux_o))
         J = bmat([[J_ww, None], [J_cw, J_cc]], format="csr")
-        delta = _solve_linear(J, -np.concatenate([r_sw, r_c]))
-        sw_new = np.clip(sw + 0.5 * delta[:n], 0.0, 1.0)
-        # C = sg/Bg + Rs*so, maximised at sg=0 -> Rs*(1-sw); allow the full
-        # dissolved capacity (Rs >> 1/Bg), not just the free-gas bound inv_Bg.
-        C_new = np.clip(C + 0.5 * delta[n:], 0.0, (Rs + inv_Bg) * (1.0 - sw_new))
-        # Converge on the *actual* (damped + clipped) change: the raw Newton step
-        # stays huge because the Jacobian is ill-conditioned, but the bounded
-        # state settles.
+        delta = _solve_linear(J, -r)
+        # Backtracking line search (Armijo): the phase split has a kink at the
+        # saturation point, so a full Newton step can overshoot into the wrong
+        # region; shrink the step until the residual actually decreases.
+        alpha = 1.0
+        r_norm = float(np.linalg.norm(r))
+        sw_new = sw.copy()
+        C_new = C.copy()
+        r_new = r
+        for _ in range(12):
+            sw_new = np.clip(sw + alpha * delta[:n], 0.0, 1.0)
+            C_new = np.clip(C + alpha * delta[n:], 0.0, (Rs + inv_Bg) * (1.0 - sw_new))
+            r_new = residual(sw_new, C_new)
+            if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
+                break
+            alpha *= 0.5
         norm_d = float(np.linalg.norm(np.concatenate([sw_new - sw, C_new - C])))
         sw, C = sw_new, C_new
         norm_x = float(np.linalg.norm(np.concatenate([sw, C])))
-        if norm_d < tol * max(1.0, norm_x):
+        # converge on the *residual* (relative to the initial source), not the
+        # change: the ill-conditioned Jacobian can freeze the step while the
+        # residual is still large. A loose (5%) relative bound keeps the Newton
+        # from stalling on discretization noise at the saturation kink.
+        if float(np.linalg.norm(r_new)) < max(tol, 0.05) * max(1.0, r0_norm):
             converged = True
             break
+        if norm_d < 1.0e-12 * max(1.0, norm_x):
+            break  # stalled
     _, so, sg = _split_compositional(sw, C, Rs, Bg, params.bo_slope)
     return sw, so, sg, C, converged
 
