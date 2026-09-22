@@ -913,12 +913,25 @@ def _dissolved_fraction(
     return np.clip(x_d, 0.0, 0.999999)
 
 
+def _smooth_relu(x: NDArray[np.float64], delta: float) -> NDArray[np.float64]:
+    """Smooth ``max(x, 0)`` (quadratic spline, C¹-continuous).
+
+    Quadratic on ``(-delta, delta)``, 0 below and linear above. Removes the kink
+    in the phase split at the saturation point so the Newton Jacobian is
+    continuous (the practical equivalent of variable switching).
+    """
+    x = np.asarray(x, dtype=float)
+    d = np.maximum(np.asarray(delta, dtype=float), 1.0e-30)
+    return np.where(x >= d, x, np.where(x <= -d, 0.0, (x + d) ** 2 / (4.0 * d)))
+
+
 def _split_compositional(
     sw: NDArray[np.float64],
     C: NDArray[np.float64],
     Rs: NDArray[np.float64],
     Bg: float,
     bo_slope: float = 0.0,
+    smooth: float = 0.05,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Phase split of a conserved CO2 component ``C = sg/Bg + Rs*No`` (surface).
 
@@ -927,7 +940,9 @@ def _split_compositional(
     ``bo_slope`` the linear oil-swelling slope (``Bo = 1 + bo_slope*Rs``, reservoir
     oil / surface oil). With swelling, the oil occupies ``so = No*Bo`` reservoir
     volume, so the dissolved capacity per reservoir volume shrinks by ``Bo`` and
-    the free gas appears earlier. Returns ``(sw, so, sg)`` with ``sw+so+sg=1``.
+    the free gas appears earlier. ``smooth`` is the relative transition width of
+    the free-gas onset (fraction of the dissolved capacity) used to keep the
+    split C¹-continuous. Returns ``(sw, so, sg)`` with ``sw+so+sg=1``.
     """
     sw_p = np.clip(np.asarray(sw, dtype=float), 0.0, None)
     C_p = np.clip(np.asarray(C, dtype=float), 0.0, None)
@@ -937,7 +952,9 @@ def _split_compositional(
     Bo = 1.0 + bo_slope * Rs_p  # reservoir oil / surface oil (swelling)
     dissolved_cap = Rs_p * nw / Bo
     denom = inv_Bg - Rs_p / Bo
-    sg = np.where(C_p <= dissolved_cap, 0.0, (C_p - dissolved_cap) / np.maximum(denom, 1.0e-12))
+    excess = C_p - dissolved_cap
+    delta = smooth * np.maximum(dissolved_cap, 1.0e-6)
+    sg = _smooth_relu(excess, delta) / np.maximum(denom, 1.0e-12)
     sg = np.clip(sg, 0.0, nw)
     so = nw - sg
     return sw_p, so, sg
