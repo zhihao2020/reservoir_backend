@@ -110,3 +110,19 @@ def test_fcm_phase_split():
     sw, so, sg = fcm_phase_split(np.array([0.3, 0.66, 0.8]), c_sat=0.66)
     assert np.allclose(sg, [0.0, 0.0, (0.8 - 0.66) / 0.34])
     assert np.allclose(sw + so + sg, 1.0)
+
+
+def test_tabular_relperm():
+    # Tabular rel-perm interpolates the *SGT/*SWT curves and uses Stone I for the
+    # oil phase (kro = krog * krow).
+    from src.programs.rock import RelpermTable, tabular_phase_mobilities
+
+    table = RelpermTable.from_rows(
+        [[0.0, 0.0, 1.0], [0.4, 0.25, 0.25], [1.0, 1.0, 0.0]],
+        [[0.0, 0.0, 1.0], [1.0, 1.0, 0.0]],
+    )
+    params = BlackOilParams(mu_o=2.0e-3, mu_g=2.0e-5)
+    lam_w, lam_o, lam_g = tabular_phase_mobilities(0.0, 0.6, 0.4, table, params)
+    assert np.allclose(lam_w, 0.0)
+    assert np.allclose(lam_o, 0.25 / 2.0e-3)  # Krog(0.4)=0.25 * Krow(0)=1
+    assert np.allclose(lam_g, 0.25 / 2.0e-5)  # Krg(0.4)=0.25

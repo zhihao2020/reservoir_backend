@@ -12,7 +12,7 @@ import yaml
 from numpy.typing import NDArray
 
 from ..exceptions import CaseSchemaError, InvalidObservation
-from ..programs.rock import BlackOilParams, WellModelParams
+from ..programs.rock import BlackOilParams, RelpermTable, WellModelParams
 from ..programs.similarity import VOLUME_BASES
 from .units import MD_TO_M2, to_m3_s, to_metres, to_pa, to_seconds
 
@@ -23,6 +23,24 @@ def _as_mapping(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise CaseSchemaError(["expected a mapping"])
     return raw
+
+
+def _parse_relperm_table(raw: Any) -> RelpermTable | None:
+    """Parse an optional ``relperm_table: {sgt: [...], swt: [...]}`` block.
+
+    ``sgt`` rows are ``[Sg, Krg, Krog]`` and ``swt`` rows ``[Sw, Krw, Krow]``
+    (CMG ``*SGT`` / ``*SWT``). Returns ``None`` when the block is absent, so the
+    forward model falls back to the Corey power-law rel-perm.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise CaseSchemaError(["relperm_table must be a mapping with sgt/swt lists"])
+    sgt = raw.get("sgt")
+    swt = raw.get("swt")
+    if sgt is None or swt is None:
+        raise CaseSchemaError(["relperm_table needs both sgt and swt lists"])
+    return RelpermTable.from_rows(list(sgt), list(swt))
 
 
 def _vec3(raw: Any, name: str) -> tuple[float, float, float]:
@@ -346,6 +364,7 @@ def lab_case_from_mapping(
         rho_s=float(oil_raw.get("rho_s", 0.0)),
         c_sat=float(oil_raw.get("c_sat", 0.66)),
         bg=float(oil_raw.get("bg", 1.0)),
+        relperm_table=_parse_relperm_table(oil_raw.get("relperm_table")),
     )
     well = WellModelParams(
         rw=float(well_raw.get("rw", 0.005)),

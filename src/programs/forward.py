@@ -18,7 +18,7 @@ from .rock import (
     _face_cell_pairs,
     _face_geometry,
     _harmonic_mean,
-    corey_phase_mobilities,
+    phase_mobilities,
     corey_total_mobility,
     darcy_divergence,
     invert_rock,
@@ -291,7 +291,7 @@ def black_oil_forward(
     sg = np.asarray(sg0, dtype=float).copy()
 
     for t in range(n_t):
-        lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
+        lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
         qw_t = well_cell_rates(grid, wells, pw[t])
         qo_t = well_cell_rates(grid, wells, po[t])
         qg_t = well_cell_rates(grid, wells, pg[t])
@@ -320,7 +320,7 @@ def black_oil_forward(
                 sw, so, sg = _project_three(sw, so, sg)
                 remaining -= dt_sub
                 n_sub += 1
-                lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
+                lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
                 p = _solve_pressure_with_source(grid, permeability, lam_w + lam_o + lam_g, qw_t + qo_t + qg_t, ref_cell, ref_p)
     return p_hist, sw_hist, so_hist, sg_hist
 
@@ -478,10 +478,10 @@ def _corey_mobilities_derivs(
 ) -> tuple[NDArray[np.float64], ...]:
     """Corey phase mobilities and their own-saturation derivatives (numerical)."""
     h = 1.0e-6
-    lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
-    lw_p, _, _ = corey_phase_mobilities(sw + h, so, sg, params)
-    _, lo_p, _ = corey_phase_mobilities(sw, so + h, sg, params)
-    _, _, lg_p = corey_phase_mobilities(sw, so, sg + h, params)
+    lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
+    lw_p, _, _ = phase_mobilities(sw + h, so, sg, params)
+    _, lo_p, _ = phase_mobilities(sw, so + h, sg, params)
+    _, _, lg_p = phase_mobilities(sw, so, sg + h, params)
     return lam_w, lam_o, lam_g, (lw_p - lam_w) / h, (lo_p - lam_o) / h, (lg_p - lam_g) / h
 
 
@@ -590,7 +590,7 @@ def _implicit_compositional_step(
         # actual dissolved ratio (<= equilibrium Rs): undersaturated oil carries
         # less than the equilibrium bound, so the flux/source use the real value.
         Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs)
-        lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
+        lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
         r_sw = sw - sw0 - dt * inv_phiV * (qw - A @ lam_w)
         # dissolved CO2 carried by the oil = Rs_act * (A @ lam_o) element-wise
         flux_o = A @ lam_o
@@ -598,14 +598,14 @@ def _implicit_compositional_step(
         # derivatives (local, numerical through the phase split, per phase + ratio)
         _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg, params.bo_slope)
         Rs_sw = np.clip(np.where(so_p > 1.0e-12, (C - sg_p / Bg) / np.maximum(so_p, 1.0e-12), 0.0), 0.0, Rs)
-        lw_p, lo_p, lg_p = corey_phase_mobilities(sw + h, so_p, sg_p, params)
+        lw_p, lo_p, lg_p = phase_mobilities(sw + h, so_p, sg_p, params)
         dlw_dsw = (lw_p - lam_w) / h
         dlg_dsw = (lg_p - lam_g) / h
         dlo_dsw = (lo_p - lam_o) / h
         dRs_dsw = (Rs_sw - Rs_act) / h
         _, so_c, sg_c = _split_compositional(sw, C + h, Rs, Bg, params.bo_slope)
         Rs_c = np.clip(np.where(so_c > 1.0e-12, (C + h - sg_c / Bg) / np.maximum(so_c, 1.0e-12), 0.0), 0.0, Rs)
-        _lw_c, lo_c, lg_c = corey_phase_mobilities(sw, so_c, sg_c, params)
+        _lw_c, lo_c, lg_c = phase_mobilities(sw, so_c, sg_c, params)
         dlg_dC = (lg_c - lam_g) / h
         dlo_dC = (lo_c - lam_o) / h
         dRs_dC = (Rs_c - Rs_act) / h
@@ -685,7 +685,7 @@ def _forward_black_oil_saturations(
     so_hist = np.zeros((n_t, n_c))
     sg_hist = np.zeros((n_t, n_c))
     for t in range(n_t):
-        lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
+        lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
         qw_t = well_cell_rates(grid, wells, qw[t])
         qo_t = well_cell_rates(grid, wells, qo[t])
         qg_t = well_cell_rates(grid, wells, qg[t])
@@ -972,7 +972,7 @@ def _forward_compositional_saturations(
         Rs_t = _eq_solution_gas_ratio(p_in[t], params)
         Bg = float(params.bg)
         sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
-        lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
+        lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
         qw_t = well_cell_rates(grid, wells, qw[t])
         qo_t = well_cell_rates(grid, wells, qo[t])
         qg_t = well_cell_rates(grid, wells, qg[t])

@@ -67,6 +67,32 @@ def _theta_bounds(n_probe: int, n_rel: int) -> tuple[NDArray[np.float64], NDArra
 
 
 @dataclass(frozen=True)
+class RelpermTable:
+    """Tabular two-phase relative-permeability curves (CMG ``*SGT`` / ``*SWT``).
+
+    ``sg``/``krg``/``krog`` are the gas-oil table (gas saturation, gas relperm,
+    oil relperm in the presence of gas); ``sw``/``krw``/``krow`` the water-oil
+    table. The three-phase oil relperm uses Stone I (``kro = krog * krow``), which
+    collapses to ``krog`` when ``sw`` is at connate water.
+    """
+
+    sg: NDArray[np.float64]
+    krg: NDArray[np.float64]
+    krog: NDArray[np.float64]
+    sw: NDArray[np.float64]
+    krw: NDArray[np.float64]
+    krow: NDArray[np.float64]
+
+    @classmethod
+    def from_rows(cls, sgt: list[list[float]], swt: list[list[float]]) -> RelpermTable:
+        sgt = np.asarray(sgt, dtype=float)
+        swt = np.asarray(swt, dtype=float)
+        if sgt.shape[1] < 3 or swt.shape[1] < 3:
+            raise InvalidSaturation("relperm tables need [saturation, kr_self, kr_other] columns")
+        return cls(sgt[:, 0], sgt[:, 1], sgt[:, 2], swt[:, 0], swt[:, 1], swt[:, 2])
+
+
+@dataclass(frozen=True)
 class BlackOilParams:
     mu_w: float = 5.0e-4
     mu_o: float = 2.0e-3
@@ -109,6 +135,9 @@ class BlackOilParams:
     # the *surface* injection rate into the *reservoir* volume the free gas
     # actually occupies, keeping the CO2 component bounded.
     bg: float = 1.0
+    # Optional tabular rel-perm (CMG *SGT / *SWT). When set, the forward model
+    # interpolates these curves instead of the Corey power-law above.
+    relperm_table: RelpermTable | None = None
 
 
 @dataclass(frozen=True)
@@ -185,6 +214,36 @@ def corey_phase_mobilities(
     kro = params.kro_end * np.power(soe, params.no)
     krg = params.krg_end * np.power(sge, params.ng)
     return krw / params.mu_w, kro / params.mu_o, krg / params.mu_g
+
+
+def tabular_phase_mobilities(
+    sw: NDArray[np.float64] | float,
+    so: NDArray[np.float64] | float,
+    sg: NDArray[np.float64] | float,
+    table: RelpermTable,
+    params: BlackOilParams,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Per-phase mobilities from tabular rel-perm (Stone I for the oil)."""
+    sw_a = np.asarray(sw, dtype=float)
+    sg_a = np.asarray(sg, dtype=float)
+    krw = np.interp(sw_a, table.sw, table.krw)
+    krow = np.interp(sw_a, table.sw, table.krow)
+    krog = np.interp(sg_a, table.sg, table.krog)
+    krg = np.interp(sg_a, table.sg, table.krg)
+    kro = krog * krow  # Stone I (connate-water oil relperm is ~1)
+    return krw / params.mu_w, kro / params.mu_o, krg / params.mu_g
+
+
+def phase_mobilities(
+    sw: NDArray[np.float64] | float,
+    so: NDArray[np.float64] | float,
+    sg: NDArray[np.float64] | float,
+    params: BlackOilParams,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Per-phase mobilities: tabular when ``params.relperm_table`` is set, else Corey."""
+    if params.relperm_table is not None:
+        return tabular_phase_mobilities(sw, so, sg, params.relperm_table, params)
+    return corey_phase_mobilities(sw, so, sg, params)
 
 
 def corey_total_mobility(
