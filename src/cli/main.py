@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lab-port", type=int, default=None, metavar="PORT", help="UDP port for laboratory-scale fields")
     parser.add_argument("--field-port", type=int, default=None, metavar="PORT", help="UDP port for field-scale fields")
     parser.add_argument("--control-port", type=int, default=None, metavar="PORT", help="UDP port to answer RESEND requests")
-    parser.add_argument("--model", choices=("none", "black_oil", "compositional", "fcm"), default=None, help="forward saturation model (overrides forward.model in the case)")
+    parser.add_argument("--model", choices=("none", "black_oil", "compositional"), default=None, help="forward saturation model (overrides forward.model in the case)")
     args = parser.parse_args(argv)
     online = args.tcp_port is not None
     case = load_lab_case(args.case, require_series=not online)

@@ -368,7 +368,9 @@ def forward_saturations(
             grid, pressure, permeability, phi, params, wells,
             well_qw, well_qo, well_qg, times, sw0, so0, sg0, max_ds=max_ds,
         )
-    if name in ("compositional", "solution_gas", "co2"):
+    # ``fcm`` is an alias kept for backward compatibility: it is the miscible
+    # (single-phase) limit of the unified compositional model.
+    if name in ("compositional", "solution_gas", "co2", "fcm"):
         return _forward_compositional_saturations(
             grid, pressure, permeability, phi, params, wells,
             well_qw, well_qo, well_qg, times, sw0, so0, sg0, max_ds=max_ds,
@@ -496,13 +498,16 @@ def _gravity_divergence_matrix(grid, permeability):
 
 
 def _solve_linear(A, b):
-    """Solve ``A x = b`` with GMRES (fast for these sparse M-matrices), falling
-    back to a direct LU solve if GMRES does not converge."""
-    from scipy.sparse.linalg import gmres, spsolve
+    """Solve ``A x = b`` with a direct sparse LU solve, falling back to GMRES if
+    the factorisation produces non-finite values (singular / near-singular)."""
+    from scipy.sparse.linalg import spsolve
+
+    x = spsolve(A, b)
+    if np.isfinite(x).all():
+        return x
+    from scipy.sparse.linalg import gmres
 
     x, info = gmres(A, b, rtol=1.0e-6, atol=1.0e-10, maxiter=500)
-    if info != 0:
-        x = spsolve(A, b)
     return x
 
 
@@ -547,77 +552,6 @@ def _implicit_black_oil_step(
             break
     sg = 1.0 - sw - so
     return sw, so, sg, converged
-
-
-def _implicit_compositional_step(
-    A,
-    A_grav,
-    inv_phiV: NDArray[np.float64],
-    dt: float,
-    sw0: NDArray[np.float64],
-    C0: NDArray[np.float64],
-    qw: NDArray[np.float64],
-    q_co2: NDArray[np.float64],
-    Rs: NDArray[np.float64],
-    params: BlackOilParams,
-    *,
-    max_iter: int = 30,
-    tol: float = 1.0e-3,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], bool]:
-    """One fully-implicit solution-gas (CO2 component) step (Newton).
-
-    Tracks water saturation ``sw`` and the surface-volume CO2 component
-    ``C = sg/Bg + Rs*so``; the phase split is recomputed inside the Newton
-    iteration from ``Rs`` and ``Bg``. The free gas carries a buoyancy term
-    ``rho_g`` (the gas sinks when ``rho_g > 0``); the dissolved CO2 moves with
-    the oil and has no separate gravity.
-    """
-    from scipy.sparse import bmat, diags, identity
-
-    Bg = float(params.bg)
-    inv_Bg = 1.0 / max(Bg, 1.0e-12)
-    A_g = A + params.rho_g * A_grav
-    n = int(sw0.size)
-    I = identity(n, format="csr")
-    sw = np.asarray(sw0, dtype=float).copy()
-    C = np.asarray(C0, dtype=float).copy()
-    h = 1.0e-6
-    converged = False
-    for _ in range(max_iter):
-        _, so, sg = _split_compositional(sw, C, Rs, Bg)
-        lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
-        r_sw = sw - sw0 - dt * inv_phiV * (qw - A @ lam_w)
-        r_c = C - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g + Rs * A @ lam_o))
-        # derivatives (local, numerical through the phase split, per phase)
-        _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg)
-        lw_p, lo_p, lg_p = corey_phase_mobilities(sw + h, so_p, sg_p, params)
-        dlw_dsw = (lw_p - lam_w) / h
-        dlg_dsw = (lg_p - lam_g) / h
-        dlo_dsw = (lo_p - lam_o) / h
-        _, so_c, sg_c = _split_compositional(sw, C + h, Rs, Bg)
-        _lw_c, lo_c, lg_c = corey_phase_mobilities(sw, so_c, sg_c, params)
-        dlg_dC = (lg_c - lam_g) / h
-        dlo_dC = (lo_c - lam_o) / h
-        J_ww = I + A @ diags(dt * inv_phiV * dlw_dsw)
-        J_cw = inv_Bg * A_g @ diags(dt * inv_phiV * dlg_dsw) + Rs * A @ diags(dt * inv_phiV * dlo_dsw)
-        J_cc = I + inv_Bg * A_g @ diags(dt * inv_phiV * dlg_dC) + Rs * A @ diags(dt * inv_phiV * dlo_dC)
-        J = bmat([[J_ww, None], [J_cw, J_cc]], format="csr")
-        delta = _solve_linear(J, -np.concatenate([r_sw, r_c]))
-        sw_new = np.clip(sw + 0.5 * delta[:n], 0.0, 1.0)
-        C_new = np.clip(C + 0.5 * delta[n:], 0.0, inv_Bg * (1.0 - sw_new))
-        # Converge on the *actual* (damped + clipped) change: the raw Newton step
-        # stays huge because the Jacobian is ill-conditioned, but the bounded
-        # state settles.
-        norm_d = float(np.linalg.norm(np.concatenate([sw_new - sw, C_new - C])))
-        sw, C = sw_new, C_new
-        norm_x = float(np.linalg.norm(np.concatenate([sw, C])))
-        if norm_d < tol * max(1.0, norm_x):
-            converged = True
-            break
-    _, so, sg = _split_compositional(sw, C, Rs, Bg)
-    return sw, so, sg, C, converged
-
-
 def _forward_black_oil_saturations(
     grid: CartesianGrid,
     pressure: NDArray[np.float64],
@@ -738,22 +672,6 @@ def _tpfa_matrix_vec(grid, permeability, mobility):
     cols = np.concatenate(cols)
     vals = np.concatenate(vals)
     return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
-
-
-def _eq_solution_gas_ratio(
-    pressure: NDArray[np.float64],
-    params: BlackOilParams,
-) -> NDArray[np.float64]:
-    """Equilibrium solution gas-oil ratio ``Rs`` (surface gas / surface oil).
-
-    Uses the *equilibrium* solubility slope ``rs_eq_slope`` (falling back to
-    ``rs_slope`` when unset). This is the surface-volume solubility bound used in
-    the forward model's phase split, distinct from the output ``rs`` metric.
-    """
-    slope = params.rs_eq_slope if params.rs_eq_slope > 0.0 else params.rs_slope
-    return np.maximum(slope * np.asarray(pressure, dtype=float), 0.0)
-
-
 def fcm_effective_viscosity(
     c: NDArray[np.float64],
     params: BlackOilParams,
@@ -848,10 +766,9 @@ def fcm_phase_split(c, *, c_sat, swc=0.0):
     sg = np.clip(sg, 0.0, nw)
     so = nw - sg
     return np.full_like(sg, swc), so, sg
-
-
-def fcm_forward(
+def _forward_compositional_saturations(
     grid: CartesianGrid,
+    pressure: NDArray[np.float64],
     permeability: NDArray[np.float64],
     phi: NDArray[np.float64],
     params: BlackOilParams,
@@ -860,23 +777,28 @@ def fcm_forward(
     well_qo: NDArray[np.float64],
     well_qg: NDArray[np.float64],
     times: NDArray[np.float64],
-    c0: NDArray[np.float64],
+    sw0: NDArray[np.float64],
+    so0: NDArray[np.float64],
+    sg0: NDArray[np.float64],
     *,
-    c_sat: float = 0.66,
-    max_iter: int = 30,
-    tol: float = 1.0e-3,
+    max_ds: float = 0.05,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """FCM (first-contact miscible) forward model.
+    """Unified CO2-component saturation transport (GEM-like, first-contact miscible).
 
-    Tracks the solvent (CO2) fraction ``c`` in a single phase; the effective
-    viscosity/density are mixed, and the density inversion drives gravity
-    segregation. Returns ``(sw, so, sg)`` via the solubility-threshold phase
-    split.
+    Tracks the CO2 solvent fraction ``c`` in a single miscible phase (mixed
+    viscosity/density); the solubility ``c_sat`` splits the free gas for output.
+    The transport is backward-Euler (implicit in ``c``) with an upwind advection
+    operator built from the current total mobility, so injected CO2 largely
+    dissolves and moves with the oil. The flow pressure is solved implicitly
+    (total mobility + total source), anchored at the kriged pressure of the
+    reference cell.
     """
     from scipy.sparse import diags
-    from scipy.sparse.linalg import gmres, spsolve
 
-    n_t = int(np.asarray(times).size)
+    p_in = np.asarray(pressure, dtype=float)
+    if p_in.ndim == 1:
+        p_in = p_in[None, :]
+    n_t = int(p_in.shape[0])
     n_c = grid.n_cells
     k = np.asarray(permeability, dtype=float)
     phi_a = np.asarray(phi, dtype=float)
@@ -889,7 +811,12 @@ def fcm_forward(
     qw, qo, qg = _balance_well_rates(qw, qo, qg)
     times_a = np.asarray(times, dtype=float)
     ref_cell = 0
-    c = np.clip(np.asarray(c0, dtype=float), 0.0, 1.0).copy()
+    c_sat = float(params.c_sat)
+    swc = float(params.swc)
+    sg0_a = np.asarray(sg0, dtype=float)
+    # Initial CO2 solvent fraction: assume the initial oil is CO2-free, so only
+    # the free gas (sg0) contributes.
+    c = np.clip(sg0_a / np.maximum(1.0 - swc, 1.0e-12), 0.0, 1.0)
     c_hist = np.zeros((n_t, n_c))
     for t in range(n_t):
         qw_t = well_cell_rates(grid, wells, qw[t])
@@ -930,129 +857,5 @@ def fcm_forward(
     so_hist = np.zeros((n_t, n_c))
     sg_hist = np.zeros((n_t, n_c))
     for t in range(n_t):
-        sw_hist[t], so_hist[t], sg_hist[t] = fcm_phase_split(c_hist[t], c_sat=c_sat, swc=float(params.swc))
-    return sw_hist, so_hist, sg_hist
-
-
-def _dissolved_fraction(
-    pressure: NDArray[np.float64],
-    params: BlackOilParams,
-) -> NDArray[np.float64]:
-    """Equilibrium dissolved-CO2 fraction of the oil phase ``x_d = Rs/(1+Rs)``.
-
-    Uses the *equilibrium* solubility slope ``rs_eq_slope`` (falling back to
-    ``rs_slope`` when unset), which bounds how much CO2 the oil can hold at a
-    given pressure — distinct from the output ``rs`` throughput metric.
-    """
-    slope = params.rs_eq_slope if params.rs_eq_slope > 0.0 else params.rs_slope
-    rs = np.maximum(slope * np.asarray(pressure, dtype=float), 0.0)
-    x_d = rs / (1.0 + rs)
-    return np.clip(x_d, 0.0, 0.999999)
-
-
-def _split_compositional(
-    sw: NDArray[np.float64],
-    C: NDArray[np.float64],
-    Rs: NDArray[np.float64],
-    Bg: float,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Phase split of a conserved CO2 component ``C = sg/Bg + Rs*so`` (surface).
-
-    ``sw`` is the water saturation, ``Rs`` the solution gas-oil ratio (surface
-    gas / surface oil) and ``Bg`` the gas formation-volume factor. Returns
-    ``(sw, so, sg)`` with ``sw + so + sg = 1``.
-    """
-    sw_p = np.clip(np.asarray(sw, dtype=float), 0.0, None)
-    C_p = np.clip(np.asarray(C, dtype=float), 0.0, None)
-    Rs_p = np.clip(np.asarray(Rs, dtype=float), 0.0, None)
-    nw = 1.0 - sw_p
-    inv_Bg = 1.0 / max(float(Bg), 1.0e-12)
-    denom = inv_Bg - Rs_p
-    sg = np.where(C_p <= Rs_p * nw, 0.0, (C_p - Rs_p * nw) / np.maximum(denom, 1.0e-12))
-    sg = np.clip(sg, 0.0, nw)
-    so = nw - sg
-    return sw_p, so, sg
-
-
-def _forward_compositional_saturations(
-    grid: CartesianGrid,
-    pressure: NDArray[np.float64],
-    permeability: NDArray[np.float64],
-    phi: NDArray[np.float64],
-    params: BlackOilParams,
-    wells: WellMap,
-    well_qw: NDArray[np.float64],
-    well_qo: NDArray[np.float64],
-    well_qg: NDArray[np.float64],
-    times: NDArray[np.float64],
-    sw0: NDArray[np.float64],
-    so0: NDArray[np.float64],
-    sg0: NDArray[np.float64],
-    *,
-    max_ds: float = 0.05,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Solution-gas (CO2-in-oil) saturation transport.
-
-    Tracks the water saturation ``sw`` and the conserved CO2 component
-    ``C = x_d*so + sg``; the oil/gas phase split is recomputed at every substep
-    from the equilibrium dissolved fraction ``x_d``. The CO2 component flux is
-    the free-gas Darcy flux plus the dissolved CO2 carried by the oil phase, so
-    injected CO2 largely dissolves and moves with the oil. The flow pressure is
-    solved implicitly (total mobility + total source), as in the black-oil model.
-    """
-    p_in = np.asarray(pressure, dtype=float)
-    if p_in.ndim == 1:
-        p_in = p_in[None, :]
-    n_t = int(p_in.shape[0])
-    n_c = grid.n_cells
-    k = np.asarray(permeability, dtype=float)
-    phi_a = np.asarray(phi, dtype=float)
-    vol = grid.cell_volumes()
-    qw = np.asarray(well_qw, dtype=float)
-    qo = np.asarray(well_qo, dtype=float)
-    qg = np.asarray(well_qg, dtype=float)
-    if qw.ndim == 1:
-        qw, qo, qg = qw[None, :], qo[None, :], qg[None, :]
-    qw, qo, qg = _balance_well_rates(qw, qo, qg)
-    times_a = np.asarray(times, dtype=float)
-    ref_cell = 0
-    inv_phiV = 1.0 / (phi_a * vol)
-    sw = np.asarray(sw0, dtype=float).copy()
-    so0_a = np.asarray(so0, dtype=float)
-    sg0_a = np.asarray(sg0, dtype=float)
-    # Initial surface-volume CO2 component: assume the initial oil is CO2-free,
-    # so only the free gas (sg0/Bg) contributes. The injected CO2 then dissolves
-    # as it moves.
-    C = sg0_a.copy() / float(params.bg)
-    sw_hist = np.zeros((n_t, n_c))
-    so_hist = np.zeros((n_t, n_c))
-    sg_hist = np.zeros((n_t, n_c))
-    for t in range(n_t):
-        Rs_t = _eq_solution_gas_ratio(p_in[t], params)
-        Bg = float(params.bg)
-        sw, so, sg = _split_compositional(sw, C, Rs_t, Bg)
-        lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
-        qw_t = well_cell_rates(grid, wells, qw[t])
-        qo_t = well_cell_rates(grid, wells, qo[t])
-        qg_t = well_cell_rates(grid, wells, qg[t])
-        q_c = qg_t / Bg + Rs_t * qo_t
-        ref_p = float(p_in[t, ref_cell])
-        p = _solve_pressure_with_source(grid, k, lam_w + lam_o + lam_g, qw_t + qo_t + qg_t, ref_cell, ref_p)
-        sw_hist[t] = sw.copy()
-        so_hist[t] = so.copy()
-        sg_hist[t] = sg.copy()
-        if t < n_t - 1:
-            remaining = float(times_a[t + 1] - times_a[t])
-            A = _mobility_divergence_matrix(grid, k, p)
-            A_grav = _gravity_divergence_matrix(grid, k)
-            n_halve = 0
-            while remaining > 1.0e-12 and n_halve < 20:
-                sw_new, so_new, sg_new, C_new, conv = _implicit_compositional_step(
-                    A, A_grav, inv_phiV, remaining, sw, C, qw_t, q_c, Rs_t, params
-                )
-                if conv:
-                    sw, so, sg, C = sw_new, so_new, sg_new, C_new
-                    break
-                remaining *= 0.5
-                n_halve += 1
+        sw_hist[t], so_hist[t], sg_hist[t] = fcm_phase_split(c_hist[t], c_sat=c_sat, swc=swc)
     return sw_hist, so_hist, sg_hist

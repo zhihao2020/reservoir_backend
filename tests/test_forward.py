@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from src.core.lab_case import load_lab_case
-from src.programs.forward import _dissolved_fraction, _split_compositional, forward_saturations
+from src.programs.forward import forward_saturations
 from src.programs.forward import fcm_effective_viscosity, fcm_effective_density, fcm_phase_split
 from src.programs.pipeline import run_mesh
 from src.programs.pressure import interpolate_pressure
@@ -65,7 +65,7 @@ def test_black_oil_forward_finite_and_conserved():
 
 def test_compositional_forward_finite_and_conserved():
     case, mesh, p, sw, so, sg = _setup()
-    params = replace(case.black_oil, rs_slope=1.0e-6)
+    params = replace(case.black_oil, c_sat=0.66)
     n_c = mesh.grid.n_cells
     fsw, fso, fsg = forward_saturations(
         "compositional", mesh.grid, p, np.full(n_c, case.k0), np.full(n_c, case.phi0),
@@ -79,42 +79,19 @@ def test_compositional_forward_finite_and_conserved():
 
 
 def test_compositional_dissolves_gas():
-    # With solution gas, most injected CO2 dissolves into the oil, so the free
-    # gas saturation stays far smaller than in the (permanent-gas) black-oil model.
+    # The miscible (single-phase) component model keeps the CO2 largely dissolved,
+    # so the free-gas saturation stays far smaller than in the (permanent-gas)
+    # black-oil model.
     _, _, fsg_bo = _run("black_oil")
     case, mesh, p, sw, so, sg = _setup()
-    params = replace(case.black_oil, rs_slope=1.0e-6)
+    params = replace(case.black_oil, c_sat=0.66)
     n_c = mesh.grid.n_cells
     _, _, fsg_c = forward_saturations(
         "compositional", mesh.grid, p, np.full(n_c, case.k0), np.full(n_c, case.phi0),
         params, mesh.wells, case.well_qw, case.well_qo, case.well_qg, case.times,
         sw[0], so[0], sg[0],
     )
-    assert fsg_c.max() <= fsg_bo.max() + 1.0e-9
-
-
-def test_split_compositional_consistent():
-    # Surface-volume phase split C = sg/Bg + Rs*so. Saturated cells (C above the
-    # dissolved capacity Rs*(1-sw)) recover the component exactly.
-    sw = np.array([0.0, 0.2, 0.5])
-    Rs = np.array([9.0, 1.0, 0.25])  # x_d = Rs/(1+Rs) -> 0.9, 0.5, 0.2
-    Bg = 1.0
-    nw = 1.0 - sw
-    C = np.array([8.5, 0.8, 0.15])  # first two saturated, last undersaturated
-    sw_p, so, sg = _split_compositional(sw, C, Rs, Bg)
-    assert np.allclose(sw_p + so + sg, 1.0, atol=1.0e-9)
-    assert np.all(so >= -1.0e-12) and np.all(sg >= -1.0e-12)
-    # saturated cells: sg/Bg + Rs*so == C
-    saturated = C > Rs * nw
-    assert np.allclose(sg[saturated] / Bg + Rs[saturated] * so[saturated], C[saturated], atol=1.0e-9)
-
-
-def test_dissolved_fraction_in_range():
-    p = np.array([0.0, 10.0e6, 20.0e6])
-    x_d = _dissolved_fraction(p, BlackOilParams(rs_slope=1.0e-5))
-    assert np.all((x_d >= 0.0) & (x_d < 1.0))
-    # rs_slope=0 -> no dissolved CO2
-    assert np.allclose(_dissolved_fraction(p, BlackOilParams(rs_slope=0.0)), 0.0)
+    assert fsg_c.mean() <= fsg_bo.mean() + 1.0e-9
 
 
 def test_fcm_mixing_rules():

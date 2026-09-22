@@ -16,7 +16,7 @@ from ..core.lab_case import LabCase, summarize_lab_case
 from ..core.units import MD_TO_M2
 from ..version import __version__
 from .mesh import MeshResult, build_mesh
-from .forward import forward_saturations, fcm_forward
+from .forward import forward_saturations
 from .pressure import interpolate_pressure
 from .results import summarize_results
 from .rock import invert_rock, invert_rock_three_phase, solution_gas_ratio, transient_weights, RockDiagnostics
@@ -173,25 +173,6 @@ def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields
     if case.forward_model in ("none", "off", "skip", "kriging"):
         # Skip the forward model: keep the kriged saturation (fast path).
         pass
-    elif case.forward_model == "fcm":
-        times_fwd = np.concatenate([[0.0], case.times])
-        qw_fwd = np.vstack([case.well_qw[:1], case.well_qw])
-        qo_fwd = np.vstack([case.well_qo[:1], case.well_qo])
-        qg_fwd = np.vstack([case.well_qg[:1], case.well_qg])
-        sw_f, so_f, sg_f = fcm_forward(
-            mesh.grid,
-            k_static,
-            phi_static,
-            oil,
-            mesh.wells,
-            qw_fwd,
-            qo_fwd,
-            qg_fwd,
-            times_fwd,
-            np.zeros(n_c),
-            c_sat=oil.c_sat,
-        )
-        sw, so, sg = sw_f[1:], so_f[1:], sg_f[1:]
     else:
         sw0 = np.full(n_c, oil.swc)
         sg0 = np.full(n_c, oil.sgc)

@@ -28,7 +28,7 @@ inversion:
 
 forward:
   # none = 跳过前向模型（克里金饱和度，快、稳定，联调默认）。
-  # 可选 black_oil / compositional / fcm（fcm 为混相模型，研究用）。
+  # 可选 black_oil（IMEX 式非混相三相）/ compositional（GEM 式组分：混相单相 + c_sat 析出）。
   model: none
 
 black_oil:
