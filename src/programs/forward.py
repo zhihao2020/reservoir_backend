@@ -608,8 +608,8 @@ def _implicit_compositional_step(
         Rs_act_ = np.clip(np.where(so_ > 1.0e-12, (C_ - sg_ / Bg) / np.maximum(so_, 1.0e-12), 0.0), 0.0, Rs)
         lam_w_, lam_o_, lam_g_ = phase_mobilities(sw_, so_, sg_, params)
         r_sw_ = accum * (sw_ - sw0) - (qw - A @ lam_w_)
-        flux_o_ = A @ lam_o_
-        r_c_ = accum * (C_ - C0) - (q_co2 - (inv_Bg * A_g @ lam_g_ + Rs_act_ * flux_o_))
+        flux_dissolved_ = A @ (Rs_act_ * lam_o_)  # upwind dissolved-CO2 flux (A upwinds Rs*lam)
+        r_c_ = accum * (C_ - C0) - (q_co2 - (inv_Bg * A_g @ lam_g_ + flux_dissolved_))
         return np.concatenate([r_sw_, r_c_])
 
     r0_norm = float(np.linalg.norm(residual(sw, C)))
@@ -620,11 +620,13 @@ def _implicit_compositional_step(
         # less than the equilibrium bound, so the flux/source use the real value.
         Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs)
         lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
-        # dissolved CO2 carried by the oil = Rs_act * (A @ lam_o) element-wise
-        flux_o = A @ lam_o
+        # dissolved CO2 flux is the *upwind* Rs*lam_o carried by the oil:
+        # A @ (Rs_act * lam_o). Using the centred Rs_act * (A @ lam_o) instead
+        # breaks CO2 conservation where Rs_act jumps (e.g. the plume front), so
+        # the dissolved CO2 never reaches cells with lower Rs.
         r = np.concatenate([
             accum * (sw - sw0) - (qw - A @ lam_w),
-            accum * (C - C0) - (q_co2 - (inv_Bg * A_g @ lam_g + Rs_act * flux_o)),
+            accum * (C - C0) - (q_co2 - (inv_Bg * A_g @ lam_g + A @ (Rs_act * lam_o))),
         ])
         # derivatives (local, numerical through the phase split, per phase + ratio)
         _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg, params.bo_slope)
@@ -641,14 +643,12 @@ def _implicit_compositional_step(
         dlo_dC = (lo_c - lam_o) / h
         dRs_dC = (Rs_c - Rs_act) / h
         J_ww = I + A @ diags(dlw_dsw)
-        # ``diags(Rs_act) @ A`` row-scales the oil-flux operator; the extra
-        # diagonal term is d(Rs_act)/d(sw,C) times the frozen oil flux.
+        # Derivative of the upwind dissolved-CO2 flux A@(Rs_act*lam_o): one
+        # combined column-scaling term d(Rs_act*lam_o)/d(sw,C) = dRs*lam_o + Rs*dlo.
         J_cw = (inv_Bg * A_g @ diags(dlg_dsw)
-                + diags(Rs_act) @ A @ diags(dlo_dsw)
-                + diags(dRs_dsw * flux_o))
+                + A @ diags(dRs_dsw * lam_o + Rs_act * dlo_dsw))
         J_cc = (I + inv_Bg * A_g @ diags(dlg_dC)
-                + diags(Rs_act) @ A @ diags(dlo_dC)
-                + diags(dRs_dC * flux_o))
+                + A @ diags(dRs_dC * lam_o + Rs_act * dlo_dC))
         # Block forward substitution (the Jacobian is lower block-triangular):
         # two n×n solves instead of one 2n×2n — cheaper and better-conditioned.
         r = -r
@@ -749,15 +749,16 @@ def _implicit_kinetic_step(
     Cd = np.asarray(Cd0, dtype=float).copy()
     h = 1.0e-6
     accum = 1.0 / (dt * inv_phiV)
+    phiV = 1.0 / inv_phiV  # pore volume per cell: scales k_diss (a rate per PV) to m3/s
     I = diags(accum)
 
     def residual(sw_, C_, Cd_):
         _, so_, sg_, No_, Rs_act_ = _split_kinetic(sw_, C_, Cd_, Rs, Bg, params.bo_slope)
         lam_w_, lam_o_, lam_g_ = phase_mobilities(sw_, so_, sg_, params)
-        flux_o_ = A @ lam_o_
+        flux_dissolved_ = A @ (Rs_act_ * lam_o_)  # upwind dissolved-CO2 flux
         r_sw_ = accum * (sw_ - sw0) - (qw - A @ lam_w_)
-        r_C_ = accum * (C_ - C0) - (qg / Bg + Rs_act_ * qo - (inv_Bg * A_g @ lam_g_ + Rs_act_ * flux_o_))
-        r_Cd_ = accum * (Cd_ - Cd0) - k_diss * (Rs * No_ - Cd_) - Rs_act_ * (qo - flux_o_)
+        r_C_ = accum * (C_ - C0) - (qg + Rs_act_ * qo - (inv_Bg * A_g @ lam_g_ + flux_dissolved_))
+        r_Cd_ = accum * (Cd_ - Cd0) - k_diss * (Rs * No_ - Cd_) * phiV - Rs_act_ * qo + flux_dissolved_
         return np.concatenate([r_sw_, r_C_, r_Cd_])
 
     r0_norm = float(np.linalg.norm(residual(sw, C, Cd)))
@@ -765,7 +766,6 @@ def _implicit_kinetic_step(
     for _ in range(max_iter):
         _, so, sg, No, Rs_act = _split_kinetic(sw, C, Cd, Rs, Bg, params.bo_slope)
         lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
-        flux_o = A @ lam_o
         r = residual(sw, C, Cd)
         # numerical derivatives w.r.t. sw / C / Cd
         _, so_s, sg_s, No_s, Rs_s = _split_kinetic(sw + h, C, Cd, Rs, Bg, params.bo_slope)
@@ -789,17 +789,21 @@ def _implicit_kinetic_step(
         dlg_dCd = (lg_d - lam_g) / h
         dRs_dCd = (Rs_d - Rs_act) / h
         dNo_dCd = (No_d - No) / h
-        # Jacobian blocks (flux form)
+        # Jacobian blocks (flux form). The dissolved-CO2 flux is the upwind
+        # A@(Rs_act*lam_o), so its d/d(sw,C,Cd) is A @ diags(dRs*lam_o + Rs*dlo);
+        # the produced dissolved gas Rs_act*qo contributes -diags(dRs*qo).
+        dF_sw = dRs_dsw * lam_o + Rs_act * dlo_dsw
+        dF_C = dRs_dC * lam_o + Rs_act * dlo_dC
+        dF_Cd = dRs_dCd * lam_o + Rs_act * dlo_dCd
         J_ww = I + A @ diags(dlw_dsw)
         J_wC = A @ diags(dlw_dC)
         J_wCd = A @ diags(dlw_dCd)
-        dF = flux_o - qo  # dissolved CO2 carried by the oil net of the produced one
-        J_Cw = inv_Bg * A_g @ diags(dlg_dsw) + diags(Rs_act) @ A @ diags(dlo_dsw) + diags(dRs_dsw * dF)
-        J_CC = I + inv_Bg * A_g @ diags(dlg_dC) + diags(Rs_act) @ A @ diags(dlo_dC) + diags(dRs_dC * dF)
-        J_CCd = inv_Bg * A_g @ diags(dlg_dCd) + diags(Rs_act) @ A @ diags(dlo_dCd) + diags(dRs_dCd * dF)
-        J_Cdw = -k_diss * diags(Rs * dNo_dsw) + diags(Rs_act) @ A @ diags(dlo_dsw) + diags(dRs_dsw * dF)
-        J_CdC = -k_diss * diags(Rs * dNo_dC) + diags(Rs_act) @ A @ diags(dlo_dC) + diags(dRs_dC * dF)
-        J_CdCd = I + k_diss * diags(1.0 - Rs * dNo_dCd) + diags(Rs_act) @ A @ diags(dlo_dCd) + diags(dRs_dCd * dF)
+        J_Cw = inv_Bg * A_g @ diags(dlg_dsw) + A @ diags(dF_sw) - diags(dRs_dsw * qo)
+        J_CC = I + inv_Bg * A_g @ diags(dlg_dC) + A @ diags(dF_C) - diags(dRs_dC * qo)
+        J_CCd = inv_Bg * A_g @ diags(dlg_dCd) + A @ diags(dF_Cd) - diags(dRs_dCd * qo)
+        J_Cdw = -k_diss * diags(Rs * dNo_dsw * phiV) + A @ diags(dF_sw) - diags(dRs_dsw * qo)
+        J_CdC = -k_diss * diags(Rs * dNo_dC * phiV) + A @ diags(dF_C) - diags(dRs_dC * qo)
+        J_CdCd = I + k_diss * diags((1.0 - Rs * dNo_dCd) * phiV) + A @ diags(dF_Cd) - diags(dRs_dCd * qo)
         # block forward substitution (lower block-triangular)
         r = -r
         delta_sw = _solve_linear(J_ww, r[:n])
@@ -1153,7 +1157,7 @@ def _forward_compositional_saturations(
     is the free-gas Darcy flux plus the dissolved CO2 carried by the oil phase,
     so injected CO2 largely dissolves and moves with the oil. Fully implicit
     (backward Euler + Newton) with adaptive sub-stepping; the flow pressure is
-    solved implicitly from the total mobility + total source.
+    the given (kriged) ``pressure`` field, not re-solved (see ``forward_saturations``).
     """
     p_in = np.asarray(pressure, dtype=float)
     if p_in.ndim == 1:
@@ -1170,7 +1174,6 @@ def _forward_compositional_saturations(
         qw, qo, qg = qw[None, :], qo[None, :], qg[None, :]
     qw, qo, qg = _balance_well_rates(qw, qo, qg)
     times_a = np.asarray(times, dtype=float)
-    ref_cell = 0
     inv_phiV = 1.0 / (phi_a * vol)
     sw = np.asarray(sw0, dtype=float).copy()
     sg0_a = np.asarray(sg0, dtype=float)
@@ -1191,13 +1194,17 @@ def _forward_compositional_saturations(
         else:
             sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
             Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs_t)
-        lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
         qw_t = well_cell_rates(grid, wells, qw[t])
         qo_t = well_cell_rates(grid, wells, qo[t])
         qg_t = well_cell_rates(grid, wells, qg[t])
-        q_c = qg_t / Bg + Rs_act * qo_t
-        ref_p = float(p_in[t, ref_cell])
-        p = _solve_pressure_with_source(grid, k, lam_w + lam_o + lam_g, qw_t + qo_t + qg_t, ref_cell, ref_p)
+        # qg_t is already surface-volume (GEM *BHF is a surface rate), so the
+        # surface-volume CO2 component source is qg_t + Rs*qo (NOT qg_t/Bg).
+        q_c = qg_t + Rs_act * qo_t
+        # Use the kriged pressure field directly: the incompressible total-mobility
+        # re-solve treats the surface gas rate as a reservoir rate and over-drives
+        # the top->bottom gradient (2 MPa vs the true ~0.06 MPa), which is wrong
+        # for a compressible (Bg<<1) injection. The kriged field is already ~0.1%.
+        p = p_in[t]
         sw_hist[t] = sw.copy()
         so_hist[t] = so.copy()
         sg_hist[t] = sg.copy()

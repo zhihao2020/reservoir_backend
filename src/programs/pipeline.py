@@ -17,7 +17,7 @@ from ..core.units import MD_TO_M2
 from ..version import __version__
 from .mesh import MeshResult, build_mesh
 from .forward import forward_saturations
-from .pressure import interpolate_pressure
+from .pressure import interpolate_pressure, interpolate_pressure_wells
 from .results import summarize_results
 from .rock import invert_rock, invert_rock_three_phase, solution_gas_ratio, transient_weights, RockDiagnostics
 from .saturation import (
@@ -135,12 +135,13 @@ def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields
     sg = np.zeros((n_t, n_c))
     pressure_method = str(case.method).strip().lower()
     sat_method = pressure_method
+    well_cells = tuple(np.asarray(c, dtype=np.int64) for c in mesh.wells.cells)
     for t in range(n_t):
-        p[t] = interpolate_pressure(
+        p[t] = interpolate_pressure_wells(
             mesh.grid,
             case.probe_xyz,
             case.pressure[t],
-            case.well_xyz,
+            well_cells,
             case.well_pw[t],
             method=pressure_method,
         )

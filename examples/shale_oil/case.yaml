@@ -45,6 +45,8 @@ black_oil:
   # 相劈分要求 1/Bg > Rs_max（≈190），即 Bg < 0.0053，否则自由气被剪成 0。
   bg: 0.003
   # 自由气重力头 rho_g = (rho_g - rho_o)*g，Pa/m；>0 表示 CO2 富相比油重、下沉到底层。
+  # 注意：底部羽流主体是井压差驱动（INJ 19.3→PROD 19.0 MPa），rho_g 只是密度分异的次要项；
+  # 20 MPa 下 CO2 ρ≈390 kg/m3（PR），Darcy 沉降需 ~16 年，远慢于 30 天注入。
   rho_g: 2000.0
   # 表格相渗（GEM deck *SGT / *SWT），替代 Corey 幂律 relperm。
   relperm_table:

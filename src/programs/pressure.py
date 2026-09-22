@@ -31,6 +31,43 @@ def interpolate_pressure(
     return interpolate_field(points, values, grid.cell_centers(), method=method)
 
 
+def interpolate_pressure_wells(
+    grid: CartesianGrid,
+    probe_xyz: NDArray[np.float64],
+    probe_pressure: NDArray[np.float64],
+    well_cells: tuple[NDArray[np.int64], ...],
+    well_pressure: NDArray[np.float64],
+    *,
+    method: str = "kriging",
+) -> NDArray[np.float64]:
+    """Interpolate pressure honouring the *full* well completion.
+
+    ``well_xyz`` in :func:`interpolate_pressure` is a single heel point, so a
+    kriged field only sees the BHP at that one spot and smears it out over the
+    completion. Here each well contributes one data point per completion cell
+    (each carrying the well BHP), so the near-uniform pressure plateau across an
+    open completion (e.g. the injector) is reproduced instead of a monotone ramp.
+    """
+    pts: list[NDArray[np.float64]] = []
+    vals: list[NDArray[np.float64]] = []
+    if np.asarray(probe_xyz, dtype=float).size:
+        pts.append(np.asarray(probe_xyz, dtype=float))
+        vals.append(np.asarray(probe_pressure, dtype=float).ravel())
+    centers = grid.cell_centers()
+    pw = np.asarray(well_pressure, dtype=float).ravel()
+    for i, cells in enumerate(well_cells):
+        c = np.asarray(cells, dtype=np.int64).ravel()
+        if c.size == 0 or i >= pw.size or not np.isfinite(pw[i]):
+            continue
+        pts.append(centers[c])
+        vals.append(np.full(c.size, float(pw[i])))
+    if not pts:
+        raise InvalidObservation("pressure interpolation needs probes or wells")
+    points = np.vstack(pts)
+    values = np.concatenate(vals)
+    return interpolate_field(points, values, centers, method=method)
+
+
 def _split(
     probe_xyz: NDArray[np.float64],
     probe_pressure: NDArray[np.float64],

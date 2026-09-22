@@ -126,3 +126,88 @@ def test_tabular_relperm():
     assert np.allclose(lam_w, 0.0)
     assert np.allclose(lam_o, 0.25 / 2.0e-3)  # Krog(0.4)=0.25 * Krow(0)=1
     assert np.allclose(lam_g, 0.25 / 2.0e-5)  # Krg(0.4)=0.25
+
+
+def test_compositional_surface_source_conservation():
+    # The conserved CO2 component C = sg/Bg + Rs*so is *surface* volume, and the
+    # well gas rate qg (GEM *BHF) is also *surface* volume. So a single implicit
+    # step must accumulate exactly sum(qg)*dt of C (the divergence-free flux
+    # contributes nothing to the total), i.e. the C source is qg -- NOT qg/Bg
+    # (which would over-inject by 1/Bg). Regression guard for the /Bg bug.
+    from src.programs.forward import (
+        _implicit_compositional_step, _eq_solution_gas_ratio,
+        _mobility_divergence_matrix, _gravity_divergence_matrix,
+    )
+
+    case, mesh, p, sw, so, sg = _setup()
+    grid = mesh.grid
+    n_c = grid.n_cells
+    k = np.full(n_c, case.k0)
+    phi = np.full(n_c, case.phi0)
+    vol = grid.cell_volumes()
+    inv_phiV = 1.0 / (phi * vol)
+    # bg != 1 so the regression is meaningful: qg/Bg (the bug) would over-inject
+    # by 1/bg = 333x relative to the surface rate qg.
+    params = replace(case.black_oil, rs_slope=0.0, rs_eq_slope=0.0, bg=0.003)
+    Rs = _eq_solution_gas_ratio(p[0], params)
+    C0 = np.zeros(n_c)
+    # Inject a small amount of pure gas at one cell only, no production: net
+    # surface gas = Q. Small enough to stay well inside the phase-split bounds
+    # (so the Newton converges), but the total is still exactly Q*dt.
+    Q = 1.0e-9
+    qg_t = np.zeros(n_c)
+    qg_t[0] = Q
+    A = _mobility_divergence_matrix(grid, k, p[0])
+    A_grav = _gravity_divergence_matrix(grid, k)
+    sw1, so1, sg1, C1, conv = _implicit_compositional_step(
+        A, A_grav, inv_phiV, 864.0, np.zeros(n_c), C0, np.zeros(n_c), qg_t, Rs, params
+    )
+    assert conv
+    accum = float((phi * vol * (C1 - C0)).sum())  # surface CO2 accumulated (m3)
+    injected = Q * 864.0                            # surface CO2 injected (m3)
+    assert np.isclose(accum, injected, rtol=0.05, atol=0.0), (
+        f"surface CO2 not conserved: accumulated {accum:.3e} m3 vs "
+        f"injected {injected:.3e} m3"
+    )
+
+
+def test_kinetic_dissolution_converges_and_conserves():
+    # Kinetic dissolution (k_diss > 0): the dissolved-CO2 relaxation term
+    # k_diss*(Rs*No - Cd) is a rate per pore volume, so it must be scaled by
+    # phi*vol (= 1/inv_phiV) to sit in the same surface m3/s units as the
+    # accumulation term accum*(Cd-Cd0). Without that factor the residual is
+    # dominated by the (unscaled) dissolution term and the Newton cannot
+    # converge. A single step must converge AND conserve total surface CO2.
+    from src.programs.forward import (
+        _implicit_kinetic_step, _eq_solution_gas_ratio,
+        _mobility_divergence_matrix, _gravity_divergence_matrix,
+    )
+
+    case, mesh, p, sw, so, sg = _setup()
+    grid = mesh.grid
+    n_c = grid.n_cells
+    k = np.full(n_c, case.k0)
+    phi = np.full(n_c, case.phi0)
+    vol = grid.cell_volumes()
+    inv_phiV = 1.0 / (phi * vol)
+    params = replace(case.black_oil, rs_slope=0.0, rs_eq_slope=0.0, bg=0.003, k_diss=1.8e-8)
+    Rs = _eq_solution_gas_ratio(p[0], params)
+    C0 = np.zeros(n_c)
+    Cd0 = np.zeros(n_c)
+    Q = 1.0e-9
+    qg_t = np.zeros(n_c)
+    qg_t[0] = Q
+    A = _mobility_divergence_matrix(grid, k, p[0])
+    A_grav = _gravity_divergence_matrix(grid, k)
+    sw1, so1, sg1, C1, Cd1, conv = _implicit_kinetic_step(
+        A, A_grav, inv_phiV, 864.0, np.zeros(n_c), C0, Cd0,
+        np.zeros(n_c), qg_t, np.zeros(n_c), Rs, params,
+    )
+    assert conv
+    accum = float((phi * vol * (C1 - C0)).sum())  # total surface CO2 accumulated
+    injected = Q * 864.0
+    assert np.isclose(accum, injected, rtol=0.05, atol=0.0), (
+        f"kinetic surface CO2 not conserved: accumulated {accum:.3e} m3 vs "
+        f"injected {injected:.3e} m3"
+    )
+

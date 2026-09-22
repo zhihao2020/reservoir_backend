@@ -131,9 +131,11 @@ class FluidParams:
     # split: below it all CO2 is dissolved (sg=0), above it the excess is free gas.
     c_sat: float = 0.66
     # Gas formation-volume factor ``Bg`` (reservoir gas volume / surface gas
-    # volume). At high pressure the gas is compressed (Bg << 1); this converts
-    # the *surface* injection rate into the *reservoir* volume the free gas
-    # actually occupies, keeping the CO2 component bounded.
+    # volume). At high pressure the gas is compressed (Bg << 1). The conserved
+    # CO2 component ``C = sg/Bg + Rs*so`` is in *surface* volume; ``Bg`` maps the
+    # reservoir free-gas volume ``sg`` to that surface measure (and ``1/Bg`` maps
+    # the reservoir gas *flux* back to surface). The well gas rate ``qg`` is
+    # already surface volume (GEM ``*BHF``), so it enters the C source as-is.
     bg: float = 1.0
     # Optional tabular rel-perm (CMG *SGT / *SWT). When set, the forward model
     # interpolates these curves instead of the Corey power-law above.
