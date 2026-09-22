@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 from ..core.cartesian import CartesianGrid
 from .mesh import PointMap, WellMap
 from .rock import (
-    BlackOilParams,
+    FluidParams,
     _face_cell_pairs,
     _face_geometry,
     _harmonic_mean,
@@ -141,7 +141,7 @@ def validate_inversion(
     times: NDArray[np.float64],
     p_init: NDArray[np.float64],
     *,
-    params: BlackOilParams | None = None,
+    params: FluidParams | None = None,
     sw: NDArray[np.float64] | None = None,
     so: NDArray[np.float64] | None = None,
     sg: NDArray[np.float64] | None = None,
@@ -152,7 +152,7 @@ def validate_inversion(
     history comes from the forward solve. The inversion is run against the exact
     fields, so the reported errors isolate the inversion's reconstruction power.
     """
-    oil = params or BlackOilParams()
+    oil = params or FluidParams()
     n_c = grid.n_cells
     n_t = int(times.size)
     if sw is None:
@@ -251,7 +251,7 @@ def black_oil_forward(
     grid: CartesianGrid,
     permeability: NDArray[np.float64],
     phi: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
     wells: WellMap,
     well_qw: NDArray[np.float64],
     well_qo: NDArray[np.float64],
@@ -343,7 +343,7 @@ def forward_saturations(
     pressure: NDArray[np.float64],
     permeability: NDArray[np.float64],
     phi: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
     wells: WellMap,
     well_qw: NDArray[np.float64],
     well_qo: NDArray[np.float64],
@@ -472,7 +472,7 @@ def _corey_mobilities_derivs(
     sw: NDArray[np.float64],
     so: NDArray[np.float64],
     sg: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> tuple[NDArray[np.float64], ...]:
     """Corey phase mobilities and their own-saturation derivatives (numerical)."""
     h = 1.0e-6
@@ -526,7 +526,7 @@ def _implicit_black_oil_step(
     so0: NDArray[np.float64],
     qw: NDArray[np.float64],
     qo: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
     *,
     max_iter: int = 30,
     tol: float = 1.0e-3,
@@ -571,7 +571,7 @@ def _implicit_compositional_step(
     qw: NDArray[np.float64],
     q_co2: NDArray[np.float64],
     Rs: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
     *,
     max_iter: int = 30,
     tol: float = 1.0e-3,
@@ -686,12 +686,159 @@ def _implicit_compositional_step(
     return sw, so, sg, C, converged
 
 
+def _split_kinetic(
+    sw: NDArray[np.float64],
+    C: NDArray[np.float64],
+    Cd: NDArray[np.float64],
+    Rs: NDArray[np.float64],
+    Bg: float,
+    bo_slope: float,
+) -> tuple[NDArray[np.float64], ...]:
+    """Kinetic-dissolution phase split.
+
+    ``Cd`` is the dissolved CO2 (a state, not an equilibrium-derived value); the
+    free gas is the excess ``sg = (C - Cd)*Bg`` and the oil fills the rest.
+    ``Rs_act = Cd/No`` is the actual dissolved ratio (bounded by ``Rs``).
+    Returns ``(sw, so, sg, No, Rs_act)``.
+    """
+    sw_p = np.clip(np.asarray(sw, dtype=float), 0.0, None)
+    C_p = np.clip(np.asarray(C, dtype=float), 0.0, None)
+    Cd_p = np.clip(np.asarray(Cd, dtype=float), 0.0, None)
+    Rs_p = np.clip(np.asarray(Rs, dtype=float), 0.0, None)
+    nw = 1.0 - sw_p
+    Bo = 1.0 + bo_slope * Rs_p
+    sg = np.clip((C_p - Cd_p) * float(Bg), 0.0, nw)
+    so = nw - sg
+    No = so / Bo
+    Rs_act = np.clip(Cd_p / np.maximum(No, 1.0e-12), 0.0, Rs_p)
+    return sw_p, so, sg, No, Rs_act
+
+
+def _implicit_kinetic_step(
+    A,
+    A_grav,
+    inv_phiV: NDArray[np.float64],
+    dt: float,
+    sw0: NDArray[np.float64],
+    C0: NDArray[np.float64],
+    Cd0: NDArray[np.float64],
+    qw: NDArray[np.float64],
+    qg: NDArray[np.float64],
+    qo: NDArray[np.float64],
+    Rs: NDArray[np.float64],
+    params: FluidParams,
+    *,
+    max_iter: int = 30,
+    tol: float = 1.0e-3,
+) -> tuple[NDArray[np.float64], ...]:
+    """One fully-implicit kinetic-dissolution step (Newton) for (sw, C, Cd).
+
+    ``Cd`` (dissolved CO2) relaxes to the equilibrium ``Rs*No`` at rate
+    ``k_diss``; the free gas is the excess. With ``k_diss -> inf`` this reduces
+    to the equilibrium phase split of :func:`_implicit_compositional_step`.
+    """
+    from scipy.sparse import diags
+
+    Bg = float(params.bg)
+    inv_Bg = 1.0 / max(Bg, 1.0e-12)
+    A_g = A - params.rho_g * A_grav
+    k_diss = float(params.k_diss)
+    n = int(sw0.size)
+    sw = np.asarray(sw0, dtype=float).copy()
+    C = np.asarray(C0, dtype=float).copy()
+    Cd = np.asarray(Cd0, dtype=float).copy()
+    h = 1.0e-6
+    accum = 1.0 / (dt * inv_phiV)
+    I = diags(accum)
+
+    def residual(sw_, C_, Cd_):
+        _, so_, sg_, No_, Rs_act_ = _split_kinetic(sw_, C_, Cd_, Rs, Bg, params.bo_slope)
+        lam_w_, lam_o_, lam_g_ = phase_mobilities(sw_, so_, sg_, params)
+        flux_o_ = A @ lam_o_
+        r_sw_ = accum * (sw_ - sw0) - (qw - A @ lam_w_)
+        r_C_ = accum * (C_ - C0) - (qg / Bg + Rs_act_ * qo - (inv_Bg * A_g @ lam_g_ + Rs_act_ * flux_o_))
+        r_Cd_ = accum * (Cd_ - Cd0) - k_diss * (Rs * No_ - Cd_) - Rs_act_ * (qo - flux_o_)
+        return np.concatenate([r_sw_, r_C_, r_Cd_])
+
+    r0_norm = float(np.linalg.norm(residual(sw, C, Cd)))
+    converged = False
+    for _ in range(max_iter):
+        _, so, sg, No, Rs_act = _split_kinetic(sw, C, Cd, Rs, Bg, params.bo_slope)
+        lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
+        flux_o = A @ lam_o
+        r = residual(sw, C, Cd)
+        # numerical derivatives w.r.t. sw / C / Cd
+        _, so_s, sg_s, No_s, Rs_s = _split_kinetic(sw + h, C, Cd, Rs, Bg, params.bo_slope)
+        lw_s, lo_s, lg_s = phase_mobilities(sw + h, so_s, sg_s, params)
+        dlw_dsw = (lw_s - lam_w) / h
+        dlo_dsw = (lo_s - lam_o) / h
+        dlg_dsw = (lg_s - lam_g) / h
+        dRs_dsw = (Rs_s - Rs_act) / h
+        dNo_dsw = (No_s - No) / h
+        _, so_c, sg_c, No_c, Rs_c = _split_kinetic(sw, C + h, Cd, Rs, Bg, params.bo_slope)
+        lw_c, lo_c, lg_c = phase_mobilities(sw, so_c, sg_c, params)
+        dlw_dC = (lw_c - lam_w) / h
+        dlo_dC = (lo_c - lam_o) / h
+        dlg_dC = (lg_c - lam_g) / h
+        dRs_dC = (Rs_c - Rs_act) / h
+        dNo_dC = (No_c - No) / h
+        _, so_d, sg_d, No_d, Rs_d = _split_kinetic(sw, C, Cd + h, Rs, Bg, params.bo_slope)
+        lw_d, lo_d, lg_d = phase_mobilities(sw, so_d, sg_d, params)
+        dlw_dCd = (lw_d - lam_w) / h
+        dlo_dCd = (lo_d - lam_o) / h
+        dlg_dCd = (lg_d - lam_g) / h
+        dRs_dCd = (Rs_d - Rs_act) / h
+        dNo_dCd = (No_d - No) / h
+        # Jacobian blocks (flux form)
+        J_ww = I + A @ diags(dlw_dsw)
+        J_wC = A @ diags(dlw_dC)
+        J_wCd = A @ diags(dlw_dCd)
+        dF = flux_o - qo  # dissolved CO2 carried by the oil net of the produced one
+        J_Cw = inv_Bg * A_g @ diags(dlg_dsw) + diags(Rs_act) @ A @ diags(dlo_dsw) + diags(dRs_dsw * dF)
+        J_CC = I + inv_Bg * A_g @ diags(dlg_dC) + diags(Rs_act) @ A @ diags(dlo_dC) + diags(dRs_dC * dF)
+        J_CCd = inv_Bg * A_g @ diags(dlg_dCd) + diags(Rs_act) @ A @ diags(dlo_dCd) + diags(dRs_dCd * dF)
+        J_Cdw = -k_diss * diags(Rs * dNo_dsw) + diags(Rs_act) @ A @ diags(dlo_dsw) + diags(dRs_dsw * dF)
+        J_CdC = -k_diss * diags(Rs * dNo_dC) + diags(Rs_act) @ A @ diags(dlo_dC) + diags(dRs_dC * dF)
+        J_CdCd = I + k_diss * diags(1.0 - Rs * dNo_dCd) + diags(Rs_act) @ A @ diags(dlo_dCd) + diags(dRs_dCd * dF)
+        # block forward substitution (lower block-triangular)
+        r = -r
+        delta_sw = _solve_linear(J_ww, r[:n])
+        delta_c = _solve_linear(J_CC, r[n:2 * n] - J_Cw @ delta_sw)
+        delta_cd = _solve_linear(J_CdCd, r[2 * n:] - J_Cdw @ delta_sw - J_CdC @ delta_c)
+        delta = np.concatenate([delta_sw, delta_c, delta_cd])
+        # backtracking line search
+        alpha = 1.0
+        r_norm = float(np.linalg.norm(r))
+        sw_new = sw.copy()
+        C_new = C.copy()
+        Cd_new = Cd.copy()
+        r_new = -r
+        for _ in range(12):
+            sw_new = np.clip(sw + alpha * delta[:n], 0.0, 1.0)
+            C_new = np.clip(C + alpha * delta[n:2 * n], 0.0, (Rs + inv_Bg) * (1.0 - sw_new))
+            Cd_new = np.clip(Cd + alpha * delta[2 * n:], 0.0, Rs * (1.0 - sw_new))
+            r_new = residual(sw_new, C_new, Cd_new)
+            if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
+                break
+            alpha *= 0.5
+        norm_d = float(np.linalg.norm(np.concatenate([sw_new - sw, C_new - C, Cd_new - Cd])))
+        sw, C, Cd = sw_new, C_new, Cd_new
+        norm_x = float(np.linalg.norm(np.concatenate([sw, C, Cd])))
+        if float(np.linalg.norm(r_new)) < max(tol, 0.05) * max(r0_norm, 1.0e-12):
+            converged = True
+            break
+        if norm_d < 1.0e-12 * max(1.0, norm_x):
+            break  # stalled
+    _, so, sg, _No, _Rs_act = _split_kinetic(sw, C, Cd, Rs, Bg, params.bo_slope)
+    return sw, so, sg, C, Cd, converged
+
+
 def _forward_black_oil_saturations(
     grid: CartesianGrid,
     pressure: NDArray[np.float64],
     permeability: NDArray[np.float64],
     phi: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
     wells: WellMap,
     well_qw: NDArray[np.float64],
     well_qo: NDArray[np.float64],
@@ -810,7 +957,7 @@ def _tpfa_matrix_vec(grid, permeability, mobility):
 
 def _eq_solution_gas_ratio(
     pressure: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> NDArray[np.float64]:
     """Equilibrium solution gas-oil ratio ``Rs`` (surface gas / surface oil).
 
@@ -824,7 +971,7 @@ def _eq_solution_gas_ratio(
 
 def fcm_effective_viscosity(
     c: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> NDArray[np.float64]:
     """FCM single-phase effective viscosity (1/4-power mixing of solvent and oil).
 
@@ -839,7 +986,7 @@ def fcm_effective_viscosity(
 
 def fcm_effective_density(
     c: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> NDArray[np.float64]:
     """FCM single-phase effective density head ``rho*g`` (Pa/m), linear mixing.
 
@@ -920,7 +1067,7 @@ def fcm_phase_split(c, *, c_sat, swc=0.0):
 
 def _dissolved_fraction(
     pressure: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> NDArray[np.float64]:
     """Equilibrium dissolved-CO2 fraction of the oil phase ``x_d = Rs/(1+Rs)``.
 
@@ -986,7 +1133,7 @@ def _forward_compositional_saturations(
     pressure: NDArray[np.float64],
     permeability: NDArray[np.float64],
     phi: NDArray[np.float64],
-    params: BlackOilParams,
+    params: FluidParams,
     wells: WellMap,
     well_qw: NDArray[np.float64],
     well_qo: NDArray[np.float64],
@@ -1031,24 +1178,24 @@ def _forward_compositional_saturations(
     # so only the free gas (sg0/Bg) contributes. The injected CO2 then dissolves
     # as it moves.
     C = sg0_a.copy() / float(params.bg)
+    kinetic = float(params.k_diss) > 0.0
+    Cd = np.zeros(n_c)  # dissolved CO2 (kinetic state); 0 initially (oil CO2-free)
     sw_hist = np.zeros((n_t, n_c))
     so_hist = np.zeros((n_t, n_c))
     sg_hist = np.zeros((n_t, n_c))
     for t in range(n_t):
         Rs_t = _eq_solution_gas_ratio(p_in[t], params)
         Bg = float(params.bg)
-        sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
+        if kinetic:
+            sw, so, sg, _No, Rs_act = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
+        else:
+            sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
+            Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs_t)
         lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
         qw_t = well_cell_rates(grid, wells, qw[t])
         qo_t = well_cell_rates(grid, wells, qo[t])
         qg_t = well_cell_rates(grid, wells, qg[t])
-        # actual dissolved ratio (<= equilibrium Rs_t): the produced oil carries
-        # the ACTUAL dissolved CO2, not the equilibrium bound (otherwise the
-        # produced solution gas dwarfs the injection and the component never
-        # accumulates).
-        Rs_actual = np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0)
-        Rs_actual = np.clip(Rs_actual, 0.0, Rs_t)
-        q_c = qg_t / Bg + Rs_actual * qo_t
+        q_c = qg_t / Bg + Rs_act * qo_t
         ref_p = float(p_in[t, ref_cell])
         p = _solve_pressure_with_source(grid, k, lam_w + lam_o + lam_g, qw_t + qo_t + qg_t, ref_cell, ref_p)
         sw_hist[t] = sw.copy()
@@ -1058,18 +1205,19 @@ def _forward_compositional_saturations(
             remaining = float(times_a[t + 1] - times_a[t])
             A = _mobility_divergence_matrix(grid, k, p)
             A_grav = _gravity_divergence_matrix(grid, k)
-            # Adaptive sub-stepping with accumulation: try the full interval first
-            # (converges in one step for a slow case), halve on Newton failure,
-            # grow back on success. Sums the sub-steps instead of discarding the
-            # rest of the interval (the previous loop advanced by a halved step
-            # once and dropped the remainder).
             dt = remaining
             while remaining > 1.0e-12 and dt > 1.0e-3:
-                sw_new, so_new, sg_new, C_new, conv = _implicit_compositional_step(
-                    A, A_grav, inv_phiV, dt, sw, C, qw_t, q_c, Rs_t, params
-                )
+                if kinetic:
+                    sw_new, so_new, sg_new, C_new, Cd_new, conv = _implicit_kinetic_step(
+                        A, A_grav, inv_phiV, dt, sw, C, Cd, qw_t, qg_t, qo_t, Rs_t, params
+                    )
+                else:
+                    sw_new, so_new, sg_new, C_new, conv = _implicit_compositional_step(
+                        A, A_grav, inv_phiV, dt, sw, C, qw_t, q_c, Rs_t, params
+                    )
+                    Cd_new = Cd
                 if conv:
-                    sw, so, sg, C = sw_new, so_new, sg_new, C_new
+                    sw, so, sg, C, Cd = sw_new, so_new, sg_new, C_new, Cd_new
                     remaining -= dt
                     dt = min(remaining, max(dt * 1.5, 1.0))
                 else:

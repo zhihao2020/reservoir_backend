@@ -13,14 +13,14 @@ import numpy as np
 
 from src.core.lab_case import load_lab_case
 from src.programs.pipeline import run_pipeline
-from src.programs.rock import BlackOilParams, solution_gas_ratio
+from src.programs.rock import FluidParams, solution_gas_ratio
 
 ROOT = Path(__file__).resolve().parents[1]
 SMALL = ROOT / "examples" / "small" / "case.yaml"
 
 
 def test_solution_gas_ratio_linear():
-    params = BlackOilParams(rs_slope=1.0e-5)
+    params = FluidParams(rs_slope=1.0e-5)
     p = np.array([0.0, 10.0e6, 20.0e6])
     rs = solution_gas_ratio(p, params)
     assert np.allclose(rs, [0.0, 100.0, 200.0])
@@ -28,7 +28,7 @@ def test_solution_gas_ratio_linear():
 
 def test_solution_gas_ratio_non_negative():
     # Negative pressure (should not occur, but the guard must not produce Rs < 0).
-    rs = solution_gas_ratio(np.array([-1.0e6]), BlackOilParams(rs_slope=1.0e-5))
+    rs = solution_gas_ratio(np.array([-1.0e6]), FluidParams(rs_slope=1.0e-5))
     assert float(rs[0]) >= 0.0
 
 

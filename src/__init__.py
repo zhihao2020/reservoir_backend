@@ -15,7 +15,7 @@ from .programs.pressure import interpolate_pressure
 from .programs.protocol import PROTOCOL_VERSION, pack_step, unpack_step
 from .programs.results import summarize_results
 from .programs.rock import (
-    BlackOilParams,
+    FluidParams,
     RockDiagnostics,
     WellModelParams,
     invert_rock,
@@ -51,7 +51,7 @@ from .programs.similarity import (
 from .programs.udp import IncompleteStreamError, UdpPublisher, parse_host_port, publish_fields
 
 __all__ = [
-    "BlackOilParams",
+    "FluidParams",
     "CartesianGrid",
     "IncompleteStreamError",
     "LabCase",

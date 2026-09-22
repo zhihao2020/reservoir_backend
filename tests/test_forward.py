@@ -14,7 +14,7 @@ from src.programs.forward import forward_saturations
 from src.programs.forward import fcm_effective_viscosity, fcm_effective_density, fcm_phase_split
 from src.programs.pipeline import run_mesh
 from src.programs.pressure import interpolate_pressure
-from src.programs.rock import BlackOilParams
+from src.programs.rock import FluidParams
 from src.programs.saturation import interpolate_saturation, project_saturations3, smooth_fields
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,7 +96,7 @@ def test_compositional_dissolves_gas():
 
 def test_fcm_mixing_rules():
     # 1/4-power viscosity: mu_eff(0)=mu_o, mu_eff(1)=mu_s; monotone decreasing.
-    params = BlackOilParams(mu_g=2.0e-5, mu_o=2.0e-3, rho_s=2000.0, rho_o=0.0)
+    params = FluidParams(mu_g=2.0e-5, mu_o=2.0e-3, rho_s=2000.0, rho_o=0.0)
     c = np.array([0.0, 0.5, 1.0])
     mu = fcm_effective_viscosity(c, params)
     assert np.allclose(mu, [2.0e-3, (0.5 / 2.0e-5**0.25 + 0.5 / 2.0e-3**0.25) ** -4.0, 2.0e-5])
@@ -121,7 +121,7 @@ def test_tabular_relperm():
         [[0.0, 0.0, 1.0], [0.4, 0.25, 0.25], [1.0, 1.0, 0.0]],
         [[0.0, 0.0, 1.0], [1.0, 1.0, 0.0]],
     )
-    params = BlackOilParams(mu_o=2.0e-3, mu_g=2.0e-5)
+    params = FluidParams(mu_o=2.0e-3, mu_g=2.0e-5)
     lam_w, lam_o, lam_g = tabular_phase_mobilities(0.0, 0.6, 0.4, table, params)
     assert np.allclose(lam_w, 0.0)
     assert np.allclose(lam_o, 0.25 / 2.0e-3)  # Krog(0.4)=0.25 * Krow(0)=1

@@ -3,7 +3,7 @@
 from .mesh import MeshResult, WellMap, build_mesh, map_points
 from .pressure import interpolate_pressure
 from .rock import (
-    BlackOilParams,
+    FluidParams,
     RockDiagnostics,
     invert_rock,
     invert_rock_three_phase,
@@ -12,7 +12,7 @@ from .rock import (
 from .saturation import interpolate_saturation
 
 __all__ = [
-    "BlackOilParams",
+    "FluidParams",
     "MeshResult",
     "RockDiagnostics",
     "WellMap",

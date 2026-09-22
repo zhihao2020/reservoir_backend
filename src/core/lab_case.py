@@ -12,7 +12,7 @@ import yaml
 from numpy.typing import NDArray
 
 from ..exceptions import CaseSchemaError, InvalidObservation
-from ..programs.rock import BlackOilParams, RelpermTable, WellModelParams
+from ..programs.rock import FluidParams, RelpermTable, WellModelParams
 from ..programs.similarity import VOLUME_BASES
 from .units import MD_TO_M2, to_m3_s, to_metres, to_pa, to_seconds
 
@@ -105,7 +105,7 @@ class LabCase:
     k_homogeneous: bool = False
     transient: bool = False
     fractional_weight: float = 1.0
-    black_oil: BlackOilParams = field(default_factory=BlackOilParams)
+    black_oil: FluidParams = field(default_factory=FluidParams)
     well: WellModelParams = field(default_factory=WellModelParams)
     field_length_m: float = 0.30
     field_width_m: float = 0.30
@@ -341,7 +341,7 @@ def lab_case_from_mapping(
         well_qg,
     )
     times, pressure, sw, so, sg, well_pw, well_q, well_qw, well_qo, well_qg = aligned
-    oil = BlackOilParams(
+    oil = FluidParams(
         mu_w=float(oil_raw.get("mu_w_pa_s", 5.0e-4)),
         mu_o=float(oil_raw.get("mu_o_pa_s", 2.0e-3)),
         mu_g=float(oil_raw.get("mu_g_pa_s", 2.0e-5)),
@@ -365,6 +365,7 @@ def lab_case_from_mapping(
         c_sat=float(oil_raw.get("c_sat", 0.66)),
         bg=float(oil_raw.get("bg", 1.0)),
         relperm_table=_parse_relperm_table(oil_raw.get("relperm_table")),
+        k_diss=float(oil_raw.get("k_diss", 0.0)),
     )
     well = WellModelParams(
         rw=float(well_raw.get("rw", 0.005)),

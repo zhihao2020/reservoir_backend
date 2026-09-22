@@ -93,7 +93,7 @@ class RelpermTable:
 
 
 @dataclass(frozen=True)
-class BlackOilParams:
+class FluidParams:
     mu_w: float = 5.0e-4
     mu_o: float = 2.0e-3
     mu_g: float = 2.0e-5
@@ -138,6 +138,10 @@ class BlackOilParams:
     # Optional tabular rel-perm (CMG *SGT / *SWT). When set, the forward model
     # interpolates these curves instead of the Corey power-law above.
     relperm_table: RelpermTable | None = None
+    # Kinetic dissolution rate (1/s) of CO2 into the oil:
+    # ``d(Cd)/dt = k_diss * (Rs*No - Cd)``. 0.0 = instantaneous equilibrium
+    # (backward compatible); >0 makes the free gas dissolve over ~1/k_diss.
+    k_diss: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -198,7 +202,7 @@ def corey_phase_mobilities(
     sw: NDArray[np.float64] | float,
     so: NDArray[np.float64] | float,
     sg: NDArray[np.float64] | float,
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Return per-phase mobilities ``(lam_w, lam_o, lam_g)`` from Corey rel-perm."""
     sw_a = np.asarray(sw, dtype=float)
@@ -221,7 +225,7 @@ def tabular_phase_mobilities(
     so: NDArray[np.float64] | float,
     sg: NDArray[np.float64] | float,
     table: RelpermTable,
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Per-phase mobilities from tabular rel-perm (Stone I for the oil)."""
     sw_a = np.asarray(sw, dtype=float)
@@ -238,7 +242,7 @@ def phase_mobilities(
     sw: NDArray[np.float64] | float,
     so: NDArray[np.float64] | float,
     sg: NDArray[np.float64] | float,
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Per-phase mobilities: tabular when ``params.relperm_table`` is set, else Corey."""
     if params.relperm_table is not None:
@@ -250,7 +254,7 @@ def corey_total_mobility(
     sw: NDArray[np.float64] | float,
     so: NDArray[np.float64] | float,
     sg: NDArray[np.float64] | float,
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> NDArray[np.float64]:
     lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
     return lam_w + lam_o + lam_g
@@ -258,7 +262,7 @@ def corey_total_mobility(
 
 def solution_gas_ratio(
     pressure: NDArray[np.float64] | float,
-    params: BlackOilParams,
+    params: FluidParams,
 ) -> NDArray[np.float64]:
     """Solution gas-oil ratio ``Rs`` from Henry's law (linear in pressure).
 
@@ -766,7 +770,7 @@ def invert_rock(
     *,
     phi0: float,
     k0: float,
-    params: BlackOilParams | None = None,
+    params: FluidParams | None = None,
     relperm: tuple[str, ...] = (),
     time_weights: NDArray[np.float64] | None = None,
     theta0: NDArray[np.float64] | None = None,
@@ -781,7 +785,7 @@ def invert_rock(
     invert jointly with k/phi in log space. ``time_weights`` (n_times,) can
     emphasise the pressure transient for porosity identifiability.
     """
-    oil = params or BlackOilParams()
+    oil = params or FluidParams()
     relperm = tuple(p for p in relperm if p in _RELPERM_NAMES)
     n_rel = len(relperm)
     if time_weights is not None:
@@ -851,7 +855,7 @@ def invert_rock(
         phi_field = phi_probe @ phi_weights
         return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
 
-    def _oil_of(theta: NDArray[np.float64]) -> BlackOilParams:
+    def _oil_of(theta: NDArray[np.float64]) -> FluidParams:
         if n_rel == 0:
             return oil
         overrides = {}
@@ -1037,7 +1041,7 @@ def invert_rock_three_phase(
     *,
     phi0: float,
     k0: float,
-    params: BlackOilParams | None = None,
+    params: FluidParams | None = None,
     relperm: tuple[str, ...] = (),
     time_weights: NDArray[np.float64] | None = None,
     fractional_weight: float = 1.0,
@@ -1060,7 +1064,7 @@ def invert_rock_three_phase(
     wells — this is rel-perm-sensitive and independent of permeability, so it
     disambiguates the Corey parameters from k.
     """
-    oil = params or BlackOilParams()
+    oil = params or FluidParams()
     relperm = tuple(p for p in relperm if p in _RELPERM_NAMES)
     n_rel = len(relperm)
     if time_weights is not None:
@@ -1425,7 +1429,7 @@ def invert_rock_coarse_to_fine(
     *,
     phi0: float,
     k0: float,
-    params: BlackOilParams | None = None,
+    params: FluidParams | None = None,
     relperm: tuple[str, ...] = (),
     time_weights: NDArray[np.float64] | None = None,
     factor: int = 2,
