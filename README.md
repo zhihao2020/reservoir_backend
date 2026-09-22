@@ -91,7 +91,7 @@ python -m pytest                    # 单元/接口测试
 解压后目录里只有 `src.so`（另有 `VERSION` / `README.txt`）：
 
 ```bash
-pip install numpy scipy pyyaml
+pip install numpy scipy pyyaml pyamg
 PYTHONPATH=/path/with/src.so python3 -m src --version
 PYTHONPATH=/path/with/src.so python3 -m src case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 --field-port 9002
 ```

@@ -5,6 +5,7 @@
 numpy==2.3.5
 scipy==1.16.3
 PyYAML==6.0.3
+pyamg==5.3.0
 
 # tests
 pytest==9.1.1

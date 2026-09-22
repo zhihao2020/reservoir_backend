@@ -496,14 +496,26 @@ def _gravity_divergence_matrix(grid, permeability):
 
 
 def _solve_linear(A, b):
-    """Solve ``A x = b`` with GMRES (fast for these block-triangular M-matrices),
-    falling back to a direct sparse LU solve if GMRES does not converge."""
+    """Solve ``A x = b``: fast GMRES first, AMG-preconditioned GMRES for the
+    non-symmetric advection blocks GMRES can't crack, then a direct LU fallback."""
     from scipy.sparse.linalg import gmres, spsolve
 
-    x, info = gmres(A, b, rtol=1.0e-6, atol=1.0e-10, maxiter=500)
-    if info != 0:
-        x = spsolve(A, b)
-    return x
+    x, info = gmres(A, b, rtol=1.0e-6, atol=1.0e-10, maxiter=50)
+    if info == 0:
+        return x
+    # GMRES stalled (the saturated advection block is non-symmetric): use an
+    # algebraic multigrid (smoothed aggregation) preconditioner.
+    try:
+        import pyamg
+
+        ml = pyamg.smoothed_aggregation_solver(A.tocsr())
+        M = ml.aspreconditioner(cycle="V")
+        x, info = gmres(A, b, M=M, rtol=1.0e-6, atol=1.0e-10, maxiter=100)
+        if info == 0:
+            return x
+    except Exception:
+        pass
+    return spsolve(A, b)
 
 
 def _implicit_black_oil_step(
