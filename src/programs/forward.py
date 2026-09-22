@@ -665,7 +665,7 @@ def _implicit_compositional_step(
         r_new = r
         for _ in range(12):
             sw_new = np.clip(sw + alpha * delta[:n], 0.0, 1.0)
-            C_new = np.clip(C + alpha * delta[n:], 0.0, (Rs + inv_Bg) * (1.0 - sw_new))
+            C_new = np.clip(C + alpha * delta[n:], 0.0, np.maximum(Rs, inv_Bg) * (1.0 - sw_new))
             r_new = residual(sw_new, C_new)
             if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
                 break
@@ -677,7 +677,7 @@ def _implicit_compositional_step(
         # change: the ill-conditioned Jacobian can freeze the step while the
         # residual is still large. Relative to r0_norm (with a tiny floor, not a
         # clamp to 1 — the rescaled residual has norm < 1).
-        if float(np.linalg.norm(r_new)) < max(tol, 0.05) * max(r0_norm, 1.0e-12):
+        if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
             converged = True
             break
         if norm_d < 1.0e-12 * max(1.0, norm_x):
@@ -710,7 +710,12 @@ def _split_kinetic(
     sg = np.clip((C_p - Cd_p) * float(Bg), 0.0, nw)
     so = nw - sg
     No = so / Bo
-    Rs_act = np.clip(Cd_p / np.maximum(No, 1.0e-12), 0.0, Rs_p)
+    # Smooth saturation for the actual dissolved ratio Rs_act = Cd/No bounded by
+    # Rs: a harmonic mean Rs*Cd/(Rs*No + Cd). It approaches Cd/No when the oil is
+    # undersaturated (Cd << Rs*No) and Rs when saturated (Cd >> Rs*No), and is
+    # smooth through No=0 (oil fully displaced), unlike the hard clip
+    # clip(Cd/max(No,eps), 0, Rs) which jumps and stalls the Newton.
+    Rs_act = Rs_p * Cd_p / (Rs_p * No + Cd_p + 1.0e-30)
     return sw_p, so, sg, No, Rs_act
 
 
@@ -804,11 +809,19 @@ def _implicit_kinetic_step(
         J_Cdw = -k_diss * diags(Rs * dNo_dsw * phiV) + A @ diags(dF_sw) - diags(dRs_dsw * qo)
         J_CdC = -k_diss * diags(Rs * dNo_dC * phiV) + A @ diags(dF_C) - diags(dRs_dC * qo)
         J_CdCd = I + k_diss * diags((1.0 - Rs * dNo_dCd) * phiV) + A @ diags(dF_Cd) - diags(dRs_dCd * qo)
-        # block forward substitution (lower block-triangular)
+        # Block solve. Water is decoupled (J_wC = J_wCd = 0), so solve delta_sw
+        # first; but r_C couples to Cd via the free-gas split (J_CCd ~ -A_g dlam/dsg,
+        # the same order as J_CC), so the (C, Cd) block must be solved *together*.
+        # A lower-triangular pass that drops J_CCd stalls the Newton at ~6% residual.
+        from scipy.sparse import bmat
         r = -r
         delta_sw = _solve_linear(J_ww, r[:n])
-        delta_c = _solve_linear(J_CC, r[n:2 * n] - J_Cw @ delta_sw)
-        delta_cd = _solve_linear(J_CdCd, r[2 * n:] - J_Cdw @ delta_sw - J_CdC @ delta_c)
+        rhs_c = r[n:2 * n] - J_Cw @ delta_sw
+        rhs_cd = r[2 * n:] - J_Cdw @ delta_sw
+        J_blk = bmat([[J_CC, J_CCd], [J_CdC, J_CdCd]], format="csr")
+        d_ccd = _solve_linear(J_blk, np.concatenate([rhs_c, rhs_cd]))
+        delta_c = d_ccd[:n]
+        delta_cd = d_ccd[n:]
         delta = np.concatenate([delta_sw, delta_c, delta_cd])
         # backtracking line search
         alpha = 1.0
@@ -819,7 +832,7 @@ def _implicit_kinetic_step(
         r_new = -r
         for _ in range(12):
             sw_new = np.clip(sw + alpha * delta[:n], 0.0, 1.0)
-            C_new = np.clip(C + alpha * delta[n:2 * n], 0.0, (Rs + inv_Bg) * (1.0 - sw_new))
+            C_new = np.clip(C + alpha * delta[n:2 * n], 0.0, np.maximum(Rs, inv_Bg) * (1.0 - sw_new))
             Cd_new = np.clip(Cd + alpha * delta[2 * n:], 0.0, Rs * (1.0 - sw_new))
             r_new = residual(sw_new, C_new, Cd_new)
             if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
@@ -828,7 +841,7 @@ def _implicit_kinetic_step(
         norm_d = float(np.linalg.norm(np.concatenate([sw_new - sw, C_new - C, Cd_new - Cd])))
         sw, C, Cd = sw_new, C_new, Cd_new
         norm_x = float(np.linalg.norm(np.concatenate([sw, C, Cd])))
-        if float(np.linalg.norm(r_new)) < max(tol, 0.05) * max(r0_norm, 1.0e-12):
+        if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
             converged = True
             break
         if norm_d < 1.0e-12 * max(1.0, norm_x):
@@ -1212,7 +1225,7 @@ def _forward_compositional_saturations(
             remaining = float(times_a[t + 1] - times_a[t])
             A = _mobility_divergence_matrix(grid, k, p)
             A_grav = _gravity_divergence_matrix(grid, k)
-            dt = remaining
+            dt = min(remaining, _MAX_DT)
             while remaining > 1.0e-12 and dt > 1.0e-3:
                 if kinetic:
                     sw_new, so_new, sg_new, C_new, Cd_new, conv = _implicit_kinetic_step(
@@ -1226,7 +1239,7 @@ def _forward_compositional_saturations(
                 if conv:
                     sw, so, sg, C, Cd = sw_new, so_new, sg_new, C_new, Cd_new
                     remaining -= dt
-                    dt = min(remaining, max(dt * 1.5, 1.0))
+                    dt = min(remaining, _MAX_DT, max(dt * 1.5, 1.0))
                 else:
                     dt *= 0.5
     return sw_hist, so_hist, sg_hist
