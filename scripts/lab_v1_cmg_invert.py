@@ -34,9 +34,9 @@ from reservoir_backend.twin.lab_v1 import physical_from_theta
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--export", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "export")
-    p.add_argument("--out", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_invert")
-    p.add_argument("--case", type=Path, default=None, help="YAML case; default M2 case_dev")
+    p.add_argument("--export", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "physical_3d" / "export")
+    p.add_argument("--out", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_gem_physical_3d_invert")
+    p.add_argument("--case", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "physical_3d" / "case.yaml")
     p.add_argument("--score", action="store_true", help="open hidden/ after invert; never during ES-MDA")
     p.add_argument("--workers", type=int, default=None, help="ensemble forwards in parallel")
     p.add_argument("--cf-m2", type=float, default=None, help="scoring truth C_f; default spec theta_true")

@@ -29,10 +29,10 @@ from reservoir_backend.twin.cmg_benchmark import (
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--export", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "export")
-    p.add_argument("--out", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_forward_gate")
+    p.add_argument("--export", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "physical_3d" / "export")
+    p.add_argument("--out", type=Path, default=ROOT / "results" / "lab_v1" / "cmg_gem_physical_3d_forward_gate")
     p.add_argument("--wiring", action="store_true", help="spec vs case_dev only; not M2a PASS")
-    p.add_argument("--case", type=Path, default=None, help="YAML case; default M2 case_dev")
+    p.add_argument("--case", type=Path, default=ROOT / "examples" / "lab_v1" / "cmg_gem" / "physical_3d" / "case.yaml")
     p.add_argument("--cf-m2", type=float, default=None, help="theta_true C_f override")
     p.add_argument("--tmf", type=float, default=None, help="theta_true beta_mf override")
     p.add_argument("--k-m2", type=float, default=None, dest="k_m2")

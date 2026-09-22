@@ -1,0 +1,40 @@
+geometry:
+  origin_m: [0.0, 0.0, 0.0]
+  extent_m: [0.30, 0.30, 0.30]
+  nx: 10
+  ny: 10
+  nz: 10
+rock:
+  phi0: 0.05
+  k0_md: 0.03
+probes:
+  file: probes.csv
+  observations: observations.csv
+wells:
+  file: wells.csv
+  series: series.csv
+interpolation:
+  method: kriging
+inversion:
+  model: total_mobility
+black_oil:
+  mu_w_pa_s: 5.0e-4
+  mu_o_pa_s: 2.0e-3
+  mu_g_pa_s: 2.0e-5
+  Swc: 0.0
+  Sor: 0.0
+  Sgc: 0.0
+  ct_1pa: 1.2e-9
+well:
+  rw: 0.003
+  skin: 0.0
+  kv_kh: 0.2
+similarity:
+  field_length_m: 300.0
+  field_width_m: 300.0
+  field_height_m: 30.0
+  field_flow_path_m: 150.0
+  model_flow_path_m: 0.15
+  volume_basis: reservoir
+experiment:
+  name: model_compare_total_mobility

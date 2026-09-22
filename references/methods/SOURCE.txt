@@ -1,3 +1,0 @@
-Vendored shallow snapshots for offline study only.
-Re-clone URLs are listed in README.md.
-Do not import from product code.

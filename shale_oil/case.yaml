@@ -1,0 +1,62 @@
+# GEM shailoil 导出数据的重构 case（15×15×15，实验室尺度 30 cm 立方）
+# 测点：底层 k=0/1/2 共 27 个（3×3×3），与井位对齐——修复早期 CO2 羽流盲区。
+geometry:
+  origin_m: [0.0, 0.0, 0.0]
+  extent_m: [0.30, 0.30, 0.30]
+  nx: 15
+  ny: 15
+  nz: 15
+
+rock:
+  phi0: 0.05
+  k0_md: 0.03
+
+probes:
+  file: probes.csv
+  observations: cmg_probes.csv
+
+wells:
+  file: cmg_well_paths.csv
+  series: cmg_wells.csv
+
+inversion:
+  model: black_oil_3phase
+  relperm: [nw, no, ng, krw_end, kro_end, krg_end]
+  k_homogeneous: true
+
+forward:
+  model: fcm
+
+black_oil:
+  mu_w_pa_s: 5.0e-4
+  mu_o_pa_s: 2.0e-3
+  mu_g_pa_s: 2.0e-5
+  Swc: 0.0
+  Sor: 0.0
+  Sgc: 0.0
+  ct_1pa: 1.2e-9
+  # rs_slope: 输出用溶解气比（吞吐量指标，Rs=rs_slope·p≈187）
+  rs_slope: 9.84e-6
+  # rs_eq_slope: 前向模型相劈分用的平衡溶解度（热力学量，x_d≈0.66，待标定）
+  rs_eq_slope: 1.0e-7
+  # FCM 混相模型参数（P4 待标定）
+  rho_s: 2000.0
+  rho_o: 0.0
+  c_sat: 0.85
+  # rho_g: 自由气相对油相的浮力 (rho_g-rho_o)*g，>0 表示 CO2 富相更密、下沉到底层
+  rho_g: 2000.0
+  # bg: 气体 FVF（储层气体积/地面气体积），20 MPa 下 CO2 压缩约 200 倍
+  bg: 0.005
+
+well:
+  rw: 0.003
+  skin: 0.0
+  kv_kh: 0.2
+
+similarity:
+  field_length_m: 300.0
+  field_width_m: 300.0
+  field_height_m: 30.0
+  field_flow_path_m: 150.0
+  model_flow_path_m: 0.15
+  volume_basis: reservoir

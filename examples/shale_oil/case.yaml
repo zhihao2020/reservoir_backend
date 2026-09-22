@@ -1,0 +1,56 @@
+# GEM shailoil 导出数据的重构 case（15×15×15，实验室尺度 30 cm 立方）
+# 测点：底层 k=0/1/2 共 27 个（3×3×3），与井位对齐。
+# 数据源：GEM Peng-Robinson 14 组分 CO2 页岩油模型（20 MPa，注纯 CO2）。
+geometry:
+  origin_m: [0.0, 0.0, 0.0]
+  extent_m: [0.30, 0.30, 0.30]
+  nx: 15
+  ny: 15
+  nz: 15
+
+rock:
+  phi0: 0.05
+  k0_md: 0.03
+
+probes:
+  file: probes.csv
+  observations: observations.csv
+
+wells:
+  file: wells.csv
+  series: series.csv
+
+inversion:
+  model: black_oil_3phase
+  relperm: [nw, no, ng, krw_end, kro_end, krg_end]
+  # 本模型岩石均质（k 恒 0.03 mD）：跳过病态 k 反演、直接用常数 k0。
+  k_homogeneous: true
+
+forward:
+  # none = 跳过前向模型（克里金饱和度，快、稳定，联调默认）。
+  # 可选 black_oil / compositional / fcm（fcm 为混相模型，研究用）。
+  model: none
+
+black_oil:
+  mu_w_pa_s: 5.0e-4
+  mu_o_pa_s: 2.0e-3
+  mu_g_pa_s: 2.0e-5
+  Swc: 0.0
+  Sor: 0.0
+  Sgc: 0.0
+  ct_1pa: 1.2e-9
+  # CO2 溶解气比输出（吞吐量指标 Rs=rs_slope·p≈187），输出 rs/co2 场。
+  rs_slope: 9.84e-6
+
+well:
+  rw: 0.003
+  skin: 0.0
+  kv_kh: 0.2
+
+similarity:
+  field_length_m: 300.0
+  field_width_m: 300.0
+  field_height_m: 30.0
+  field_flow_path_m: 150.0
+  model_flow_path_m: 0.15
+  volume_basis: reservoir

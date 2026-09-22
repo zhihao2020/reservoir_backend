@@ -1,4 +1,15 @@
-numpy>=1.24
-PyYAML>=6.0
-scipy>=1.11
-pytest>=8.0
+# Python >= 3.11
+# pip install -r requirements.txt
+
+# runtime
+numpy==2.3.5
+scipy==1.16.3
+PyYAML==6.0.3
+
+# tests
+pytest==9.1.1
+
+# Linux src.so pack (Nuitka)
+nuitka==4.0.8
+ordered-set==4.1.0
+zstandard==0.23.0

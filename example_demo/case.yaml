@@ -1,0 +1,25 @@
+# 演示配置（后端只读取以下字段：网格 / 测点 / 井 / 初值 / 矿场尺度）
+
+geometry:
+  origin_m: [0.0, 0.0, 0.0]
+  extent_m: [0.30, 0.30, 0.30]
+  nx: 8
+  ny: 8
+  nz: 8
+
+rock:
+  phi0: 0.05
+  k0_md: 0.03
+
+probes:
+  file: probes.csv
+
+wells:
+  file: wells.csv
+
+similarity:
+  field_length_m: 300.0
+  field_width_m: 300.0
+  field_height_m: 30.0
+  field_flow_path_m: 150.0
+  model_flow_path_m: 0.15

@@ -1,4 +1,0 @@
----
-exclude_paths:
-  - '.gitlab/**'
-  - 'doc/source/conf.py'
