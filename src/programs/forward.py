@@ -431,12 +431,10 @@ def _mobility_divergence_matrix(
     return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
 
 
-# Upper bound on the implicit sub-step (3 days). The lab-scale displacement
-# transient (hours) is far shorter than the report interval (days); sub-stepping
-# keeps the Newton Jacobian well-conditioned (the dt*inv_phiV*dmob entries stay
-# bounded) so each step converges in a few iterations and the sparse solve stays
-# fast.
-_MAX_DT = 3.0 * 86400.0
+# Upper bound on a forward sub-step. The GEM deck resolves the shale-oil injection
+# with ``*DTMAX 0.01`` days (14.4 min); a 30-day report step is far too coarse for
+# the lab-scale injection (fills the model ~4.5 h), so sub-steps are capped here.
+_MAX_DT = 864.0
 
 
 def _balance_well_rates(
@@ -1037,14 +1035,20 @@ def _forward_compositional_saturations(
             remaining = float(times_a[t + 1] - times_a[t])
             A = _mobility_divergence_matrix(grid, k, p)
             A_grav = _gravity_divergence_matrix(grid, k)
-            n_halve = 0
-            while remaining > 1.0e-12 and n_halve < 20:
+            # Adaptive sub-stepping with accumulation: try the full interval first
+            # (converges in one step for a slow case), halve on Newton failure,
+            # grow back on success. Sums the sub-steps instead of discarding the
+            # rest of the interval (the previous loop advanced by a halved step
+            # once and dropped the remainder).
+            dt = remaining
+            while remaining > 1.0e-12 and dt > 1.0e-3:
                 sw_new, so_new, sg_new, C_new, conv = _implicit_compositional_step(
-                    A, A_grav, inv_phiV, remaining, sw, C, qw_t, q_c, Rs_t, params
+                    A, A_grav, inv_phiV, dt, sw, C, qw_t, q_c, Rs_t, params
                 )
                 if conv:
                     sw, so, sg, C = sw_new, so_new, sg_new, C_new
-                    break
-                remaining *= 0.5
-                n_halve += 1
+                    remaining -= dt
+                    dt = min(remaining, max(dt * 1.5, 1.0))
+                else:
+                    dt *= 0.5
     return sw_hist, so_hist, sg_hist
