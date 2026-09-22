@@ -10,10 +10,17 @@ python -m src --version
 python -m src --help
 ```
 
+## 安装
+
+```bash
+pip install -r requirements.txt
+```
+
+联调包最小依赖见 [`example/requirements.txt`](example/requirements.txt)。
+
 ## 从源码运行
 
 ```bash
-pip install -e ".[dev]"
 python -m src path/to/case.yaml                          # 离线：文件 → 文件
 python -m src path/to/case.yaml -o results/run           # 落盘（fields.npz / *.npy / *.csv / *.json）
 python -m src path/to/case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 --field-port 9002
@@ -21,8 +28,8 @@ python -m src path/to/case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 -
 
 `--tcp-port` 是测点/注采的入站 TCP（无默认值）；`--lab-port` / `--field-port` 是反演
 结果的两路 UDP 出站（实验 / 矿场尺度）；`--control-port` 是可选的控制端口（应答
-RESEND 重发请求）；`--window N` / `--invert-every S` 是**在线长会话性能**参数（见下）。
-不写 `-o` 不落盘。
+RESEND 重发请求）。不写 `-o` 不落盘。`--model` 只开放 `black_oil`（覆盖 YAML 里的
+`forward.model`）；不传则沿用 case 配置。
 
 在线时 `case.yaml` 只做 init（网格、测点坐标、井轨迹、初值、相似比）；`observations` /
 `series` 可以没有（即使写了也会被忽略，观测一律走 TCP）。采集端连上 `--tcp-port` 后这条
@@ -36,16 +43,28 @@ RESEND 重发请求）；`--window N` / `--invert-every S` 是**在线长会话�
 
 | 文档 | 内容 |
 |---|---|
-| [docs/接口协议.md](docs/接口协议.md) | 协议 v2 逐字节规范（TCP/UDP 帧、枚举、manifest/results schema、单元排序、离线格式） |
-| [docs/联调指南.md](docs/联调指南.md) | 三角色三端口拓扑、启动顺序、分步走查、故障排查 |
-| [docs/案例库.md](docs/案例库.md) | 各案例用途/网格/模型/耗时 + `case.yaml` 字段参考 |
+| [example/README.md](example/README.md) | 联调包使用说明 |
+| [docs/接口协议.md](docs/接口协议.md) | 协议 v2 逐字节规范 |
+| [docs/联调指南.md](docs/联调指南.md) | 三角色三端口拓扑、启动顺序、故障排查 |
+| [docs/案例库.md](docs/案例库.md) | `example/case.yaml` 字段参考 |
 | [docs/相似换算.md](docs/相似换算.md) | 几何-运动相似准则与跨尺度换算 |
 
-## 案例库
+## 联调命令（`example/`）
 
-`examples/` 下 5 类案例（`small` / `twod` / `model_compare` / `offline` / `online`），
-全部可直接运行，不依赖 GEM。发射/接收脚本 `examples/online/send_steps.py` /
-`examples/online/recv_fields.py` 是协议 v2 的参考实现，可对任意案例目录复用。
+`example/` 里是完整联调包：配置、数据、调用脚本、接收脚本、使用说明、requirements。
+Linux `src.so` 由 GitHub **pack-linux** 打进该目录。协议 v2 冻结不变。
+
+```bash
+# 终端 1：接收端
+python example/receive_fields.py --lab-port 9001 --field-port 9002
+
+# 终端 2：后端（真实 GEM 数据，27 测点 / 5 井 / 120 拍）
+python -m src example/case.yaml --tcp-port 9000 --ip 127.0.0.1 \
+    --lab-port 9001 --field-port 9002
+
+# 终端 3：调用端（读 example 时序，逐拍发 STEP）
+python example/send_steps.py --host 127.0.0.1 --port 9000
+```
 
 ## 协议 v2 速览
 
@@ -60,38 +79,40 @@ RESEND 重发请求）；`--window N` / `--invert-every S` 是**在线长会话�
 
 ## 长会话性能（在线）
 
-在线模式用**滑动窗口 + 后台反演**，长时间跑不会越来越慢、也不会因反演慢阻塞采集：
+在线模式用**滑动窗口 + 后台反演**，长时间跑不会越来越慢、也不会因反演慢阻塞采集。窗口大小（2 拍，只看上下相邻时刻）已内置为常量，无需配置：
 
 - 每拍只插值最新一拍（O(网格数)），结果立即发 UDP；
-- 岩石反演（k/φ）放**后台线程**、按 `--invert-every` 节流，k/φ 在下一拍随流更新；
-- `--window N` 只保留最近 N 拍历史（默认 24），`--window 0` 不限。
+- 岩石反演（k/φ）放**后台线程**、每拍触发，k/φ 在下一拍随流更新；
+- 只保留最近 2 拍（当前 + 上一拍）。
 
-详见 [`docs/联调指南.md` §8](docs/联调指南.md)。
+详见 [`docs/联调指南.md`](docs/联调指南.md)。
 
 ## 测试与自检
 
 ```bash
-python scripts/verify_examples.py   # 一键校验示例库（应打印 "all examples verified"）
+python scripts/verify_examples.py   # 一键校验 example/case.yaml
 python -m pytest                    # 单元/接口测试
 ```
 
-**完整使用说明见 [docs/联调指南.md](docs/联调指南.md)**（从零到跑通的 step-by-step，
-含离线/在线/换自己采集端与大屏）。
+**完整使用说明见 [example/README.md](example/README.md) 与 [docs/联调指南.md](docs/联调指南.md)**。
 
 ## Linux `.so` (GitHub)
 
-产物就是一个 `src.so`。numpy / scipy / PyYAML 仍用 pip 安装。
+pack-linux 把 `src.so` 和 `example/` 打进同一个 zip。
 
 - 手动：GitHub → Actions → **pack-linux** → Run workflow
-- 发版：`git tag v0.4.0 && git push origin v0.4.0`（附件 `reservoir-backend-*-linux-so.zip`）
+- 发版：`git tag v0.4.1 && git push origin v0.4.1`（附件 `reservoir-backend-*-linux-so.zip`）
 - 本机 Linux：`./build_linux.sh`
 
-解压后目录里只有 `src.so`（另有 `VERSION` / `README.txt`）：
+解压后进入 `example/`：
 
 ```bash
-pip install numpy scipy pyyaml
-PYTHONPATH=/path/with/src.so python3 -m src --version
-PYTHONPATH=/path/with/src.so python3 -m src case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 --field-port 9002
+cd example
+pip install -r requirements.txt
+python receive_fields.py --lab-port 9001 --field-port 9002
+python reservoir.py case.yaml --tcp-port 9000 --ip 127.0.0.1 \
+    --lab-port 9001 --field-port 9002
+python send_steps.py --host 127.0.0.1 --port 9000
 ```
 
 `src.so` 旁边不要再放 `src/` 目录，否则 Python 会加载源码包而不是这个扩展。

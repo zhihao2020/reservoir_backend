@@ -1,8 +1,8 @@
 name: pack-linux
 
-# Builds src/ into a single src.so on Ubuntu and publishes a zip.
+# Builds example/ into a zip with src.so on Ubuntu.
 # Manual: Actions → pack-linux → Run workflow
-# Release: git tag v0.3.0 && git push --tags
+# Release: git tag v0.4.0 && git push --tags
 
 on:
   workflow_dispatch:
@@ -29,8 +29,7 @@ jobs:
       - name: Python deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy scipy pyyaml
-          python -m pip install -e ".[pack]"
+          python -m pip install -r requirements.txt
 
       - name: Library version
         id: ver

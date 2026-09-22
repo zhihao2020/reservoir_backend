@@ -16,13 +16,13 @@ from ..core.lab_case import LabCase, summarize_lab_case
 from ..core.units import MD_TO_M2
 from ..version import __version__
 from .mesh import MeshResult, build_mesh
-from .pressure import interpolate_pressure, select_pressure_method
+from .forward import forward_saturations, fcm_forward
+from .pressure import interpolate_pressure
 from .results import summarize_results
-from .rock import invert_rock, invert_rock_three_phase, transient_weights
+from .rock import invert_rock, invert_rock_three_phase, solution_gas_ratio, transient_weights, RockDiagnostics
 from .saturation import (
     interpolate_saturation,
     project_saturations3,
-    select_saturation_method,
     smooth_fields,
 )
 from .similarity import (
@@ -50,6 +50,11 @@ class ProgramFields:
     sg: NDArray[np.float64]
     phi: NDArray[np.float64]
     k: NDArray[np.float64]
+    # Solution-gas (CO2-in-oil) extension. ``rs`` is the dissolved gas-oil ratio
+    # (Rs = rs_slope * p), ``co2`` the total CO2 component (sg + Rs*so). Offline
+    # outputs only; the frozen wire protocol (p/sw/so/sg/phi/k) is unchanged.
+    rs: NDArray[np.float64] | None = None
+    co2: NDArray[np.float64] | None = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
@@ -68,60 +73,19 @@ def run_mesh(case: LabCase) -> MeshResult:
     )
 
 
-def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields:
-    mesh = mesh or run_mesh(case)
-    n_t = int(case.times.size)
+def _invert_static(case: LabCase, mesh: MeshResult, p, sw, so, sg):
+    """Invert static k/phi from pressure + saturation, or return the known
+    constant values for a homogeneous rock (where the inversion is ill-posed)."""
     n_c = mesh.grid.n_cells
-    p = np.zeros((n_t, n_c))
-    sw = np.zeros((n_t, n_c))
-    so = np.zeros((n_t, n_c))
-    sg = np.zeros((n_t, n_c))
-    pressure_method = str(case.method).strip().lower()
-    sat_method = pressure_method
-    if pressure_method == "auto":
-        pressure_method, p_rmse = select_pressure_method(
-            mesh.grid, case.probe_xyz, case.pressure[0], case.well_xyz, case.well_pw[0],
-            power=case.power, well_cells=mesh.wells.cells,
-        )
-        sw0, so0, sg0 = _saturation_slice(case, 0)
-        sat_method, s_rmse = select_saturation_method(
-            case.probe_xyz, sw0, so0, sg0, power=case.power,
-        )
-    else:
-        p_rmse = float("nan")
-        s_rmse = float("nan")
-    for t in range(n_t):
-        p[t] = interpolate_pressure(
-            mesh.grid,
-            case.probe_xyz,
-            case.pressure[t],
-            case.well_xyz,
-            case.well_pw[t],
-            method=pressure_method,
-            power=case.power,
-            well_cells=mesh.wells.cells,
-        )
-        sw_obs, so_obs, sg_obs = _saturation_slice(case, t)
-        sw[t], so[t], sg[t] = interpolate_saturation(
-            mesh.grid,
-            case.probe_xyz,
-            sw_obs,
-            so_obs,
-            sg_obs,
-            method=sat_method,
-            power=case.power,
-            swc=case.black_oil.swc,
-            sgc=case.black_oil.sgc,
-        )
-    p = smooth_fields(p)
-    sw = smooth_fields(sw)
-    so = smooth_fields(so)
-    for t in range(n_t):
-        sw[t], so[t], sg[t] = project_saturations3(sw[t], so[t], sg[t])
-
+    if case.k_homogeneous:
+        diag = RockDiagnostics()
+        diag.k_mean_error = 0.0
+        diag.phi_mean_error = 0.0
+        diag.converged = True
+        return np.full(n_c, float(case.phi0)), np.full(n_c, float(case.k0)), diag
     if case.rock_model == "black_oil_3phase":
         tw = transient_weights(case.times) if case.transient else None
-        phi_static, k_static, rock_diag = invert_rock_three_phase(
+        return invert_rock_three_phase(
             mesh.grid,
             p,
             sw,
@@ -136,46 +100,145 @@ def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields
             phi0=case.phi0,
             k0=case.k0,
             params=case.black_oil,
-            method=case.rock_method,
-            power=case.power,
             relperm=case.relperm,
             time_weights=tw,
             fractional_weight=case.fractional_weight,
             well_bhp=case.well_pw,
             well_params=case.well,
+            smoothness=case.k_smoothness,
         )
-    else:
-        phi_static, k_static, rock_diag = invert_rock(
+    return invert_rock(
+        mesh.grid,
+        p,
+        sw,
+        so,
+        sg,
+        case.times,
+        mesh.probes,
+        mesh.wells,
+        case.well_q,
+        phi0=case.phi0,
+        k0=case.k0,
+        params=case.black_oil,
+        well_bhp=case.well_pw,
+        well_params=case.well,
+    )
+
+
+def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields:
+    mesh = mesh or run_mesh(case)
+    n_t = int(case.times.size)
+    n_c = mesh.grid.n_cells
+    p = np.zeros((n_t, n_c))
+    sw = np.zeros((n_t, n_c))
+    so = np.zeros((n_t, n_c))
+    sg = np.zeros((n_t, n_c))
+    pressure_method = str(case.method).strip().lower()
+    sat_method = pressure_method
+    for t in range(n_t):
+        p[t] = interpolate_pressure(
             mesh.grid,
-            p,
-            sw,
-            so,
-            sg,
-            case.times,
-            mesh.probes,
-            mesh.wells,
-            case.well_q,
-            phi0=case.phi0,
-            k0=case.k0,
-            params=case.black_oil,
-            method=case.rock_method,
-            power=case.power,
-            well_bhp=case.well_pw,
-            well_params=case.well,
+            case.probe_xyz,
+            case.pressure[t],
+            case.well_xyz,
+            case.well_pw[t],
+            method=pressure_method,
         )
+        sw_obs, so_obs, sg_obs = _saturation_slice(case, t)
+        sw[t], so[t], sg[t] = interpolate_saturation(
+            mesh.grid,
+            case.probe_xyz,
+            sw_obs,
+            so_obs,
+            sg_obs,
+            method=sat_method,
+            swc=case.black_oil.swc,
+            sgc=case.black_oil.sgc,
+        )
+    p = smooth_fields(p)
+    sw = smooth_fields(sw)
+    so = smooth_fields(so)
+    for t in range(n_t):
+        sw[t], so[t], sg[t] = project_saturations3(sw[t], so[t], sg[t])
+
+    phi_static, k_static, rock_diag = _invert_static(case, mesh, p, sw, so, sg)
     phi = np.repeat(phi_static[None, :], n_t, axis=0)
     k = np.repeat(k_static[None, :], n_t, axis=0)
+    # P3: forward-simulate the saturations (mass-conserving) from the initial
+    # reservoir state at t=0, prepending a synthetic t=0 with the first observed
+    # rates so the first report time is also forward-simulated (not the
+    # over-smoothed kriged field). The forward-simulated saturation replaces the
+    # kriged one as the final output.
+    oil = case.black_oil
+    if case.forward_model in ("none", "off", "skip", "kriging"):
+        # Skip the forward model: keep the kriged saturation (fast path).
+        pass
+    elif case.forward_model == "fcm":
+        times_fwd = np.concatenate([[0.0], case.times])
+        qw_fwd = np.vstack([case.well_qw[:1], case.well_qw])
+        qo_fwd = np.vstack([case.well_qo[:1], case.well_qo])
+        qg_fwd = np.vstack([case.well_qg[:1], case.well_qg])
+        sw_f, so_f, sg_f = fcm_forward(
+            mesh.grid,
+            k_static,
+            phi_static,
+            oil,
+            mesh.wells,
+            qw_fwd,
+            qo_fwd,
+            qg_fwd,
+            times_fwd,
+            np.zeros(n_c),
+            c_sat=oil.c_sat,
+        )
+        sw, so, sg = sw_f[1:], so_f[1:], sg_f[1:]
+    else:
+        sw0 = np.full(n_c, oil.swc)
+        sg0 = np.full(n_c, oil.sgc)
+        so0 = np.full(n_c, max(0.0, 1.0 - oil.swc - oil.sgc))
+        times_fwd = np.concatenate([[0.0], case.times])
+        p_fwd = np.vstack([p[:1], p])
+        qw_fwd = np.vstack([case.well_qw[:1], case.well_qw])
+        qo_fwd = np.vstack([case.well_qo[:1], case.well_qo])
+        qg_fwd = np.vstack([case.well_qg[:1], case.well_qg])
+        sw_f, so_f, sg_f = forward_saturations(
+            case.forward_model,
+            mesh.grid,
+            p_fwd,
+            k_static,
+            phi_static,
+            oil,
+            mesh.wells,
+            qw_fwd,
+            qo_fwd,
+            qg_fwd,
+            times_fwd,
+            sw0,
+            so0,
+            sg0,
+        )
+        sw, so, sg = sw_f[1:], so_f[1:], sg_f[1:]
+    # Re-invert k/phi against the forward-simulated (mass-conserving) saturation,
+    # so the permeability field is consistent with the corrected plume rather than
+    # the over-smoothed kriged field. This is the fixed-point coupling between the
+    # inversion and the forward model (one extra pass).
+    phi_static, k_static, rock_diag = _invert_static(case, mesh, p, sw, so, sg)
+    phi = np.repeat(phi_static[None, :], n_t, axis=0)
+    k = np.repeat(k_static[None, :], n_t, axis=0)
+    # Solution-gas fields: dissolved gas-oil ratio (Rs) and total CO2 component
+    # (free gas + dissolved gas). Derived from the reconstructed pressure, which
+    # is the accurate part of the reconstruction.
+    rs = solution_gas_ratio(p, case.black_oil)
+    co2 = sg + rs * so
     diagnostics = rock_diag.as_dict()
     diagnostics["pressure_method"] = pressure_method
-    diagnostics["pressure_loocv_rmse"] = p_rmse
     diagnostics["saturation_method"] = sat_method
-    diagnostics["saturation_loocv_rmse"] = s_rmse
     diagnostics["holdout"] = holdout_probe_errors(
         case, mesh, p, sw, so,
         pressure_method=pressure_method,
         saturation_method=sat_method,
     )
-    return ProgramFields(mesh=mesh, times=case.times, p=p, sw=sw, so=so, sg=sg, phi=phi, k=k, diagnostics=diagnostics)
+    return ProgramFields(mesh=mesh, times=case.times, p=p, sw=sw, so=so, sg=sg, phi=phi, k=k, rs=rs, co2=co2, diagnostics=diagnostics)
 
 
 def holdout_probe_errors(
@@ -203,7 +266,6 @@ def holdout_probe_errors(
         case.well_xyz,
         case.well_pw[t],
         method=pressure_method,
-        power=case.power,
     )
     sw_obs, so_obs, sg_obs = _saturation_slice(case, t)
     sw_wo, so_wo, _ = interpolate_saturation(
@@ -213,7 +275,6 @@ def holdout_probe_errors(
         so_obs[keep],
         sg_obs[keep],
         method=saturation_method,
-        power=case.power,
         swc=case.black_oil.swc,
         sgc=case.black_oil.sgc,
     )
@@ -257,6 +318,8 @@ def write_output(folder: Path, case: LabCase, fields: ProgramFields) -> dict[str
         sg=fields.sg,
         phi=fields.phi,
         k=fields.k,
+        rs=fields.rs,
+        co2=fields.co2,
         k_md=fields.k / MD_TO_M2,
         nx=grid.nx,
         ny=grid.ny,
@@ -276,6 +339,8 @@ def write_output(folder: Path, case: LabCase, fields: ProgramFields) -> dict[str
         sg=fields.sg,
         phi=fields.phi,
         k=fields.k,
+        rs=fields.rs,
+        co2=fields.co2,
         k_md=fields.k / MD_TO_M2,
         nx=field_grid.nx,
         ny=field_grid.ny,
@@ -308,6 +373,8 @@ def write_output(folder: Path, case: LabCase, fields: ProgramFields) -> dict[str
         ("sg", fields.sg),
         ("phi", fields.phi),
         ("k", fields.k),
+        ("rs", fields.rs),
+        ("co2", fields.co2),
         ("k_md", fields.k / MD_TO_M2),
     ):
         np.save(folder / f"{name}.npy", arr)

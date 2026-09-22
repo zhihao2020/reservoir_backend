@@ -1,6 +1,7 @@
 """TCP protocol v2: STEP encode/decode, framing, and record validation."""
 
 import struct
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -96,3 +97,24 @@ def test_records_to_arrays_bad_kind():
     with pytest.raises(StepDecodeError) as exc:
         records_to_arrays(step, 4, 1)
     assert exc.value.code == NAK_BAD_KIND
+
+
+def test_step_before_ready_is_nak():
+    # A STEP sent before the READY handshake must be rejected with not_ready,
+    # not silently processed.
+    from src.cli.main import _Last, _StepHandler
+    from src.core.lab_case import load_lab_case
+    from src.programs.protocol import NAK_NOT_READY, TCP_NAK, loads
+    from src.programs.session import InversionSession
+
+    case = load_lab_case(Path(__file__).resolve().parents[1] / "example" / "case.yaml")
+    session = InversionSession.open(case, window=24)
+    handler = _StepHandler(None, session, _Last())
+    payload = pack_step(0, 2592000.0, [], [])
+    replies = handler.on_message(PROTOCOL_VERSION, TCP_STEP, payload)
+    assert len(replies) == 1
+    (n,) = struct.unpack("<I", replies[0][:4])
+    assert n == len(replies[0]) - 4
+    assert replies[0][5] == TCP_NAK
+    nak = loads(replies[0][6:])
+    assert nak["code"] == NAK_NOT_READY

@@ -16,8 +16,22 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
+EXAMPLE_DIR = REPO_ROOT / "example"
 BUILD_DIR = REPO_ROOT / "build" / "src_so"
 DIST_DIR = REPO_ROOT / "dist" / "linux"
+
+EXAMPLE_FILES = (
+    "README.md",
+    "requirements.txt",
+    "case.yaml",
+    "probes.csv",
+    "wells.csv",
+    "observations.csv",
+    "series.csv",
+    "send_steps.py",
+    "receive_fields.py",
+    "reservoir.py",
+)
 
 
 def library_version() -> str:
@@ -50,7 +64,7 @@ def require_nuitka() -> None:
         check=False,
     )
     if proc.returncode != 0:
-        raise SystemExit("Nuitka is missing. pip install -e '.[pack]'")
+        raise SystemExit("Nuitka is missing. pip install -r requirements.txt")
 
 
 def nuitka_command(*, out: Path) -> list[str]:
@@ -92,21 +106,23 @@ def find_built_so(out: Path) -> Path:
 def dist_readme(version: str) -> str:
     tag = python_tag()
     return (
-        f"reservoir-backend {version}  Linux module (src.so)\n"
+        f"reservoir-backend {version}  Linux example bundle (src.so + shale_oil)\n"
         "\n"
         f"library: reservoir-backend\n"
         f"version: {version}\n"
         f"python:  CPython {sys.version_info.major}.{sys.version_info.minor} ({tag})\n"
         "abi:     x86_64-linux-gnu\n"
         "\n"
-        "Deliverable is a single src.so. numpy / scipy / PyYAML stay as pip packages.\n"
+        "Unzip and cd example/. numpy / scipy / PyYAML stay as pip packages.\n"
         "Do not keep a src/ folder next to src.so — a package directory would win.\n"
         "\n"
-        "  pip install numpy scipy pyyaml\n"
-        "  PYTHONPATH=/path/containing/src.so python3 -c 'import src; print(src.__version__)'\n"
-        "  PYTHONPATH=/path/containing/src.so python3 -m src --version\n"
-        "  PYTHONPATH=/path/containing/src.so python3 -m src case.yaml --tcp-port 9000 \\\n"
-        "      --ip 127.0.0.1 --lab-port 9001 --field-port 9002\n"
+        "  pip install -r requirements.txt\n"
+        "  python3 reservoir.py --version\n"
+        "\n"
+        "  python receive_fields.py --lab-port 9001 --field-port 9002\n"
+        "  python reservoir.py case.yaml --tcp-port 9000 --ip 127.0.0.1 \\\n"
+        "      --lab-port 9001 --field-port 9002\n"
+        "  python send_steps.py --host 127.0.0.1 --port 9000\n"
     )
 
 
@@ -115,10 +131,28 @@ def stage_dist(so_path: Path, dest: Path, *, version: str) -> Path:
     extra = dest / "reservoir_backend"
     if extra.exists():
         shutil.rmtree(extra)
-    staged_so = dest / "src.so"
+    bundle = dest / "example"
+    if bundle.exists():
+        shutil.rmtree(bundle)
+    bundle.mkdir(parents=True)
+    staged_so = bundle / "src.so"
     shutil.copy2(so_path, staged_so)
-    (dest / "VERSION").write_text(version + "\n", encoding="utf-8")
-    (dest / "README.txt").write_text(dist_readme(version), encoding="utf-8")
+    (bundle / "VERSION").write_text(version + "\n", encoding="utf-8")
+    (bundle / "README.md").write_text(
+        (EXAMPLE_DIR / "README.md").read_text(encoding="utf-8")
+        + "\n---\n\n"
+        + dist_readme(version),
+        encoding="utf-8",
+    )
+    for name in EXAMPLE_FILES:
+        if name == "README.md":
+            continue
+        src = EXAMPLE_DIR / name
+        if not src.is_file():
+            raise SystemExit(f"missing example file {src}")
+        shutil.copy2(src, bundle / name)
+    repo_so = EXAMPLE_DIR / "src.so"
+    shutil.copy2(so_path, repo_so)
     return staged_so
 
 

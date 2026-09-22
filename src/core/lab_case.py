@@ -79,11 +79,12 @@ class LabCase:
     well_qw: NDArray[np.float64]
     well_qo: NDArray[np.float64]
     well_qg: NDArray[np.float64]
-    method: str = "auto"
-    rock_method: str = "kriging"
-    power: float = 2.0
+    method: str = "kriging"
     rock_model: str = "total_mobility"
+    forward_model: str = "none"
     relperm: tuple[str, ...] = ()
+    k_smoothness: float = 2.0
+    k_homogeneous: bool = False
     transient: bool = False
     fractional_weight: float = 1.0
     black_oil: BlackOilParams = field(default_factory=BlackOilParams)
@@ -142,6 +143,8 @@ class LabCase:
             issues.append("similarity.model_flow_path_m must be positive")
         if self.volume_basis is not None and self.volume_basis not in VOLUME_BASES:
             issues.append(f"similarity.volume_basis must be one of {VOLUME_BASES}")
+        if self.well.kv_kh < 0.0:
+            issues.append("well.kv_kh must be non-negative")
         return issues
 
     def series_issues(self) -> list[str]:
@@ -269,6 +272,7 @@ def lab_case_from_mapping(
     rock = _as_mapping(raw.get("rock"))
     interp = _as_mapping(raw.get("interpolation"))
     inv = _as_mapping(raw.get("inversion"))
+    fwd = _as_mapping(raw.get("forward"))
     oil_raw = _as_mapping(raw.get("black_oil"))
     well_raw = _as_mapping(raw.get("well"))
     sim_raw = _as_mapping(raw.get("similarity"))
@@ -333,6 +337,15 @@ def lab_case_from_mapping(
         sor=float(oil_raw.get("Sor", oil_raw.get("sor", 0.15))),
         sgc=float(oil_raw.get("Sgc", oil_raw.get("sgc", 0.02))),
         ct=float(oil_raw.get("ct_1pa", 1.0e-9)),
+        rs_slope=float(oil_raw.get("rs_slope", 0.0)),
+        rs_eq_slope=float(oil_raw.get("rs_eq_slope", 0.0)),
+        bo_slope=float(oil_raw.get("bo_slope", 0.0)),
+        rho_w=float(oil_raw.get("rho_w", 0.0)),
+        rho_o=float(oil_raw.get("rho_o", 0.0)),
+        rho_g=float(oil_raw.get("rho_g", 0.0)),
+        rho_s=float(oil_raw.get("rho_s", 0.0)),
+        c_sat=float(oil_raw.get("c_sat", 0.66)),
+        bg=float(oil_raw.get("bg", 1.0)),
     )
     well = WellModelParams(
         rw=float(well_raw.get("rw", 0.005)),
@@ -367,11 +380,12 @@ def lab_case_from_mapping(
         well_qw=well_qw,
         well_qo=well_qo,
         well_qg=well_qg,
-        method=str(interp.get("method", "auto")),
-        rock_method=str(interp.get("rock_method", "kriging")),
-        power=float(interp.get("power", 2.0)),
+        method=str(interp.get("method", "kriging")),
         rock_model=str(inv.get("model", "total_mobility")),
+        forward_model=str(fwd.get("model", "none")),
         relperm=tuple(str(x) for x in (inv.get("relperm") or [])),
+        k_smoothness=float(inv.get("k_smoothness", 2.0)),
+        k_homogeneous=bool(inv.get("k_homogeneous", False)),
         transient=bool(inv.get("transient", False)),
         fractional_weight=float(inv.get("fractional_weight", 1.0)),
         black_oil=oil,
@@ -403,8 +417,8 @@ def summarize_lab_case(case: LabCase) -> dict[str, Any]:
         "phi0": case.phi0,
         "k0_md": case.k0 / MD_TO_M2,
         "method": case.method,
-        "rock_method": case.rock_method,
         "rock_model": case.rock_model,
+        "forward_model": case.forward_model,
         "field_length_m": case.field_length_m,
         "field_width_m": case.field_width_m,
         "field_height_m": case.field_height_m,

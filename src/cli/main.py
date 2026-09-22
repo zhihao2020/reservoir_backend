@@ -26,6 +26,7 @@ from ..programs.protocol import (
     NAK_BAD_DATA,
     NAK_BAD_TIME,
     NAK_BAD_VERSION,
+    NAK_NOT_READY,
     NAK_TRUNCATED,
     TCP_ACK,
     TCP_HELLO,
@@ -65,17 +66,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lab-port", type=int, default=None, metavar="PORT", help="UDP port for laboratory-scale fields")
     parser.add_argument("--field-port", type=int, default=None, metavar="PORT", help="UDP port for field-scale fields")
     parser.add_argument("--control-port", type=int, default=None, metavar="PORT", help="UDP port to answer RESEND requests")
-    parser.add_argument("--window", type=int, default=24, metavar="N", help="sliding-window size (times) for online mode; 0 = unbounded")
-    parser.add_argument("--invert-every", type=float, default=2.0, metavar="S", help="minimum seconds between background rock inversions")
+    parser.add_argument("--model", choices=("black_oil",), default=None, help="forward saturation model (overrides forward.model in the case; only black_oil is exposed)")
     args = parser.parse_args(argv)
     online = args.tcp_port is not None
     case = load_lab_case(args.case, require_series=not online)
+    if args.model is not None:
+        case.forward_model = args.model
     if online:
-        session = InversionSession.open(
-            case,
-            window=args.window,
-            invert_every=args.invert_every,
-        )
+        session = InversionSession.open(case)
         print(
             json.dumps(
                 {
@@ -86,8 +84,7 @@ def main(argv: list[str] | None = None) -> int:
                     "lab_port": args.lab_port,
                     "field_port": args.field_port,
                     "control_port": args.control_port,
-                    "window": args.window,
-                    "invert_every": args.invert_every,
+                    "window": session.window,
                     "n_probes": len(case.probes),
                     "n_wells": len(case.wells),
                     **summarize_lab_case(case),
@@ -146,6 +143,8 @@ class _StepHandler:
             print(json.dumps({"tcp": "ready", "client_version": obj.get("version"), "ok": obj.get("ok")}), flush=True)
             return []
         if msg_type == TCP_STEP:
+            if not self.ready:
+                return [json_frame(TCP_NAK, {"seq": None, "code": NAK_NOT_READY, "message": "STEP before READY"})]
             return self._handle_step(payload)
         return []
 
@@ -257,15 +256,16 @@ _publish_lock = threading.Lock()
 
 
 def _publish_udp(args: argparse.Namespace, case, fields: ProgramFields) -> None:
-    results = summarize_results(case, fields.mesh, fields)
     ratios = _ratios(case)
     with _publish_lock:
         if args.lab_port is not None:
             manifest = _udp_manifest(fields.mesh.grid, fields.times, "lab", ratios, case)
+            results = summarize_results(case, fields.mesh, fields)
             publish_fields(args.ip, args.lab_port, manifest, fields.times, fields.p, fields.sw, fields.so, fields.sg, fields.phi, fields.k, results)
         if args.field_port is not None:
             field_grid, field_times, _ = field_scale_view(case, fields)
             manifest = _udp_manifest(field_grid, field_times, "field", ratios, case)
+            results = summarize_results(case, fields.mesh, fields, times=field_times)
             publish_fields(args.ip, args.field_port, manifest, field_times, fields.p, fields.sw, fields.so, fields.sg, fields.phi, fields.k, results)
 
 

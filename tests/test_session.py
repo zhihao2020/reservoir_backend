@@ -9,7 +9,7 @@ from src.core.lab_case import load_lab_case
 from src.programs.session import InversionSession
 
 ROOT = Path(__file__).resolve().parents[1]
-SMALL = ROOT / "examples" / "small" / "case.yaml"
+SHALE_OIL = ROOT / "example" / "case.yaml"
 
 
 def _empty_case(path):
@@ -45,9 +45,9 @@ def _step(sess, full, t):
 
 
 def test_window_is_bounded():
-    empty = _empty_case(SMALL)
-    full = load_lab_case(SMALL)
-    sess = InversionSession.open(empty, window=2, invert_every=60.0)  # no inversion during test
+    empty = _empty_case(SHALE_OIL)
+    full = load_lab_case(SHALE_OIL)
+    sess = InversionSession.open(empty, window=2)
 
     fields = None
     for t in range(3):
@@ -58,14 +58,15 @@ def test_window_is_bounded():
     assert fields.times.size == 2
     assert fields.p.shape == (2, n_cells)
     assert fields.sw.shape == (2, n_cells)
-    # the two retained times are the last two
-    assert fields.times.tolist() == full.times[-2:].tolist()
+    # the two retained times are the last two stepped frames
+    assert fields.times.tolist() == full.times[1:3].tolist()
 
 
 def test_background_inversion_populates_k_phi():
-    empty = _empty_case(SMALL)
-    full = load_lab_case(SMALL)
-    sess = InversionSession.open(empty, window=3, invert_every=0.0)  # always invert
+    empty = _empty_case(SHALE_OIL)
+    empty.k_homogeneous = False
+    full = load_lab_case(SHALE_OIL)
+    sess = InversionSession.open(empty, window=3)
 
     for t in range(3):
         _step(sess, full, t)
@@ -84,3 +85,29 @@ def test_background_inversion_populates_k_phi():
     fields = sess.snapshot_fields()
     assert fields.phi.shape == (3, n_cells)
     assert np.allclose(fields.phi[0], sess._phi)
+
+
+def test_homogeneous_rock_skips_inversion():
+    """``k_homogeneous`` in the online session short-circuits the ill-posed k
+    inversion to constant k0/phi0, matching the offline ``pipeline`` path."""
+    empty = _empty_case(SHALE_OIL)
+    full = load_lab_case(SHALE_OIL)
+    assert empty.k_homogeneous
+    sess = InversionSession.open(empty, window=2)
+
+    for t in range(3):
+        _step(sess, full, t)
+
+    deadline = time.monotonic() + 20.0
+    while sess._phi is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    n_cells = empty.nx * empty.ny * empty.nz
+    assert sess._phi is not None, "background inversion did not finish"
+    assert sess._k is not None
+    # homogeneous rock -> constant prior values, no spatial variation
+    assert np.allclose(sess._phi, empty.phi0)
+    assert np.allclose(sess._k, empty.k0)
+    assert sess._phi.shape == (n_cells,)
+    assert sess._k.shape == (n_cells,)
+    assert sess._diag.get("converged") is True

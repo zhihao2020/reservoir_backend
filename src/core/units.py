@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from ..exceptions import UnitConversionError
 
-MD_TO_M2 = 9.869233e-16
-PSI_TO_PA = 6894.757293168
+MD_TO_M2 = 9.86923266716013e-16
+PSI_TO_PA = 6894.757293168361
 ML_PER_MIN_TO_M3_S = 1.0e-6 / 60.0
 
 

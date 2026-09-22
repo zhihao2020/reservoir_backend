@@ -75,7 +75,7 @@ def field_to_lab_time(time_field_d: float, c_lc: float) -> float:
 
 
 def field_to_lab_rate(rate_field_m3_d: float, c_lc: float, c_v: float) -> float:
-    """q_V,m (mL/min) = 694.444 · q_V,p (m³/d) · C_Lc / C_V"""
+    """q_V,m (mL/min) = (1e6 / 1440) · q_V,p (m³/d) · C_Lc / C_V"""
     return (_ML_PER_M3 / _MIN_PER_DAY) * rate_field_m3_d * c_lc / c_v
 
 

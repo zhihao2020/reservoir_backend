@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 from ..exceptions import InvalidObservation
 from ..core.cartesian import CartesianGrid
-from .interpolate import interpolate_field, select_interpolator
+from .interpolate import interpolate_field
 
 
 def project_saturations(
@@ -42,39 +42,6 @@ def project_saturations3(
     return sw_p / total, so_p / total, sg_p / total
 
 
-def select_saturation_method(
-    probe_xyz: NDArray[np.float64],
-    sw_probe: NDArray[np.float64],
-    so_probe: NDArray[np.float64],
-    sg_probe: NDArray[np.float64] | None = None,
-    *,
-    power: float = 2.0,
-) -> tuple[str, float]:
-    """Pick IDW or kriging by leave-one-out RMSE on the best-observed phase."""
-    xyz = np.asarray(probe_xyz, dtype=float)
-    best_xyz: NDArray[np.float64] | None = None
-    best_vals: NDArray[np.float64] | None = None
-    best_n = 0
-    phases: list[NDArray[np.float64] | None] = [sw_probe, so_probe, sg_probe]
-    for values in phases:
-        if values is None:
-            continue
-        vals = np.asarray(values, dtype=float).ravel()
-        if vals.size != xyz.shape[0]:
-            continue
-        finite = np.isfinite(vals)
-        n = int(finite.sum())
-        if n > best_n:
-            best_n = n
-            best_xyz = xyz[finite]
-            best_vals = vals[finite]
-    if best_xyz is None or best_vals is None or best_n < 3:
-        return "idw", float("nan")
-    return select_interpolator(
-        best_xyz, best_vals, power=power, candidates=("idw", "kriging"),
-    )
-
-
 def interpolate_saturation(
     grid: CartesianGrid,
     probe_xyz: NDArray[np.float64],
@@ -82,18 +49,16 @@ def interpolate_saturation(
     so_probe: NDArray[np.float64],
     sg_probe: NDArray[np.float64] | None = None,
     *,
-    method: str = "auto",
-    power: float = 2.0,
+    method: str = "kriging",
     swc: float = 0.05,
     sgc: float = 0.02,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Interpolate water/oil/gas saturations from scatter probes.
 
-    ``method="auto"`` picks IDW or ordinary kriging by leave-one-out error on
-    the phase with the most observations. Each probe may observe only one phase
-    (missing phases are NaN). Observed phases are interpolated independently,
-    then the field is projected onto the simplex ``Sw + So + Sg = 1``;
-    unobserved phases are recovered by closure or residual fill.
+    Each probe may observe only one phase (missing phases are NaN). Observed
+    phases are interpolated independently, then the field is projected onto the
+    simplex ``Sw + So + Sg = 1``; unobserved phases are recovered by closure or
+    residual fill.
     """
     xyz = np.asarray(probe_xyz, dtype=float)
     sw_v = np.asarray(sw_probe, dtype=float).ravel()
@@ -108,14 +73,10 @@ def interpolate_saturation(
 
     targets = grid.cell_centers()
     name = str(method).strip().lower()
-    if name == "auto":
-        name, _ = select_saturation_method(xyz, sw_v, so_v, sg_v, power=power)
-    if name in {"residual_kriging", "rk"}:
-        name = "kriging"
 
-    sw_f = _interp_phase(xyz, sw_v, targets, name, power)
-    so_f = _interp_phase(xyz, so_v, targets, name, power)
-    sg_f = _interp_phase(xyz, sg_v, targets, name, power)
+    sw_f = _interp_phase(xyz, sw_v, targets, name)
+    so_f = _interp_phase(xyz, so_v, targets, name)
+    sg_f = _interp_phase(xyz, sg_v, targets, name)
     n_c = int(targets.shape[0])
 
     known = int(sw_f is not None) + int(so_f is not None) + int(sg_f is not None)
@@ -145,7 +106,6 @@ def _interp_phase(
     values: NDArray[np.float64] | None,
     targets: NDArray[np.float64],
     method: str,
-    power: float,
 ) -> NDArray[np.float64] | None:
     """Interpolate one phase; return ``None`` if it has no finite observations."""
     if values is None:
@@ -154,7 +114,7 @@ def _interp_phase(
     finite = np.isfinite(vals)
     if not finite.any():
         return None
-    return interpolate_field(xyz[finite], vals[finite], targets, method=method, power=power)
+    return interpolate_field(xyz[finite], vals[finite], targets, method=method)
 
 
 def smooth_fields(
@@ -169,8 +129,8 @@ def smooth_fields(
         return arr
     out = arr.copy()
     for t in range(1, arr.shape[0]):
-        scale = float(np.sqrt(np.mean(out[t - 1] ** 2))) + 1.0e-18
-        rel = float(np.sqrt(np.mean((arr[t] - out[t - 1]) ** 2))) / scale
+        scale = float(np.sqrt(np.mean(out[t - 1] ** 2)))
+        rel = float(np.sqrt(np.mean((arr[t] - out[t - 1]) ** 2))) / scale if scale > 0.0 else 0.0
         if rel < jump_rel:
             out[t] = (1.0 - alpha) * arr[t] + alpha * out[t - 1]
         else:

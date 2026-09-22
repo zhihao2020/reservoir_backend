@@ -78,6 +78,33 @@ def test_receive_fields_end_to_end():
     assert got_results["n_times"] == n_times
 
 
+def test_receive_fields_reshape_single_slice():
+    # Regression: each field is (n_times, n_cells), so the receiver must
+    # reshape one time slice, not the whole array (which only works when
+    # n_times == 1).
+    n_cells, n_times = 8, 3
+    manifest = _manifest(nx=2, ny=2, nz=2, times=(0.0, 1.0, 2.0))
+    fields = _fields(n_cells, n_times)
+    results = {"n_times": n_times, "probes": [], "wells": []}
+
+    recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    recv.bind(("127.0.0.1", 0))
+    port = recv.getsockname()[1]
+
+    pub = UdpPublisher("127.0.0.1", port, stream_id=12345)
+    pub.send_all(manifest, np.array(manifest["times"]), fields["p"], fields["sw"], fields["so"], fields["sg"], fields["phi"], fields["k"], results)
+    pub.close()
+
+    got_manifest, got_fields, _ = receive_fields(port, timeout=5.0, sock=recv)
+    recv.close()
+    shape_ijk = tuple(got_manifest["shape_ijk"])
+    first = next(iter(got_fields))
+    # The whole (n_times, n_cells) array must NOT be reshapeable to shape_ijk.
+    assert got_fields[first].size != int(np.prod(shape_ijk))
+    # One time slice must reshape cleanly to (nz, ny, nx).
+    assert got_fields[first][0].reshape(shape_ijk).shape == shape_ijk
+
+
 def test_receive_fields_detects_missing_datagram():
     # Publish a manifest + a partial field set, then an END claiming one more
     # datagram than was actually sent -> the receiver must refuse.

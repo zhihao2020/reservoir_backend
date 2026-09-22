@@ -34,6 +34,7 @@ from .protocol import (
     NAK_BAD_KIND,
     NAK_BAD_QUANTITY,
     NAK_TRUNCATED,
+    TCP_BYE,
     StepFrame,
     read_frame,
 )
@@ -175,7 +176,7 @@ def serve(port: int, handler: Handler, *, host: str = "0.0.0.0") -> None:
                     if frame is None:
                         break
                     version, msg_type, payload = frame
-                    if msg_type == 0x06:  # BYE
+                    if msg_type == TCP_BYE:
                         break
                     for reply in handler.on_message(version, msg_type, payload) or ():
                         conn.sendall(reply)

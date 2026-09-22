@@ -12,7 +12,17 @@ from ..exceptions import InvalidObservation
 
 _KRIGING = {"kriging", "ok", "ordinary_kriging"}
 _UNIVERSAL = {"uk", "universal", "universal_kriging"}
-_RESIDUAL = {"residual_kriging", "rk"}
+
+# Relative-to-sill nugget floor. A nugget this small keeps the ordinary-kriging
+# covariance system's condition number bounded (≲1e6) in float64, while still
+# being negligible versus the signal; co-located points otherwise make the LU
+# factorization exactly singular (lu_factor only warns, never raises).
+_NUGGET_REL_FLOOR = 1.0e-6
+
+# Upper bound on the IDW power. ``1/d**p`` with large ``p`` under/overflows for
+# the typical sub-metre cell spacing; ``p`` beyond ~8 is effectively nearest
+# neighbour anyway and adds nothing but numerical fragility.
+_IDW_MAX_POWER = 8.0
 
 
 @dataclass(frozen=True)
@@ -29,25 +39,22 @@ class VariogramModel:
         return np.sqrt((np.asarray(dh, dtype=float) / ah) ** 2 + (np.asarray(dv, dtype=float) / av) ** 2)
 
     def correlation(self, dh: NDArray[np.float64], dv: NDArray[np.float64]) -> NDArray[np.float64]:
-        h = np.clip(self.lag(dh, dv), 0.0, None)
-        name = str(self.kind).strip().lower()
-        if name == "gaussian":
-            return np.exp(-(h**2))
-        if name == "spherical":
-            out = np.zeros_like(h, dtype=float)
-            inside = h < 1.0
-            hh = h[inside]
-            out[inside] = 1.0 - 1.5 * hh + 0.5 * hh**3
-            return out
-        return np.exp(-h)
+        # Exponential correlation (fixed).
+        return np.exp(-np.clip(self.lag(dh, dv), 0.0, None))
 
     def covariance(self, dh: NDArray[np.float64], dv: NDArray[np.float64]) -> NDArray[np.float64]:
         corr = self.correlation(dh, dv)
         nugget = abs(float(self.nugget))
         sill = max(float(self.sill), 0.0)
         cov = sill * corr
-        zero = (np.asarray(dh, dtype=float) == 0.0) & (np.asarray(dv, dtype=float) == 0.0)
-        cov = np.where(zero, sill + nugget, cov)
+        # Nugget only on the diagonal. Two *distinct* co-located points still
+        # share the signal covariance ``sill`` (their block is [[sill+n, sill],
+        # [sill, sill+n]] with eigenvalue n); adding ``sill+n`` to the off-diagonal
+        # would make that block [[sill+n, sill+n],[sill+n, sill+n]] — exactly
+        # singular, which is what lu_factor was warning about.
+        if cov.ndim == 2 and cov.shape[0] == cov.shape[1]:
+            idx = np.diag_indices(int(cov.shape[0]))
+            cov[idx] = sill + nugget
         return cov
 
 
@@ -93,9 +100,6 @@ def interpolate_field(
     if name == "idw":
         out = inverse_distance(pts, vals, tgt, power=power)
         var = np.zeros_like(out)
-    elif name == "rbf":
-        out = _radial_basis(pts, vals, tgt)
-        var = np.zeros_like(out)
     elif name in _KRIGING | _UNIVERSAL:
         trend = "linear" if name in _UNIVERSAL else "constant"
         out, var = ordinary_kriging(pts, vals, tgt, model=model, trend=trend)
@@ -137,8 +141,8 @@ def inverse_distance(
     eps: float = 1.0e-18,
 ) -> NDArray[np.float64]:
     """Inverse-distance weighting. Coincident targets copy the scatter value."""
-    if power <= 0.0:
-        raise InvalidObservation("IDW power must be positive")
+    if power <= 0.0 or power > _IDW_MAX_POWER:
+        raise InvalidObservation(f"IDW power must be in (0, {_IDW_MAX_POWER}]")
     if points.shape[0] == 1:
         return np.full(targets.shape[0], float(values[0]), dtype=float)
     delta = targets[:, None, :] - points[None, :, :]
@@ -151,7 +155,7 @@ def inverse_distance(
         out[has_exact] = values[first[has_exact]]
     rest = ~has_exact
     if rest.any():
-        weights = 1.0 / np.power(dist2[rest] + eps, 0.5 * power)
+        weights = np.exp(-0.5 * power * np.log(dist2[rest] + eps))
         denom = weights.sum(axis=1, keepdims=True)
         out[rest] = (weights * values[None, :]).sum(axis=1) / denom[:, 0]
     return out
@@ -175,7 +179,7 @@ def default_variogram(points: NDArray[np.float64], values: NDArray[np.float64]) 
     sill = float(np.var(values))
     if not np.isfinite(sill) or sill <= 0.0:
         sill = 1.0
-    return VariogramModel(kind="exponential", nugget=1.0e-8 * sill, sill=sill, range_h=length, range_v=length)
+    return VariogramModel(kind="exponential", nugget=max(1.0e-8 * sill, _NUGGET_REL_FLOOR * sill), sill=sill, range_h=length, range_v=length)
 
 
 def ordinary_kriging(
@@ -224,6 +228,11 @@ def ordinary_kriging(
     except np.linalg.LinAlgError:
         pred = inverse_distance(points, values, targets)
         return pred, np.zeros(m, dtype=float)
+    if not np.isfinite(weights).all():
+        # Singular LU factorisation (e.g. co-located points): lu_factor only
+        # warns, so the garbage solve is caught here and demoted to IDW.
+        pred = inverse_distance(points, values, targets)
+        return pred, np.zeros(m, dtype=float)
     out = values @ weights[:n, :]
     c0 = float(spec.sill + abs(spec.nugget))
     variance = np.maximum(c0 - np.sum(weights[:n, :] * rhs[:n, :], axis=0) - np.sum(weights[n:, :] * rhs[n:, :], axis=0), 0.0)
@@ -239,23 +248,6 @@ def _trend_matrix(xyz: NDArray[np.float64], linear: bool) -> NDArray[np.float64]
     if not linear:
         return ones
     return np.column_stack([np.ones(xyz.shape[0]), xyz[:, 0], xyz[:, 1], xyz[:, 2]])
-
-
-def _radial_basis(
-    points: NDArray[np.float64],
-    values: NDArray[np.float64],
-    targets: NDArray[np.float64],
-) -> NDArray[np.float64]:
-    if points.shape[0] < 2:
-        return inverse_distance(points, values, targets)
-    from scipy.interpolate import RBFInterpolator
-
-    kernel = "thin_plate_spline" if points.shape[0] >= 4 else "linear"
-    try:
-        interpolator = RBFInterpolator(points, values, kernel=kernel)
-        return np.asarray(interpolator(targets), dtype=float)
-    except (np.linalg.LinAlgError, ValueError):
-        return inverse_distance(points, values, targets)
 
 
 def leave_one_out(
@@ -283,7 +275,7 @@ def leave_one_out(
 
 
 def fit_variogram(points: NDArray[np.float64], values: NDArray[np.float64]) -> KrigingReport:
-    """Fit exponential / spherical / gaussian models; keep the lowest LOOCV RMSE."""
+    """Fit an exponential variogram (fixed kind) and report its LOOCV RMSE."""
     pts = np.asarray(points, dtype=float)
     vals = np.asarray(values, dtype=float).ravel()
     n = int(pts.shape[0])
@@ -304,30 +296,21 @@ def fit_variogram(points: NDArray[np.float64], values: NDArray[np.float64]) -> K
     if not anisotropic:
         range_h = range_v = float(base.range_h)
 
-    candidates: list[VariogramModel] = []
     sill = max(float(np.var(vals)), 1.0e-18)
     nugget = min(0.05 * sill, float(np.median(gamma[: min(5, gamma.size)])) if gamma.size else 0.0)
-    for kind in ("exponential", "spherical", "gaussian"):
-        candidates.append(
-            VariogramModel(kind=kind, nugget=max(nugget, 1.0e-12 * sill), sill=sill, range_h=range_h, range_v=range_v)
-        )
-        if anisotropic:
-            candidates.append(
-                VariogramModel(kind=kind, nugget=max(nugget, 1.0e-12 * sill), sill=sill, range_h=range_h, range_v=range_v)
-            )
-
-    best = candidates[0]
-    best_rmse, best_bias = leave_one_out(pts, vals, method="kriging", model=best)
-    for cand in candidates[1:]:
-        rmse, bias = leave_one_out(pts, vals, method="kriging", model=cand)
-        if np.isfinite(rmse) and (not np.isfinite(best_rmse) or rmse < best_rmse):
-            best, best_rmse, best_bias = cand, rmse, bias
-
-    _, variance = ordinary_kriging(pts, vals, pts, model=best)
+    model = VariogramModel(
+        kind="exponential",
+        nugget=max(nugget, _NUGGET_REL_FLOOR * sill),
+        sill=sill,
+        range_h=range_h,
+        range_v=range_v,
+    )
+    rmse, bias = leave_one_out(pts, vals, method="kriging", model=model)
+    _, variance = ordinary_kriging(pts, vals, pts, model=model)
     return KrigingReport(
-        best,
-        best_rmse,
-        best_bias,
+        model,
+        rmse,
+        bias,
         float(np.mean(variance)),
         anisotropic,
         n_pairs,
@@ -352,27 +335,6 @@ def _axis_ranges(
     range_v = float(np.median(vert) * 3.0) if vert.size else float(base.range_v)
     fallback = max(float(np.median(lags)) * 2.0, 1.0e-6) if lags.size else float(base.range_h)
     return max(range_h, 1.0e-6), max(range_v if vert.size else fallback, 1.0e-6)
-
-
-def select_interpolator(
-    points: NDArray[np.float64],
-    values: NDArray[np.float64],
-    *,
-    power: float = 2.0,
-    candidates: tuple[str, ...] = ("idw", "rbf", "kriging", "universal_kriging"),
-) -> tuple[str, float]:
-    pts, vals, _ = _clean_scatter(points, values, points)
-    best_name = "idw"
-    best_rmse = float("inf")
-    for name in candidates:
-        if name in _UNIVERSAL and pts.shape[0] < 5:
-            continue
-        rmse, _ = leave_one_out(pts, vals, method=name, power=power)
-        if np.isfinite(rmse) and rmse < best_rmse:
-            best_name, best_rmse = name, rmse
-    if not np.isfinite(best_rmse):
-        return "idw", float("nan")
-    return best_name, best_rmse
 
 
 def interpolation_weights(
@@ -409,14 +371,14 @@ def _idw_weights(
     power: float = 2.0,
     eps: float = 1.0e-18,
 ) -> NDArray[np.float64]:
-    if power <= 0.0:
-        raise InvalidObservation("IDW power must be positive")
+    if power <= 0.0 or power > _IDW_MAX_POWER:
+        raise InvalidObservation(f"IDW power must be in (0, {_IDW_MAX_POWER}]")
     n, m = points.shape[0], targets.shape[0]
     if n == 1:
         return np.ones((1, m), dtype=float)
     delta = targets[:, None, :] - points[None, :, :]
     dist2 = np.einsum("mnd,mnd->mn", delta, delta)
-    weights = 1.0 / np.power(dist2 + eps, 0.5 * power)
+    weights = np.exp(-0.5 * power * np.log(dist2 + eps))
     w = (weights / weights.sum(axis=1, keepdims=True)).T
     has_exact = (dist2 <= eps).any(axis=1)
     if has_exact.any():
@@ -461,6 +423,8 @@ def _kriging_weights(
     try:
         weights = lu_solve(factor, rhs)
     except np.linalg.LinAlgError:
+        return _idw_weights(points, targets, power=2.0)
+    if not np.isfinite(weights).all():
         return _idw_weights(points, targets, power=2.0)
     w = weights[:n, :]
     has_exact = ((dh_tp**2 + dv_tp**2) <= eps).any(axis=1)

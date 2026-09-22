@@ -11,10 +11,10 @@ for the slow inversion. This session keeps that cost bounded instead:
   interpolated and causally smoothed (``smooth_fields`` is a causal recurrence,
   so smoothing the last row against the previous one reproduces the batch result
   exactly) — so the real-time path is O(n_cells) per step;
-- the **rock inversion** (k/phi) runs on a **background thread**, throttled by
-  ``invert_every`` and coalesced (latest-wins). ``step()`` returns fresh p/sw/so/sg
-  immediately; the k/phi from a finished inversion is picked up by the next
-  ``step()`` (or a control-port RESEND), so the caller never blocks on it.
+- the **rock inversion** (k/phi) runs on a **background thread**, coalesced
+  (latest-wins). ``step()`` returns fresh p/sw/so/sg immediately; the k/phi from
+  a finished inversion is picked up by the next ``step()`` (or a control-port
+  RESEND), so the caller never blocks on it.
 
 ``step()`` returns the current :class:`ProgramFields` with the windowed fields and
 the latest (possibly prior) k/phi, so the existing emit/UDP path is unchanged.
@@ -23,7 +23,6 @@ the latest (possibly prior) k/phi, so the existing emit/UDP path is unchanged.
 from __future__ import annotations
 
 import threading
-import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -33,12 +32,11 @@ from ..core.lab_case import LabCase
 from ..exceptions import CaseSchemaError
 from .mesh import MeshResult
 from .pipeline import ProgramFields, run_mesh
-from .pressure import interpolate_pressure, select_pressure_method
-from .rock import invert_rock, invert_rock_three_phase, transient_weights
+from .pressure import interpolate_pressure
+from .rock import RockDiagnostics, invert_rock, invert_rock_three_phase, transient_weights
 from .saturation import (
     interpolate_saturation,
     project_saturations3,
-    select_saturation_method,
 )
 
 _JUMP_REL = 0.2
@@ -70,10 +68,14 @@ def _smooth_last(arr: NDArray[np.float64]) -> None:
         return
     prev = arr[-2]
     cur = arr[-1]
-    scale = float(np.sqrt(np.mean(prev ** 2))) + 1.0e-18
-    rel = float(np.sqrt(np.mean((cur - prev) ** 2))) / scale
+    scale = float(np.sqrt(np.mean(prev ** 2)))
+    rel = float(np.sqrt(np.mean((cur - prev) ** 2))) / scale if scale > 0.0 else 0.0
     if rel < _JUMP_REL:
         arr[-1] = (1.0 - _ALPHA) * cur + _ALPHA * prev
+
+
+# 滑动窗口：只看上下相邻时刻（当前 + 上一拍）
+_WINDOW = 2
 
 
 @dataclass
@@ -82,8 +84,7 @@ class InversionSession:
 
     case: LabCase
     mesh: MeshResult
-    window: int = 24
-    invert_every: float = 2.0
+    window: int = _WINDOW
     _pressure_method: str | None = None
     _sat_method: str | None = None
     _p: NDArray[np.float64] = field(default=None, repr=False)
@@ -96,20 +97,32 @@ class InversionSession:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _worker: threading.Thread | None = field(default=None, repr=False)
     _pending: bool = field(default=False, repr=False)
-    _last_invert: float = field(default=0.0, repr=False)
 
     @classmethod
-    def open(cls, case: LabCase, *, window: int = 24, invert_every: float = 2.0) -> InversionSession:
+    def open(cls, case: LabCase, *, window: int = _WINDOW) -> InversionSession:
         issues = case.static_issues()
         if issues:
             raise CaseSchemaError(issues)
         mesh = run_mesh(case)
         n_c = mesh.grid.n_cells
-        sess = cls(case=case, mesh=mesh, window=int(window), invert_every=float(invert_every))
+        sess = cls(case=case, mesh=mesh, window=int(window))
         sess._p = np.zeros((0, n_c))
         sess._sw = np.zeros((0, n_c))
         sess._so = np.zeros((0, n_c))
         sess._sg = np.zeros((0, n_c))
+        # 预热惰性 scipy/numpy 导入（克里金里的 lu_factor/lu_solve 首次调用约
+        # 1.3 s），让第一拍 STEP 也能在亚秒内回 ACK，不拖慢联调。值用非零的
+        # 占位（全零会命中 var==0 的早退分支，不起预热作用）。
+        if len(case.probes):
+            n_p, n_w = len(case.probes), len(case.wells)
+            interpolate_pressure(
+                mesh.grid,
+                case.probe_xyz,
+                np.linspace(1.0, 2.0, n_p),
+                case.well_xyz,
+                np.linspace(1.0, 2.0, n_w),
+                method="kriging",
+            )
         return sess
 
     def step(
@@ -163,19 +176,8 @@ class InversionSession:
         t = int(self.case.times.size) - 1
         grid = self.mesh.grid
         if self._pressure_method is None:
-            self._pressure_method, _ = select_pressure_method(
-                grid,
-                self.case.probe_xyz,
-                self.case.pressure[t],
-                self.case.well_xyz,
-                self.case.well_pw[t],
-                power=self.case.power,
-                well_cells=self.mesh.wells.cells,
-            )
-            sw0, so0, sg0 = _saturation_slice(self.case, t)
-            self._sat_method, _ = select_saturation_method(
-                self.case.probe_xyz, sw0, so0, sg0, power=self.case.power
-            )
+            self._pressure_method = str(self.case.method).strip().lower()
+            self._sat_method = str(self.case.method).strip().lower()
         p_new = interpolate_pressure(
             grid,
             self.case.probe_xyz,
@@ -183,8 +185,6 @@ class InversionSession:
             self.case.well_xyz,
             self.case.well_pw[t],
             method=self._pressure_method,
-            power=self.case.power,
-            well_cells=self.mesh.wells.cells,
         )
         sw_obs, so_obs, sg_obs = _saturation_slice(self.case, t)
         sw_new, so_new, sg_new = interpolate_saturation(
@@ -194,7 +194,6 @@ class InversionSession:
             so_obs,
             sg_obs,
             method=self._sat_method,
-            power=self.case.power,
             swc=self.case.black_oil.swc,
             sgc=self.case.black_oil.sgc,
         )
@@ -217,11 +216,7 @@ class InversionSession:
         )
 
     def _request_invert(self) -> None:
-        now = time.monotonic()
         with self._lock:
-            if now - self._last_invert < self.invert_every:
-                return
-            self._last_invert = now
             self._pending = True
             running = self._worker is not None and self._worker.is_alive()
         if not running:
@@ -260,6 +255,15 @@ class InversionSession:
         grid = self.mesh.grid
         p, sw, so, sg = snap["p"], snap["sw"], snap["so"], snap["sg"]
         times = snap["times"]
+        if case.k_homogeneous:
+            # 岩石均质：跳过病态 k 反演，直接用常数 k0/phi0（与离线
+            # ``pipeline._invert_static`` 一致）。
+            n_c = grid.n_cells
+            diag = RockDiagnostics()
+            diag.k_mean_error = 0.0
+            diag.phi_mean_error = 0.0
+            diag.converged = True
+            return np.full(n_c, float(case.phi0)), np.full(n_c, float(case.k0)), diag
         if case.rock_model == "black_oil_3phase":
             tw = transient_weights(times) if case.transient else None
             return invert_rock_three_phase(
@@ -277,13 +281,12 @@ class InversionSession:
                 phi0=case.phi0,
                 k0=case.k0,
                 params=case.black_oil,
-                method=case.rock_method,
-                power=case.power,
                 relperm=case.relperm,
                 time_weights=tw,
                 fractional_weight=case.fractional_weight,
                 well_bhp=snap["well_pw"],
                 well_params=case.well,
+                smoothness=case.k_smoothness,
             )
         return invert_rock(
             grid,
@@ -298,8 +301,6 @@ class InversionSession:
             phi0=case.phi0,
             k0=case.k0,
             params=case.black_oil,
-            method=case.rock_method,
-            power=case.power,
             well_bhp=snap["well_pw"],
             well_params=case.well,
         )

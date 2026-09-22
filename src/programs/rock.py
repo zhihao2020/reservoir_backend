@@ -23,6 +23,48 @@ from .mesh import PointMap, WellMap, _map_wells, map_points
 _LOGIT_LO = 1.0e-4
 _LOGIT_HI = 0.25
 
+# exp overflow/underflow guards. np.exp overflows to inf above ~709 and
+# underflows to 0 below ~-745; k is clamped to >=1e-30 afterwards anyway.
+_EXP_MAX = 709.0
+_EXP_MIN = -745.0
+
+
+def _harmonic_mean(k1: NDArray[np.float64], k2: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Harmonic mean ``2*k1*k2/(k1+k2)``, zero where ``k1+k2 == 0``.
+
+    No additive epsilon: ``k`` is clamped to ``>= 1e-30`` upstream so the
+    denominator is always positive, and an absolute ``1e-30`` floor would bias
+    the result by ~33% at the clamp.
+    """
+    den = k1 + k2
+    return np.divide(2.0 * k1 * k2, den, out=np.zeros_like(k1), where=den > 0.0)
+
+
+def _clip_exp(x: NDArray[np.float64]) -> NDArray[np.float64]:
+    """``exp`` clipped so an unconstrained kriging weight cannot overflow to inf."""
+    return np.exp(np.clip(np.asarray(x, dtype=float), _EXP_MIN, _EXP_MAX))
+
+
+def _theta_bounds(n_probe: int, n_rel: int) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Box bounds on the inversion parameters ``theta``.
+
+    Layout is ``[log_k (n_probe), phi_logit (n_probe), relperm_log (n_rel)]``.
+    ``log_k`` keeps a wide range so the ``exp`` in ``map_fields`` cannot overflow
+    (the phi sigmoid clips its input to [-20, 20] and rel-perm clips via ``exp``
+    to [1e-3, 50]).
+    """
+    n = 2 * n_probe + n_rel
+    lb = np.full(n, -np.inf)
+    ub = np.full(n, np.inf)
+    lb[:n_probe] = np.log(1.0e-30)
+    ub[:n_probe] = np.log(1.0e3)
+    lb[n_probe : 2 * n_probe] = -30.0
+    ub[n_probe : 2 * n_probe] = 30.0
+    if n_rel:
+        lb[2 * n_probe :] = -10.0
+        ub[2 * n_probe :] = 5.0
+    return lb, ub
+
 
 @dataclass(frozen=True)
 class BlackOilParams:
@@ -39,6 +81,34 @@ class BlackOilParams:
     sor: float = 0.15
     sgc: float = 0.02
     ct: float = 1.0e-9
+    # Solution-gas (CO2-in-oil) extension. ``rs_slope`` is the Henry's-law slope
+    # ``Rs = rs_slope * p`` (m3 dissolved gas / m3 oil / Pa) used for the *output*
+    # dissolved-gas metric (a throughput measure). ``rs_eq_slope`` is the
+    # *equilibrium* solubility slope for the forward model's phase split (a
+    # thermodynamic bound); 0.0 falls back to ``rs_slope`` for backward
+    # compatibility. ``bo_slope`` is the linear oil-swelling factor (reserved).
+    rs_slope: float = 0.0
+    rs_eq_slope: float = 0.0
+    bo_slope: float = 0.0
+    # Phase gravity heads ``rho*g`` (Pa/m) for the forward model's buoyancy
+    # (denser phases sink). 0.0 = no gravity (backward compatible). At high
+    # pressure the CO2-rich phase can be *denser* than the oil (density
+    # inversion), so ``rho_g > rho_o`` makes the free gas segregate to the bottom.
+    rho_w: float = 0.0
+    rho_o: float = 0.0
+    rho_g: float = 0.0
+    # Solvent (CO2) density head ``rho_s*g`` (Pa/m) for the FCM miscible model.
+    # The CO2-rich phase can be denser than the oil (density inversion), in which
+    # case ``rho_s > rho_o`` makes the mixture sink.
+    rho_s: float = 0.0
+    # Solubility threshold ``c_sat`` (solvent volume fraction) for the FCM phase
+    # split: below it all CO2 is dissolved (sg=0), above it the excess is free gas.
+    c_sat: float = 0.66
+    # Gas formation-volume factor ``Bg`` (reservoir gas volume / surface gas
+    # volume). At high pressure the gas is compressed (Bg << 1); this converts
+    # the *surface* injection rate into the *reservoir* volume the free gas
+    # actually occupies, keeping the CO2 component bounded.
+    bg: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -127,6 +197,21 @@ def corey_total_mobility(
     return lam_w + lam_o + lam_g
 
 
+def solution_gas_ratio(
+    pressure: NDArray[np.float64] | float,
+    params: BlackOilParams,
+) -> NDArray[np.float64]:
+    """Solution gas-oil ratio ``Rs`` from Henry's law (linear in pressure).
+
+    ``Rs = rs_slope * p`` is the dissolved-gas (CO2) volume per unit oil volume at
+    reservoir conditions. ``rs_slope == 0`` reduces to the dead-oil / permanent
+    free-gas black-oil model, so callers that pass the default params are
+    unaffected.
+    """
+    rs = params.rs_slope * np.asarray(pressure, dtype=float)
+    return np.maximum(rs, 0.0)
+
+
 def scale_mean(
     field: NDArray[np.float64],
     target: float,
@@ -182,7 +267,7 @@ def peaceman_wi(
     well (direction ~ 0) uses an isotropic geometric-mean form.
     """
     k = np.asarray(k_field, dtype=float).ravel()
-    kz = float(kv_kh) * k
+    kz = max(float(kv_kh), 0.0) * k
     cells = np.asarray(well_cells, dtype=np.int64).ravel()
     ijk = np.array([grid.ijk(int(c)) for c in cells])
     dx_c = grid.dx[ijk[:, 0]]
@@ -351,17 +436,17 @@ def _divergence_from_coefs(
     gx, gy, gz = coefs
     div = np.zeros((nz, ny, nx), dtype=float)
     if gx is not None:
-        kh = 2.0 * k3[:, :, :-1] * k3[:, :, 1:] / (k3[:, :, :-1] + k3[:, :, 1:] + 1.0e-30)
+        kh = _harmonic_mean(k3[:, :, :-1], k3[:, :, 1:])
         flux = kh * gx
         div[:, :, :-1] += flux
         div[:, :, 1:] -= flux
     if gy is not None:
-        kh = 2.0 * k3[:, :-1, :] * k3[:, 1:, :] / (k3[:, :-1, :] + k3[:, 1:, :] + 1.0e-30)
+        kh = _harmonic_mean(k3[:, :-1, :], k3[:, 1:, :])
         flux = kh * gy
         div[:, :-1, :] += flux
         div[:, 1:, :] -= flux
     if gz is not None:
-        kh = 2.0 * k3[:-1, :, :] * k3[1:, :, :] / (k3[:-1, :, :] + k3[1:, :, :] + 1.0e-30)
+        kh = _harmonic_mean(k3[:-1, :, :], k3[1:, :, :])
         flux = kh * gz
         div[:-1, :, :] += flux
         div[1:, :, :] -= flux
@@ -379,11 +464,11 @@ def _divergence_all_times(
     gx0, gy0, gz0 = coefs_list[0]
     khx = khy = khz = None
     if gx0 is not None:
-        khx = 2.0 * k3[:, :, :-1] * k3[:, :, 1:] / (k3[:, :, :-1] + k3[:, :, 1:] + 1.0e-30)
+        khx = _harmonic_mean(k3[:, :, :-1], k3[:, :, 1:])
     if gy0 is not None:
-        khy = 2.0 * k3[:, :-1, :] * k3[:, 1:, :] / (k3[:, :-1, :] + k3[:, 1:, :] + 1.0e-30)
+        khy = _harmonic_mean(k3[:, :-1, :], k3[:, 1:, :])
     if gz0 is not None:
-        khz = 2.0 * k3[:-1, :, :] * k3[1:, :, :] / (k3[:-1, :, :] + k3[1:, :, :] + 1.0e-30)
+        khz = _harmonic_mean(k3[:-1, :, :], k3[1:, :, :])
     out: list[NDArray[np.float64]] = []
     for gx, gy, gz in coefs_list:
         div = np.zeros((nz, ny, nx), dtype=float)
@@ -429,17 +514,17 @@ def _divergence_deriv_faces(
     if nx > 1:
         k_lo, k_hi = k3[:, :, :-1], k3[:, :, 1:]
         d_lo, d_hi = d3[:, :, :-1], d3[:, :, 1:]
-        s = k_lo + k_hi + 1.0e-30
+        s = k_lo + k_hi
         dkh_x = (2.0 * k_hi**2 / s**2) * d_lo + (2.0 * k_lo**2 / s**2) * d_hi
     if ny > 1:
         k_lo, k_hi = k3[:, :-1, :], k3[:, 1:, :]
         d_lo, d_hi = d3[:, :-1, :], d3[:, 1:, :]
-        s = k_lo + k_hi + 1.0e-30
+        s = k_lo + k_hi
         dkh_y = (2.0 * k_hi**2 / s**2) * d_lo + (2.0 * k_lo**2 / s**2) * d_hi
     if nz > 1:
         k_lo, k_hi = k3[:-1, :, :], k3[1:, :, :]
         d_lo, d_hi = d3[:-1, :, :], d3[1:, :, :]
-        s = k_lo + k_hi + 1.0e-30
+        s = k_lo + k_hi
         dkh_z = (2.0 * k_hi**2 / s**2) * d_lo + (2.0 * k_lo**2 / s**2) * d_hi
     return dkh_x, dkh_y, dkh_z
 
@@ -536,7 +621,7 @@ def _divergence_deriv_matrix(
     parts: list[NDArray[np.float64]] = []
 
     def add_axis(g, k_lo, k_hi):
-        s = k_lo + k_hi + 1.0e-30
+        s = k_lo + k_hi
         dlo = ((2.0 * k_hi**2 / s**2) * g).ravel()
         dhi = ((2.0 * k_lo**2 / s**2) * g).ravel()
         parts.extend([dlo, dhi, -dlo, -dhi])
@@ -623,14 +708,13 @@ def invert_rock(
     phi0: float,
     k0: float,
     params: BlackOilParams | None = None,
-    method: str = "kriging",
-    power: float = 2.0,
     relperm: tuple[str, ...] = (),
     time_weights: NDArray[np.float64] | None = None,
     theta0: NDArray[np.float64] | None = None,
     max_nfev: int = 60,
     well_bhp: NDArray[np.float64] | None = None,
     well_params: WellModelParams | None = None,
+    smoothness: float = 2.0,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], RockDiagnostics]:
     """Jointly invert static k, phi and optional Corey rel-perm parameters.
 
@@ -680,7 +764,11 @@ def invert_rock(
         div_coefs = [_face_coefficients(grid, mobility0[t], p[t]) for t in range(n_t)]
     vol_norm = volumes / float(np.sum(volumes))
     nearest = _nearest_probe(probes.xyz) if n_probe > 1 else np.zeros(0, dtype=np.int64)
-    q_scale = float(np.max(np.abs(sources))) + 1.0e-18
+    q_scale = float(np.max(np.abs(sources)))
+    if not np.isfinite(q_scale) or q_scale <= 0.0:
+        # Shut-in / zero-rate step: keep residuals in absolute Darcy units
+        # instead of dividing by ~0, so the mean-constraint dominates.
+        q_scale = 1.0
     dt = np.diff(np.asarray(times, dtype=float).ravel()) if n_t > 1 else np.zeros(0)
     accum_scale = 0.0
     if n_t > 1:
@@ -690,39 +778,19 @@ def invert_rock(
 
     centers = grid.cell_centers()
     k_model = default_variogram(probes.xyz, np.full(n_probe, np.log(k0)))
-    name = str(method).strip().lower()
 
-    # Precompute interpolation weights so the least-squares inner loop is a
-    # matrix-vector product instead of re-fitting / re-solving kriging each
-    # residual evaluation.
-    if name in {"kriging", "ok", "ordinary_kriging"}:
-        phi_model = default_variogram(probes.xyz, np.full(n_probe, _logit_phi(phi0)))
-        k_weights = interpolation_weights(probes.xyz, centers, method="kriging", model=k_model)
-        phi_weights = interpolation_weights(probes.xyz, centers, method="kriging", model=phi_model)
+    # Precompute kriging weights so the least-squares inner loop is a
+    # matrix-vector product instead of re-solving kriging each residual eval.
+    phi_model = default_variogram(probes.xyz, np.full(n_probe, _logit_phi(phi0)))
+    k_weights = interpolation_weights(probes.xyz, centers, method="kriging", model=k_model)
+    phi_weights = interpolation_weights(probes.xyz, centers, method="kriging", model=phi_model)
 
-        def map_fields(theta: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            log_k = theta[:n_probe]
-            phi_probe = _sigmoid_phi(theta[n_probe : 2 * n_probe])
-            k_field = np.exp(log_k @ k_weights)
-            phi_field = phi_probe @ phi_weights
-            return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
-    elif name == "idw":
-        k_weights = interpolation_weights(probes.xyz, centers, method="idw", power=power)
-
-        def map_fields(theta: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            log_k = theta[:n_probe]
-            phi_probe = _sigmoid_phi(theta[n_probe : 2 * n_probe])
-            k_field = np.exp(log_k) @ k_weights
-            phi_field = phi_probe @ k_weights
-            return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
-    else:
-
-        def map_fields(theta: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            log_k = theta[:n_probe]
-            phi_probe = _sigmoid_phi(theta[n_probe : 2 * n_probe])
-            k_field = interpolate_field(probes.xyz, np.exp(log_k), centers, method=name, power=power)
-            phi_field = interpolate_field(probes.xyz, phi_probe, centers, method=name, power=power)
-            return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
+    def map_fields(theta: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        log_k = theta[:n_probe]
+        phi_probe = _sigmoid_phi(theta[n_probe : 2 * n_probe])
+        k_field = _clip_exp(log_k @ k_weights)
+        phi_field = phi_probe @ phi_weights
+        return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
 
     def _oil_of(theta: NDArray[np.float64]) -> BlackOilParams:
         if n_rel == 0:
@@ -766,7 +834,7 @@ def invert_rock(
         chunks.append(np.array([(k_mean - k0) / k0 * 8.0, (phi_mean - phi0) / max(phi0, 1.0e-12) * 8.0]))
         if n_probe > 1:
             log_k = theta[:n_probe]
-            chunks.append(0.15 * (log_k - log_k[nearest]))
+            chunks.append(smoothness * (log_k - log_k[nearest]))
         return np.concatenate(chunks)
 
     def jacobian(theta: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -813,17 +881,18 @@ def invert_rock(
         if n_probe > 1:
             for j in range(n_probe):
                 row = n_t * n_c + 2 + j
-                J[row, j] = 0.15
-                J[row, nearest[j]] -= 0.15
+                J[row, j] = smoothness
+                J[row, nearest[j]] -= smoothness
 
         if n_rel:
-            f0 = residuals(theta)
             for r in range(n_rel):
                 col = 2 * n_probe + r
                 h = 1.0e-6 * max(1.0, abs(float(theta[col])))
                 tp = theta.copy()
+                tm = theta.copy()
                 tp[col] += h
-                J[:, col] = (residuals(tp) - f0) / h
+                tm[col] -= h
+                J[:, col] = (residuals(tp) - residuals(tm)) / (2.0 * h)
         return J
 
     if theta0 is None:
@@ -838,7 +907,8 @@ def invert_rock(
     try:
         from scipy.optimize import least_squares
 
-        fit = least_squares(residuals, theta0, jac=jacobian, method="trf", max_nfev=max_nfev, ftol=1.0e-8, xtol=1.0e-8)
+        lb, ub = _theta_bounds(n_probe, n_rel)
+        fit = least_squares(residuals, theta0, jac=jacobian, method="trf", max_nfev=max_nfev, ftol=1.0e-8, xtol=1.0e-8, x_scale="jac", bounds=(lb, ub))
         theta = np.asarray(fit.x, dtype=float)
     except (ValueError, np.linalg.LinAlgError, RuntimeError):
         theta = theta0
@@ -850,15 +920,11 @@ def invert_rock(
     k_report = fit_variogram(probes.xyz, np.log(np.maximum(k_probe, 1.0e-30)))
     phi_logit = np.log(np.clip((phi_probe - _LOGIT_LO) / (_LOGIT_HI - _LOGIT_LO), 1.0e-8, 1.0 - 1.0e-8))
     phi_report = fit_variogram(probes.xyz, phi_logit)
-    if name in {"kriging", "ok", "ordinary_kriging"}:
-        log_k_field, k_var = ordinary_kriging(probes.xyz, np.log(np.maximum(k_probe, 1.0e-30)), centers, model=k_report.model)
-        k_field = np.exp(log_k_field)
-        phi_logit_field, _ = ordinary_kriging(probes.xyz, phi_logit, centers, model=phi_report.model)
-        phi_field = _sigmoid_phi(phi_logit_field)
-        k_report.variance_mean = float(np.mean(k_var))
-    else:
-        k_field = interpolate_field(probes.xyz, k_probe, centers, method=name, power=power)
-        phi_field = interpolate_field(probes.xyz, phi_probe, centers, method=name, power=power)
+    log_k_field, k_var = ordinary_kriging(probes.xyz, np.log(np.maximum(k_probe, 1.0e-30)), centers, model=k_report.model)
+    k_field = np.exp(log_k_field)
+    phi_logit_field, _ = ordinary_kriging(probes.xyz, phi_logit, centers, model=phi_report.model)
+    phi_field = _sigmoid_phi(phi_logit_field)
+    k_report.variance_mean = float(np.mean(k_var))
     k_field = np.maximum(k_field, 1.0e-30)
     phi_field = np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
     k_field = scale_mean(k_field, k0, volumes)
@@ -913,8 +979,6 @@ def invert_rock_three_phase(
     phi0: float,
     k0: float,
     params: BlackOilParams | None = None,
-    method: str = "kriging",
-    power: float = 2.0,
     relperm: tuple[str, ...] = (),
     time_weights: NDArray[np.float64] | None = None,
     fractional_weight: float = 1.0,
@@ -922,6 +986,7 @@ def invert_rock_three_phase(
     max_nfev: int = 80,
     well_bhp: NDArray[np.float64] | None = None,
     well_params: WellModelParams | None = None,
+    smoothness: float = 2.0,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], RockDiagnostics]:
     """Jointly invert static k, phi and Corey rel-perm from three-phase black-oil
     mass balance.
@@ -977,7 +1042,9 @@ def invert_rock_three_phase(
         float(np.max(np.abs(sources_w))),
         float(np.max(np.abs(sources_o))),
         float(np.max(np.abs(sources_g))),
-    ) + 1.0e-18
+    )
+    if not np.isfinite(q_scale) or q_scale <= 0.0:
+        q_scale = 1.0
     q_total = qw + qo + qg
     producer_wells = np.flatnonzero(np.sum(q_total, axis=0) < 0.0)
 
@@ -998,36 +1065,17 @@ def invert_rock_three_phase(
 
     centers = grid.cell_centers()
     k_model = default_variogram(probes.xyz, np.full(n_probe, np.log(k0)))
-    name = str(method).strip().lower()
 
-    if name in {"kriging", "ok", "ordinary_kriging"}:
-        phi_model = default_variogram(probes.xyz, np.full(n_probe, _logit_phi(phi0)))
-        k_weights = interpolation_weights(probes.xyz, centers, method="kriging", model=k_model)
-        phi_weights = interpolation_weights(probes.xyz, centers, method="kriging", model=phi_model)
+    phi_model = default_variogram(probes.xyz, np.full(n_probe, _logit_phi(phi0)))
+    k_weights = interpolation_weights(probes.xyz, centers, method="kriging", model=k_model)
+    phi_weights = interpolation_weights(probes.xyz, centers, method="kriging", model=phi_model)
 
-        def map_fields(theta):
-            log_k = theta[:n_probe]
-            phi_probe = _sigmoid_phi(theta[n_probe : 2 * n_probe])
-            k_field = np.exp(log_k @ k_weights)
-            phi_field = phi_probe @ phi_weights
-            return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
-    elif name == "idw":
-        k_weights = interpolation_weights(probes.xyz, centers, method="idw", power=power)
-
-        def map_fields(theta):
-            log_k = theta[:n_probe]
-            phi_probe = _sigmoid_phi(theta[n_probe : 2 * n_probe])
-            k_field = np.exp(log_k) @ k_weights
-            phi_field = phi_probe @ k_weights
-            return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
-    else:
-
-        def map_fields(theta):
-            log_k = theta[:n_probe]
-            phi_probe = _sigmoid_phi(theta[n_probe : 2 * n_probe])
-            k_field = interpolate_field(probes.xyz, np.exp(log_k), centers, method=name, power=power)
-            phi_field = interpolate_field(probes.xyz, phi_probe, centers, method=name, power=power)
-            return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
+    def map_fields(theta):
+        log_k = theta[:n_probe]
+        phi_probe = _sigmoid_phi(theta[n_probe : 2 * n_probe])
+        k_field = _clip_exp(log_k @ k_weights)
+        phi_field = phi_probe @ phi_weights
+        return np.maximum(k_field, 1.0e-30), np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
 
     def _oil_of(theta):
         if n_rel == 0:
@@ -1098,7 +1146,7 @@ def invert_rock_three_phase(
         chunks.append(np.array([(k_mean - k0) / k0 * 8.0, (phi_mean - phi0) / max(phi0, 1.0e-12) * 8.0]))
         if n_probe > 1:
             log_k = theta[:n_probe]
-            chunks.append(0.15 * (log_k - log_k[nearest]))
+            chunks.append(smoothness * (log_k - log_k[nearest]))
         return np.concatenate(chunks)
 
     def jacobian(theta: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -1162,17 +1210,18 @@ def invert_rock_three_phase(
         if n_probe > 1:
             for j in range(n_probe):
                 row = mean_row + 2 + j
-                J[row, j] = 0.15
-                J[row, nearest[j]] -= 0.15
+                J[row, j] = smoothness
+                J[row, nearest[j]] -= smoothness
 
         if n_rel:
-            f0 = residuals(theta)
             for r in range(n_rel):
                 col = 2 * n_probe + r
                 h = 1.0e-6 * max(1.0, abs(float(theta[col])))
                 tp = theta.copy()
+                tm = theta.copy()
                 tp[col] += h
-                J[:, col] = (residuals(tp) - f0) / h
+                tm[col] -= h
+                J[:, col] = (residuals(tp) - residuals(tm)) / (2.0 * h)
         return J
 
     if theta0 is None:
@@ -1187,7 +1236,8 @@ def invert_rock_three_phase(
     try:
         from scipy.optimize import least_squares
 
-        fit = least_squares(residuals, theta0, jac=jacobian, method="trf", max_nfev=max_nfev, ftol=1.0e-8, xtol=1.0e-8)
+        lb, ub = _theta_bounds(n_probe, n_rel)
+        fit = least_squares(residuals, theta0, jac=jacobian, method="trf", max_nfev=max_nfev, ftol=1.0e-8, xtol=1.0e-8, x_scale="jac", bounds=(lb, ub))
         theta = np.asarray(fit.x, dtype=float)
     except (ValueError, np.linalg.LinAlgError, RuntimeError):
         theta = theta0
@@ -1199,15 +1249,11 @@ def invert_rock_three_phase(
     k_report = fit_variogram(probes.xyz, np.log(np.maximum(k_probe, 1.0e-30)))
     phi_logit = np.log(np.clip((phi_probe - _LOGIT_LO) / (_LOGIT_HI - _LOGIT_LO), 1.0e-8, 1.0 - 1.0e-8))
     phi_report = fit_variogram(probes.xyz, phi_logit)
-    if name in {"kriging", "ok", "ordinary_kriging"}:
-        log_k_field, k_var = ordinary_kriging(probes.xyz, np.log(np.maximum(k_probe, 1.0e-30)), centers, model=k_report.model)
-        k_field = np.exp(log_k_field)
-        phi_logit_field, _ = ordinary_kriging(probes.xyz, phi_logit, centers, model=phi_report.model)
-        phi_field = _sigmoid_phi(phi_logit_field)
-        k_report.variance_mean = float(np.mean(k_var))
-    else:
-        k_field = interpolate_field(probes.xyz, k_probe, centers, method=name, power=power)
-        phi_field = interpolate_field(probes.xyz, phi_probe, centers, method=name, power=power)
+    log_k_field, k_var = ordinary_kriging(probes.xyz, np.log(np.maximum(k_probe, 1.0e-30)), centers, model=k_report.model)
+    k_field = np.exp(log_k_field)
+    phi_logit_field, _ = ordinary_kriging(probes.xyz, phi_logit, centers, model=phi_report.model)
+    phi_field = _sigmoid_phi(phi_logit_field)
+    k_report.variance_mean = float(np.mean(k_var))
     k_field = np.maximum(k_field, 1.0e-30)
     phi_field = np.clip(phi_field, _LOGIT_LO, _LOGIT_HI)
     k_field = scale_mean(k_field, k0, volumes)
@@ -1321,8 +1367,6 @@ def invert_rock_coarse_to_fine(
     phi0: float,
     k0: float,
     params: BlackOilParams | None = None,
-    method: str = "kriging",
-    power: float = 2.0,
     relperm: tuple[str, ...] = (),
     time_weights: NDArray[np.float64] | None = None,
     factor: int = 2,
@@ -1334,7 +1378,7 @@ def invert_rock_coarse_to_fine(
     if factor <= 1 or min(grid.nx, grid.ny, grid.nz) <= factor:
         return invert_rock(
             grid, pressure, sw, so, sg, times, probes, wells, well_rate,
-            phi0=phi0, k0=k0, params=params, method=method, power=power,
+            phi0=phi0, k0=k0, params=params,
             relperm=relperm, time_weights=time_weights,
         )
     coarse_grid = _coarsen_grid(grid, factor)
@@ -1347,12 +1391,12 @@ def invert_rock_coarse_to_fine(
     wells_c = _map_wells(coarse_grid, wells.ids, wells.xyz)
     _, _, diag_c = invert_rock(
         coarse_grid, p_c, sw_c, so_c, sg_c, times, probes_c, wells_c, well_rate,
-        phi0=phi0, k0=k0, params=params, method=method, power=power,
+        phi0=phi0, k0=k0, params=params,
         relperm=relperm, time_weights=time_weights, max_nfev=coarse_max_nfev,
     )
     theta0 = np.asarray(diag_c.theta, dtype=float)
     return invert_rock(
         grid, pressure, sw, so, sg, times, probes, wells, well_rate,
-        phi0=phi0, k0=k0, params=params, method=method, power=power,
+        phi0=phi0, k0=k0, params=params,
         relperm=relperm, time_weights=time_weights, theta0=theta0,
     )

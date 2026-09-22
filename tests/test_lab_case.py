@@ -73,7 +73,7 @@ def test_load_lab_case_missing_series_raises(tmp_path: Path):
 def test_require_series_false_skips_present_files(tmp_path: Path):
     # Online (streaming) mode must start empty even when the yaml references
     # observation/series files (those belong to the offline path).
-    case_dir = Path(__file__).resolve().parents[1] / "examples" / "small"
+    case_dir = Path(__file__).resolve().parents[1] / "example"
     case = load_lab_case(case_dir / "case.yaml", require_series=False)
     assert case.times.size == 0
     assert case.pressure.shape == (0, len(case.probes))

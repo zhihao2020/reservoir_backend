@@ -41,14 +41,16 @@ def _mean_over_cells(field: NDArray[np.float64], cells: NDArray[np.int64]) -> ND
         return np.nanmean(sel, axis=1)
 
 
-def summarize_results(case, mesh, fields) -> dict[str, Any]:
+def summarize_results(case, mesh, fields, *, times: NDArray[np.float64] | None = None) -> dict[str, Any]:
     """Per-probe / per-well reconstruction summary (JSON-serialisable).
 
     ``case`` is a :class:`~src.core.lab_case.LabCase`, ``mesh`` a
     :class:`~src.programs.mesh.MeshResult`, and ``fields`` a
-    :class:`~src.programs.pipeline.ProgramFields`.
+    :class:`~src.programs.pipeline.ProgramFields`. ``times`` overrides the time
+    axis (e.g. the field-scaled times for the ``field`` UDP stream) without
+    touching the index-aligned observed/reconstructed values.
     """
-    times = np.asarray(fields.times, dtype=float)
+    times = np.asarray(fields.times if times is None else times, dtype=float)
     probes_out: list[dict[str, Any]] = []
     for n, pid in enumerate(case.probe_ids):
         cell = int(mesh.probes.cell[n])
