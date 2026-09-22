@@ -586,7 +586,7 @@ def _implicit_compositional_step(
     h = 1.0e-6
     converged = False
     for _ in range(max_iter):
-        _, so, sg = _split_compositional(sw, C, Rs, Bg)
+        _, so, sg = _split_compositional(sw, C, Rs, Bg, params.bo_slope)
         # actual dissolved ratio (<= equilibrium Rs): undersaturated oil carries
         # less than the equilibrium bound, so the flux/source use the real value.
         Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs)
@@ -596,14 +596,14 @@ def _implicit_compositional_step(
         flux_o = A @ lam_o
         r_c = C - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g + Rs_act * flux_o))
         # derivatives (local, numerical through the phase split, per phase + ratio)
-        _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg)
+        _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg, params.bo_slope)
         Rs_sw = np.clip(np.where(so_p > 1.0e-12, (C - sg_p / Bg) / np.maximum(so_p, 1.0e-12), 0.0), 0.0, Rs)
         lw_p, lo_p, lg_p = corey_phase_mobilities(sw + h, so_p, sg_p, params)
         dlw_dsw = (lw_p - lam_w) / h
         dlg_dsw = (lg_p - lam_g) / h
         dlo_dsw = (lo_p - lam_o) / h
         dRs_dsw = (Rs_sw - Rs_act) / h
-        _, so_c, sg_c = _split_compositional(sw, C + h, Rs, Bg)
+        _, so_c, sg_c = _split_compositional(sw, C + h, Rs, Bg, params.bo_slope)
         Rs_c = np.clip(np.where(so_c > 1.0e-12, (C + h - sg_c / Bg) / np.maximum(so_c, 1.0e-12), 0.0), 0.0, Rs)
         _lw_c, lo_c, lg_c = corey_phase_mobilities(sw, so_c, sg_c, params)
         dlg_dC = (lg_c - lam_g) / h
@@ -633,7 +633,7 @@ def _implicit_compositional_step(
         if norm_d < tol * max(1.0, norm_x):
             converged = True
             break
-    _, so, sg = _split_compositional(sw, C, Rs, Bg)
+    _, so, sg = _split_compositional(sw, C, Rs, Bg, params.bo_slope)
     return sw, so, sg, C, converged
 
 
@@ -890,20 +890,26 @@ def _split_compositional(
     C: NDArray[np.float64],
     Rs: NDArray[np.float64],
     Bg: float,
+    bo_slope: float = 0.0,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Phase split of a conserved CO2 component ``C = sg/Bg + Rs*so`` (surface).
+    """Phase split of a conserved CO2 component ``C = sg/Bg + Rs*No`` (surface).
 
-    ``sw`` is the water saturation, ``Rs`` the solution gas-oil ratio (surface
-    gas / surface oil) and ``Bg`` the gas formation-volume factor. Returns
-    ``(sw, so, sg)`` with ``sw + so + sg = 1``.
+    ``sw`` is the water saturation, ``Rs`` the equilibrium solution gas-oil ratio
+    (surface gas / surface oil), ``Bg`` the gas formation-volume factor, and
+    ``bo_slope`` the linear oil-swelling slope (``Bo = 1 + bo_slope*Rs``, reservoir
+    oil / surface oil). With swelling, the oil occupies ``so = No*Bo`` reservoir
+    volume, so the dissolved capacity per reservoir volume shrinks by ``Bo`` and
+    the free gas appears earlier. Returns ``(sw, so, sg)`` with ``sw+so+sg=1``.
     """
     sw_p = np.clip(np.asarray(sw, dtype=float), 0.0, None)
     C_p = np.clip(np.asarray(C, dtype=float), 0.0, None)
     Rs_p = np.clip(np.asarray(Rs, dtype=float), 0.0, None)
     nw = 1.0 - sw_p
     inv_Bg = 1.0 / max(float(Bg), 1.0e-12)
-    denom = inv_Bg - Rs_p
-    sg = np.where(C_p <= Rs_p * nw, 0.0, (C_p - Rs_p * nw) / np.maximum(denom, 1.0e-12))
+    Bo = 1.0 + bo_slope * Rs_p  # reservoir oil / surface oil (swelling)
+    dissolved_cap = Rs_p * nw / Bo
+    denom = inv_Bg - Rs_p / Bo
+    sg = np.where(C_p <= dissolved_cap, 0.0, (C_p - dissolved_cap) / np.maximum(denom, 1.0e-12))
     sg = np.clip(sg, 0.0, nw)
     so = nw - sg
     return sw_p, so, sg
@@ -965,7 +971,7 @@ def _forward_compositional_saturations(
     for t in range(n_t):
         Rs_t = _eq_solution_gas_ratio(p_in[t], params)
         Bg = float(params.bg)
-        sw, so, sg = _split_compositional(sw, C, Rs_t, Bg)
+        sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
         lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
         qw_t = well_cell_rates(grid, wells, qw[t])
         qo_t = well_cell_rates(grid, wells, qo[t])
