@@ -587,29 +587,43 @@ def _implicit_compositional_step(
     converged = False
     for _ in range(max_iter):
         _, so, sg = _split_compositional(sw, C, Rs, Bg)
+        # actual dissolved ratio (<= equilibrium Rs): undersaturated oil carries
+        # less than the equilibrium bound, so the flux/source use the real value.
+        Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs)
         lam_w, lam_o, lam_g = corey_phase_mobilities(sw, so, sg, params)
         r_sw = sw - sw0 - dt * inv_phiV * (qw - A @ lam_w)
-        # ``Rs * (A @ lam_o)`` (element-wise) = dissolved CO2 carried by the oil.
-        r_c = C - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g + Rs * (A @ lam_o)))
-        # derivatives (local, numerical through the phase split, per phase)
+        # dissolved CO2 carried by the oil = Rs_act * (A @ lam_o) element-wise
+        flux_o = A @ lam_o
+        r_c = C - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g + Rs_act * flux_o))
+        # derivatives (local, numerical through the phase split, per phase + ratio)
         _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg)
+        Rs_sw = np.clip(np.where(so_p > 1.0e-12, (C - sg_p / Bg) / np.maximum(so_p, 1.0e-12), 0.0), 0.0, Rs)
         lw_p, lo_p, lg_p = corey_phase_mobilities(sw + h, so_p, sg_p, params)
         dlw_dsw = (lw_p - lam_w) / h
         dlg_dsw = (lg_p - lam_g) / h
         dlo_dsw = (lo_p - lam_o) / h
+        dRs_dsw = (Rs_sw - Rs_act) / h
         _, so_c, sg_c = _split_compositional(sw, C + h, Rs, Bg)
+        Rs_c = np.clip(np.where(so_c > 1.0e-12, (C + h - sg_c / Bg) / np.maximum(so_c, 1.0e-12), 0.0), 0.0, Rs)
         _lw_c, lo_c, lg_c = corey_phase_mobilities(sw, so_c, sg_c, params)
         dlg_dC = (lg_c - lam_g) / h
         dlo_dC = (lo_c - lam_o) / h
+        dRs_dC = (Rs_c - Rs_act) / h
         J_ww = I + A @ diags(dt * inv_phiV * dlw_dsw)
-        # ``diags(Rs) @ A`` row-scales the oil-flux operator by the solution-gas
-        # ratio (a per-cell property); ``Rs * A`` would be a matrix-vector product.
-        J_cw = inv_Bg * A_g @ diags(dt * inv_phiV * dlg_dsw) + diags(Rs) @ A @ diags(dt * inv_phiV * dlo_dsw)
-        J_cc = I + inv_Bg * A_g @ diags(dt * inv_phiV * dlg_dC) + diags(Rs) @ A @ diags(dt * inv_phiV * dlo_dC)
+        # ``diags(Rs_act) @ A`` row-scales the oil-flux operator; the extra
+        # diagonal term is d(Rs_act)/d(sw,C) times the frozen oil flux.
+        J_cw = (inv_Bg * A_g @ diags(dt * inv_phiV * dlg_dsw)
+                + diags(Rs_act) @ A @ diags(dt * inv_phiV * dlo_dsw)
+                + diags(dt * inv_phiV * dRs_dsw * flux_o))
+        J_cc = (I + inv_Bg * A_g @ diags(dt * inv_phiV * dlg_dC)
+                + diags(Rs_act) @ A @ diags(dt * inv_phiV * dlo_dC)
+                + diags(dt * inv_phiV * dRs_dC * flux_o))
         J = bmat([[J_ww, None], [J_cw, J_cc]], format="csr")
         delta = _solve_linear(J, -np.concatenate([r_sw, r_c]))
         sw_new = np.clip(sw + 0.5 * delta[:n], 0.0, 1.0)
-        C_new = np.clip(C + 0.5 * delta[n:], 0.0, inv_Bg * (1.0 - sw_new))
+        # C = sg/Bg + Rs*so, maximised at sg=0 -> Rs*(1-sw); allow the full
+        # dissolved capacity (Rs >> 1/Bg), not just the free-gas bound inv_Bg.
+        C_new = np.clip(C + 0.5 * delta[n:], 0.0, (Rs + inv_Bg) * (1.0 - sw_new))
         # Converge on the *actual* (damped + clipped) change: the raw Newton step
         # stays huge because the Jacobian is ill-conditioned, but the bounded
         # state settles.
@@ -956,7 +970,13 @@ def _forward_compositional_saturations(
         qw_t = well_cell_rates(grid, wells, qw[t])
         qo_t = well_cell_rates(grid, wells, qo[t])
         qg_t = well_cell_rates(grid, wells, qg[t])
-        q_c = qg_t / Bg + Rs_t * qo_t
+        # actual dissolved ratio (<= equilibrium Rs_t): the produced oil carries
+        # the ACTUAL dissolved CO2, not the equilibrium bound (otherwise the
+        # produced solution gas dwarfs the injection and the component never
+        # accumulates).
+        Rs_actual = np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0)
+        Rs_actual = np.clip(Rs_actual, 0.0, Rs_t)
+        q_c = qg_t / Bg + Rs_actual * qo_t
         ref_p = float(p_in[t, ref_cell])
         p = _solve_pressure_with_source(grid, k, lam_w + lam_o + lam_g, qw_t + qo_t + qg_t, ref_cell, ref_p)
         sw_hist[t] = sw.copy()
