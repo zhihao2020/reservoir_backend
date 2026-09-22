@@ -24,3 +24,6 @@ shale_oil/comparison/
 .idea/
 .vscode/
 *.swp
+
+# 参考实现（MRST/OPM，只读参考，不入库）
+reference_projects/

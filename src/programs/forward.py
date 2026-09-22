@@ -572,7 +572,7 @@ def _implicit_compositional_step(
     ``rho_g`` (the gas sinks when ``rho_g > 0``); the dissolved CO2 moves with
     the oil and has no separate gravity.
     """
-    from scipy.sparse import bmat, diags, identity
+    from scipy.sparse import diags
 
     Bg = float(params.bg)
     inv_Bg = 1.0 / max(Bg, 1.0e-12)
@@ -580,19 +580,24 @@ def _implicit_compositional_step(
     # A@lam - rho_g*A_grav@lam (A_grav@lam = div(k lam grad z)). rho_g > 0 sinks.
     A_g = A - params.rho_g * A_grav
     n = int(sw0.size)
-    I = identity(n, format="csr")
     sw = np.asarray(sw0, dtype=float).copy()
     C = np.asarray(C0, dtype=float).copy()
     h = 1.0e-6
+    # Rescale to the flux form ``phi*vol/dt*(x-x0) - (source - flux) = 0``: the
+    # raw form multiplies the flux by ``dt*inv_phiV`` (~1e9), which makes the
+    # Jacobian stiff and GMRES crawl. Dividing through by ``dt*inv_phiV`` keeps
+    # the accumulation diagonal ``phi*vol/dt`` and the flux operator O(1).
+    accum = 1.0 / (dt * inv_phiV)
+    I = diags(accum)
 
     def residual(sw_, C_):
-        """Residual of the (sw, C) system at a trial state."""
+        """Residual of the (sw, C) system at a trial state (flux form)."""
         _, so_, sg_ = _split_compositional(sw_, C_, Rs, Bg, params.bo_slope)
         Rs_act_ = np.clip(np.where(so_ > 1.0e-12, (C_ - sg_ / Bg) / np.maximum(so_, 1.0e-12), 0.0), 0.0, Rs)
         lam_w_, lam_o_, lam_g_ = phase_mobilities(sw_, so_, sg_, params)
-        r_sw_ = sw_ - sw0 - dt * inv_phiV * (qw - A @ lam_w_)
+        r_sw_ = accum * (sw_ - sw0) - (qw - A @ lam_w_)
         flux_o_ = A @ lam_o_
-        r_c_ = C_ - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g_ + Rs_act_ * flux_o_))
+        r_c_ = accum * (C_ - C0) - (q_co2 - (inv_Bg * A_g @ lam_g_ + Rs_act_ * flux_o_))
         return np.concatenate([r_sw_, r_c_])
 
     r0_norm = float(np.linalg.norm(residual(sw, C)))
@@ -606,8 +611,8 @@ def _implicit_compositional_step(
         # dissolved CO2 carried by the oil = Rs_act * (A @ lam_o) element-wise
         flux_o = A @ lam_o
         r = np.concatenate([
-            sw - sw0 - dt * inv_phiV * (qw - A @ lam_w),
-            C - C0 - dt * inv_phiV * (q_co2 - (inv_Bg * A_g @ lam_g + Rs_act * flux_o)),
+            accum * (sw - sw0) - (qw - A @ lam_w),
+            accum * (C - C0) - (q_co2 - (inv_Bg * A_g @ lam_g + Rs_act * flux_o)),
         ])
         # derivatives (local, numerical through the phase split, per phase + ratio)
         _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg, params.bo_slope)
@@ -623,17 +628,21 @@ def _implicit_compositional_step(
         dlg_dC = (lg_c - lam_g) / h
         dlo_dC = (lo_c - lam_o) / h
         dRs_dC = (Rs_c - Rs_act) / h
-        J_ww = I + A @ diags(dt * inv_phiV * dlw_dsw)
+        J_ww = I + A @ diags(dlw_dsw)
         # ``diags(Rs_act) @ A`` row-scales the oil-flux operator; the extra
         # diagonal term is d(Rs_act)/d(sw,C) times the frozen oil flux.
-        J_cw = (inv_Bg * A_g @ diags(dt * inv_phiV * dlg_dsw)
-                + diags(Rs_act) @ A @ diags(dt * inv_phiV * dlo_dsw)
-                + diags(dt * inv_phiV * dRs_dsw * flux_o))
-        J_cc = (I + inv_Bg * A_g @ diags(dt * inv_phiV * dlg_dC)
-                + diags(Rs_act) @ A @ diags(dt * inv_phiV * dlo_dC)
-                + diags(dt * inv_phiV * dRs_dC * flux_o))
-        J = bmat([[J_ww, None], [J_cw, J_cc]], format="csr")
-        delta = _solve_linear(J, -r)
+        J_cw = (inv_Bg * A_g @ diags(dlg_dsw)
+                + diags(Rs_act) @ A @ diags(dlo_dsw)
+                + diags(dRs_dsw * flux_o))
+        J_cc = (I + inv_Bg * A_g @ diags(dlg_dC)
+                + diags(Rs_act) @ A @ diags(dlo_dC)
+                + diags(dRs_dC * flux_o))
+        # Block forward substitution (the Jacobian is lower block-triangular):
+        # two n×n solves instead of one 2n×2n — cheaper and better-conditioned.
+        r = -r
+        delta_sw = _solve_linear(J_ww, r[:n])
+        delta_c = _solve_linear(J_cc, r[n:] - J_cw @ delta_sw)
+        delta = np.concatenate([delta_sw, delta_c])
         # Backtracking line search (Armijo): the phase split has a kink at the
         # saturation point, so a full Newton step can overshoot into the wrong
         # region; shrink the step until the residual actually decreases.
@@ -654,9 +663,9 @@ def _implicit_compositional_step(
         norm_x = float(np.linalg.norm(np.concatenate([sw, C])))
         # converge on the *residual* (relative to the initial source), not the
         # change: the ill-conditioned Jacobian can freeze the step while the
-        # residual is still large. A loose (5%) relative bound keeps the Newton
-        # from stalling on discretization noise at the saturation kink.
-        if float(np.linalg.norm(r_new)) < max(tol, 0.05) * max(1.0, r0_norm):
+        # residual is still large. Relative to r0_norm (with a tiny floor, not a
+        # clamp to 1 — the rescaled residual has norm < 1).
+        if float(np.linalg.norm(r_new)) < max(tol, 0.05) * max(r0_norm, 1.0e-12):
             converged = True
             break
         if norm_d < 1.0e-12 * max(1.0, norm_x):
