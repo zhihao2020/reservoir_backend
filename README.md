@@ -22,8 +22,9 @@ python -m src path/to/case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 -
 `--tcp-port` 是测点/注采的入站 TCP（无默认值）；`--lab-port` / `--field-port` 是反演
 结果的两路 UDP 出站（实验 / 矿场尺度）；`--control-port` 是可选的控制端口（应答
 RESEND 重发请求）。`--model {none,black_oil,compositional}` 选前向饱和度模型（覆盖
-YAML 里的 `forward.model`），默认 `none`（克里金，联调默认）。`compositional` 是统一的组分
-模型（GEM 式：CO₂ 溶剂分数，`c_sat` 之下混相、之上析出自由气）。不写 `-o` 不落盘。
+YAML 里的 `forward.model`），默认 `none`（克里金，联调默认）。`compositional` 是溶液气
+（solution-gas）组分模型：CO₂ 溶解进油（`Rs = rs_slope·p`，亨利定律），组分
+`C = sg/Bg + Rs·so`（自由气 + 溶解气），过饱和时析出自由气。不写 `-o` 不落盘。
 
 在线时 `case.yaml` 只做 init（网格、测点坐标、井轨迹、初值、相似比）；`observations` /
 `series` 可以没有（即使写了也会被忽略，观测一律走 TCP）。采集端连上 `--tcp-port` 后这条
