@@ -979,11 +979,16 @@ def _eq_solution_gas_ratio(
     """Equilibrium solution gas-oil ratio ``Rs`` (surface gas / surface oil).
 
     Uses the *equilibrium* solubility slope ``rs_eq_slope`` (falling back to
-    ``rs_slope`` when unset). This is the surface-volume solubility bound used in
-    the forward model's phase split, distinct from the output ``rs`` metric.
+    ``rs_slope`` when unset) plus an optional quadratic ``rs_quad*p^2`` term, so
+    ``Rs(p) = slope*p + rs_quad*p^2``. The quadratic captures the EOS's stronger
+    pressure sensitivity near the phase boundary (Henry's law is linear). This is
+    the surface-volume solubility bound used in the forward model's phase split,
+    distinct from the output ``rs`` metric.
     """
     slope = params.rs_eq_slope if params.rs_eq_slope > 0.0 else params.rs_slope
-    return np.maximum(slope * np.asarray(pressure, dtype=float), 0.0)
+    p = np.asarray(pressure, dtype=float)
+    rs = slope * p + params.rs_quad * p * p
+    return np.maximum(rs, 0.0)
 
 
 def fcm_effective_viscosity(

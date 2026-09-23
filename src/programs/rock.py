@@ -116,6 +116,13 @@ class FluidParams:
     rs_slope: float = 0.0
     rs_eq_slope: float = 0.0
     bo_slope: float = 0.0
+    # Quadratic solubility coefficient (1/Pa^2) so the equilibrium Rs can be a
+    # *nonlinear* ``Rs(p) = rs_slope*p + rs_quad*p^2``. The GEM Peng-Robinson EOS
+    # gives a solubility that is more pressure-sensitive than Henry's law near
+    # the phase boundary (~3.6x the linear slope at 20 MPa / 120 C), so a PVT
+    # table (or this quadratic) is a more faithful equilibrium bound. 0.0 keeps
+    # the backward-compatible Henry's law.
+    rs_quad: float = 0.0
     # Phase gravity heads ``rho*g`` (Pa/m) for the forward model's buoyancy
     # (denser phases sink). 0.0 = no gravity (backward compatible). At high
     # pressure the CO2-rich phase can be *denser* than the oil (density

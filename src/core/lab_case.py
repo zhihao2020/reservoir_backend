@@ -357,6 +357,7 @@ def lab_case_from_mapping(
         ct=float(oil_raw.get("ct_1pa", 1.0e-9)),
         rs_slope=float(oil_raw.get("rs_slope", 0.0)),
         rs_eq_slope=float(oil_raw.get("rs_eq_slope", 0.0)),
+        rs_quad=float(oil_raw.get("rs_quad", 0.0)),
         bo_slope=float(oil_raw.get("bo_slope", 0.0)),
         rho_w=float(oil_raw.get("rho_w", 0.0)),
         rho_o=float(oil_raw.get("rho_o", 0.0)),

@@ -211,3 +211,18 @@ def test_kinetic_dissolution_converges_and_conserves():
         f"injected {injected:.3e} m3"
     )
 
+
+def test_eq_solution_gas_ratio_quadratic():
+    # The equilibrium Rs(p) is Henry's law slope*p by default; rs_quad adds a
+    # quadratic term so the GEM EOS's stronger pressure sensitivity near the
+    # phase boundary can be represented: Rs = slope*p + rs_quad*p^2.
+    from src.programs.forward import _eq_solution_gas_ratio
+    from src.programs.rock import FluidParams
+
+    params = FluidParams(rs_slope=1.0e-6, rs_quad=1.0e-13)
+    p = np.array([10.0e6, 20.0e6])
+    rs = _eq_solution_gas_ratio(p, params)
+    # 1e-6*10e6 + 1e-13*(10e6)^2 = 10 + 10 = 20;  1e-6*20e6 + 1e-13*(20e6)^2 = 20 + 40 = 60
+    assert np.allclose(rs, [20.0, 60.0])
+
+
