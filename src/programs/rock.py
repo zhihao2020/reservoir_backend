@@ -158,6 +158,11 @@ class FluidParams:
     # ``d(Cd)/dt = k_diss * (Rs*No - Cd)``. 0.0 = instantaneous equilibrium
     # (backward compatible); >0 makes the free gas dissolve over ~1/k_diss.
     k_diss: float = 0.0
+    # Floor on the gas relative permeability ``krg`` (diagnostic). 0.0 keeps the
+    # table/Corey curves as-is (krg = 0 below the residual gas saturation). A small
+    # non-zero value lets the free gas flow even below ``sgc``, which is needed to
+    # drain the excess injected CO2 and avoid the unbounded-C Newton stall.
+    krg_floor: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -250,6 +255,8 @@ def tabular_phase_mobilities(
     krow = np.interp(sw_a, table.sw, table.krow)
     krog = np.interp(sg_a, table.sg, table.krog)
     krg = np.interp(sg_a, table.sg, table.krg)
+    if params.krg_floor > 0.0:
+        krg = np.maximum(krg, params.krg_floor)
     kro = krog * krow  # Stone I (connate-water oil relperm is ~1)
     return krw / params.mu_w, kro / params.mu_o, krg / params.mu_g
 
