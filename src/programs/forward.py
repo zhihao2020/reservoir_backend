@@ -535,6 +535,12 @@ def _mobility_divergence_matrix(
 # with ``*DTMAX 0.01`` days (14.4 min); a 30-day report step is far too coarse for
 # the lab-scale injection (fills the model ~4.5 h), so sub-steps are capped here.
 _MAX_DT = 864.0
+# Fixed-point (Picard) iterations coupling the Peaceman pressure solve and the
+# saturation transport: the pressure solve uses the *previous* mobility, so a few
+# outer iterations let the mobility (which drops as free gas accumulates at the
+# injector) feed back into the pressure/injection-rate — the "saturation ↔
+# mobility ↔ injection rate" loop the fully-implicit well model closes.
+_MAX_PICARD = 3
 
 
 def _balance_well_rates(
@@ -1333,45 +1339,56 @@ def _forward_compositional_saturations(
     sg_hist = np.zeros((n_t, n_c))
     for t in range(n_t):
         Bg = float(params.bg)
-        # Phase split from the current CO2 component and the *kriged* solubility
-        # (a good first guess; the BHP-driven path re-splits with the solved
-        # pressure below).
+        # Start-of-step phase split (for the t-value records), then advance C.
         Rs_t = _eq_solution_gas_ratio(p_in[t], params)
         if kinetic:
-            sw, so, sg, _No, Rs_act = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
+            _sw_r, so_r, sg_r, _No, _ = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
         else:
-            sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
-            Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs_t)
-        if bhp_mode:
-            # Solve the pressure from the Peaceman well model (BHP-driven), then
-            # derive the surface well rates from it. Re-split with the solved
-            # solubility so the CO2 source uses the self-consistent Rs(p).
-            lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
-            p = solve_pressure_peaceman(
-                grid, k, lam_w + lam_o + lam_g, wells, bhp[t], well_params,
-            )
-            Rs_t = _eq_solution_gas_ratio(p, params)
-            qw_t, qo_t, qg_t = well_cell_rates_peaceman(
-                grid, k, lam_w, lam_o, lam_g, wells, bhp[t], p, well_params,
-                injects_gas=injects_gas[t], bg=Bg,
-            )
+            _sw_r, so_r, sg_r = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
+        sw_hist[t] = sw.copy()
+        so_hist[t] = so_r.copy()
+        sg_hist[t] = sg_r.copy()
+        if t >= n_t - 1:
+            continue
+        sw_t, C_t, Cd_t = sw.copy(), C.copy(), Cd.copy()
+        C_prev = None
+        # Picard (fixed-point) loop: couple the Peaceman pressure solve and the
+        # saturation transport. The pressure solve uses the *current* mobility,
+        # which drops as free gas accumulates at the injector; a few outer
+        # iterations let that mobility feed back into the injection rate (the
+        # "saturation ↔ mobility ↔ injection rate" loop the fully-implicit well
+        # model closes).
+        for _picard in range(_MAX_PICARD):
+            sw, C, Cd = sw_t.copy(), C_t.copy(), Cd_t.copy()
+            # Phase split from the current CO2 component + solubility.
             if kinetic:
                 sw, so, sg, _No, Rs_act = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
             else:
                 sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
                 Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs_t)
-        else:
-            qw_t = well_cell_rates(grid, wells, qw[t])
-            qo_t = well_cell_rates(grid, wells, qo[t])
-            qg_t = well_cell_rates(grid, wells, qg[t])
-            p = p_in[t]
-        # qg_t is already surface-volume (GEM *BHF is a surface rate), so the
-        # surface-volume CO2 component source is qg_t + Rs*qo (NOT qg_t/Bg).
-        q_c = qg_t + Rs_act * qo_t
-        sw_hist[t] = sw.copy()
-        so_hist[t] = so.copy()
-        sg_hist[t] = sg.copy()
-        if t < n_t - 1:
+            if bhp_mode:
+                lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
+                p = solve_pressure_peaceman(
+                    grid, k, lam_w + lam_o + lam_g, wells, bhp[t], well_params,
+                )
+                Rs_t = _eq_solution_gas_ratio(p, params)
+                qw_t, qo_t, qg_t = well_cell_rates_peaceman(
+                    grid, k, lam_w, lam_o, lam_g, wells, bhp[t], p, well_params,
+                    injects_gas=injects_gas[t], bg=Bg,
+                )
+                if kinetic:
+                    sw, so, sg, _No, Rs_act = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
+                else:
+                    sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
+                    Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs_t)
+            else:
+                qw_t = well_cell_rates(grid, wells, qw[t])
+                qo_t = well_cell_rates(grid, wells, qo[t])
+                qg_t = well_cell_rates(grid, wells, qg[t])
+                p = p_in[t]
+            # qg_t is already surface-volume (GEM *BHF is a surface rate), so the
+            # surface-volume CO2 component source is qg_t + Rs*qo (NOT qg_t/Bg).
+            q_c = qg_t + Rs_act * qo_t
             remaining = float(times_a[t + 1] - times_a[t])
             A = _mobility_divergence_matrix(grid, k, p)
             A_grav = _gravity_divergence_matrix(grid, k)
@@ -1392,4 +1409,9 @@ def _forward_compositional_saturations(
                     dt = min(remaining, _MAX_DT, max(dt * 1.5, 1.0))
                 else:
                     dt *= 0.5
+            # Fixed-point convergence: the advanced C stopped changing (so the
+            # mobility/pressure/injection-rate loop has closed).
+            if C_prev is not None and float(np.linalg.norm(C - C_prev)) < 1.0e-5 * max(1.0, float(np.linalg.norm(C))):
+                break
+            C_prev = C.copy()
     return sw_hist, so_hist, sg_hist
