@@ -243,21 +243,13 @@ def tabular_phase_mobilities(
     table: RelpermTable,
     params: FluidParams,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Per-phase mobilities from tabular rel-perm (Stone I for the oil).
-
-    The rel-perm curves are interpolated with PCHIP (monotone, C1-smooth) rather
-    than piecewise-linear ``np.interp``, which has a discontinuous ``dkr/dS`` at
-    every table point. The smooth derivative is more Newton-friendly (the values
-    at the table points are unchanged).
-    """
-    from scipy.interpolate import PchipInterpolator
-
+    """Per-phase mobilities from tabular rel-perm (Stone I for the oil)."""
     sw_a = np.asarray(sw, dtype=float)
     sg_a = np.asarray(sg, dtype=float)
-    krw = PchipInterpolator(table.sw, table.krw)(sw_a)
-    krow = PchipInterpolator(table.sw, table.krow)(sw_a)
-    krog = PchipInterpolator(table.sg, table.krog)(sg_a)
-    krg = PchipInterpolator(table.sg, table.krg)(sg_a)
+    krw = np.interp(sw_a, table.sw, table.krw)
+    krow = np.interp(sw_a, table.sw, table.krow)
+    krog = np.interp(sg_a, table.sg, table.krog)
+    krg = np.interp(sg_a, table.sg, table.krg)
     kro = krog * krow  # Stone I (connate-water oil relperm is ~1)
     return krw / params.mu_w, kro / params.mu_o, krg / params.mu_g
 
