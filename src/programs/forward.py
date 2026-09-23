@@ -685,118 +685,102 @@ def _implicit_compositional_step(
     """One fully-implicit solution-gas (CO2 component) step (Newton).
 
     Tracks water saturation ``sw`` and the surface-volume CO2 component
-    ``C = sg/Bg + Rs*so``. The Newton primary for the CO2 block is *bounded*
-    (variable switching): a saturated cell (free gas present) uses ``sg`` in
-    ``[0, nw]``; an undersaturated cell (no free gas) uses the dissolved ratio
-    ``Rs`` in ``[0, Rs_sat]``. This keeps the primary always in range, so the
-    excess injected CO2 is carried by the conservation equation and drained by
-    the free-gas flux instead of an unbounded ``C`` that stalls the Newton.
+    ``C = sg/Bg + Rs*so`` (mass-conserving primary: ``C`` is *not* clipped to the
+    per-cell maximum, so injected CO2 beyond the cell's free-gas capacity is
+    carried in ``C`` and drained by the free-gas flux on the next substep). The
+    phase split is recomputed inside the Newton from ``Rs`` and ``Bg``.
     """
     from scipy.sparse import diags
 
     Bg = float(params.bg)
     inv_Bg = 1.0 / max(Bg, 1.0e-12)
+    # Gas Darcy velocity v = -k lam (grad p + rho_g grad z); its divergence is
+    # A@lam - rho_g*A_grav@lam (A_grav@lam = div(k lam grad z)). rho_g > 0 sinks.
     A_g = A - params.rho_g * A_grav
     n = int(sw0.size)
     sw = np.asarray(sw0, dtype=float).copy()
     C = np.asarray(C0, dtype=float).copy()
-    Rs_a = np.asarray(Rs, dtype=float).ravel()
     h = 1.0e-6
     accum = 1.0 / (dt * inv_phiV)
     I = diags(accum)
-    denom = inv_Bg - Rs_a  # dC/dsg in the saturated region (Bo=1)
 
-    def _state(sw_, x_, sat_):
-        """Map the bounded primary ``x`` (sg if sat, else Rs) to (C, so, sg, Rs_act)."""
-        nw = 1.0 - sw_
-        sg = np.where(sat_, x_, 0.0)
-        sg = np.clip(sg, 0.0, nw)
-        so = nw - sg
-        Rs_act = np.where(sat_, Rs_a, np.clip(x_, 0.0, Rs_a))
-        C_ = sg / Bg + Rs_act * so
-        return C_, so, sg, Rs_act
-
-    # Initial state + primary from C0. A cell is saturated only when free gas can
-    # actually form, i.e. denom = 1/Bg - Rs > 0 (Rs > 1/Bg is the degenerate
-    # "dissolved gas dominates" regime where the cell is always undersaturated).
-    nw0 = 1.0 - sw
-    cap0 = Rs_a * nw0
-    can_sat = denom > 0.0
-    sat = (C >= cap0) & can_sat
-    sg = np.clip((C - Rs_a * nw0) / np.maximum(denom, 1.0e-12), 0.0, nw0)
-    x = np.where(sat, sg, np.clip(np.where(nw0 > 1.0e-12, C / np.maximum(nw0, 1.0e-12), 0.0), 0.0, Rs_a))
-
-    def residual(sw_, x_, sat_):
-        C_, so_, sg_, Rs_act_ = _state(sw_, x_, sat_)
+    def residual(sw_, C_):
+        """Residual of the (sw, C) system at a trial state (flux form)."""
+        _, so_, sg_ = _split_compositional(sw_, C_, Rs, Bg, params.bo_slope)
+        Rs_act_ = np.clip(np.where(so_ > 1.0e-12, (C_ - sg_ / Bg) / np.maximum(so_, 1.0e-12), 0.0), 0.0, Rs)
         lam_w_, lam_o_, lam_g_ = phase_mobilities(sw_, so_, sg_, params)
         r_sw_ = accum * (sw_ - sw0) - (qw - A @ lam_w_)
-        r_c_ = accum * (C_ - C0) - (q_co2 - (inv_Bg * A_g @ lam_g_ + A @ (Rs_act_ * lam_o_)))
+        flux_dissolved_ = A @ (Rs_act_ * lam_o_)  # upwind dissolved-CO2 flux (A upwinds Rs*lam)
+        r_c_ = accum * (C_ - C0) - (q_co2 - (inv_Bg * A_g @ lam_g_ + flux_dissolved_))
         return np.concatenate([r_sw_, r_c_])
 
-    r0_norm = float(np.linalg.norm(residual(sw, x, sat)))
+    r0_norm = float(np.linalg.norm(residual(sw, C)))
     converged = False
     for _ in range(max_iter):
-        C, so, sg, Rs_act = _state(sw, x, sat)
+        _, so, sg = _split_compositional(sw, C, Rs, Bg, params.bo_slope)
+        # actual dissolved ratio (<= equilibrium Rs): undersaturated oil carries
+        # less than the equilibrium bound, so the flux/source use the real value.
+        Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs)
         lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
+        # dissolved CO2 flux is the *upwind* Rs*lam_o carried by the oil:
+        # A @ (Rs_act * lam_o). Using the centred Rs_act * (A @ lam_o) instead
+        # breaks CO2 conservation where Rs_act jumps (e.g. the plume front), so
+        # the dissolved CO2 never reaches cells with lower Rs.
         r = np.concatenate([
             accum * (sw - sw0) - (qw - A @ lam_w),
             accum * (C - C0) - (q_co2 - (inv_Bg * A_g @ lam_g + A @ (Rs_act * lam_o))),
         ])
-        # numerical derivatives wrt the primary x (bounded) — dC/dx is analytic.
-        dC_dx = np.where(sat, denom, 1.0 - sw)  # saturated dC/dsg=denom; undersat dC/dRs=so
-        dC_dx = np.maximum(dC_dx, 1.0e-6)
-        C_p, so_p, sg_p, Rs_p = _state(sw, np.clip(x + h, 0.0, None), sat)
-        _lw_p, lo_p, lg_p = phase_mobilities(sw, so_p, sg_p, params)
-        dlg_dx = (lg_p - lam_g) / h
-        dlo_dx = (lo_p - lam_o) / h
-        dRs_dx = (Rs_p - Rs_act) / h
-        C_sw, so_sw, sg_sw, Rs_sw = _state(np.clip(sw + h, 0.0, 1.0), x, sat)
-        lw_sw, lo_sw, lg_sw = phase_mobilities(np.clip(sw + h, 0.0, 1.0), so_sw, sg_sw, params)
-        dlw_dsw = (lw_sw - lam_w) / h
-        dlg_dsw = (lg_sw - lam_g) / h
-        dlo_dsw = (lo_sw - lam_o) / h
+        # derivatives (local, numerical through the phase split, per phase + ratio)
+        _, so_p, sg_p = _split_compositional(sw + h, C, Rs, Bg, params.bo_slope)
+        Rs_sw = np.clip(np.where(so_p > 1.0e-12, (C - sg_p / Bg) / np.maximum(so_p, 1.0e-12), 0.0), 0.0, Rs)
+        lw_p, lo_p, lg_p = phase_mobilities(sw + h, so_p, sg_p, params)
+        dlw_dsw = (lw_p - lam_w) / h
+        dlg_dsw = (lg_p - lam_g) / h
+        dlo_dsw = (lo_p - lam_o) / h
         dRs_dsw = (Rs_sw - Rs_act) / h
+        _, so_c, sg_c = _split_compositional(sw, C + h, Rs, Bg, params.bo_slope)
+        Rs_c = np.clip(np.where(so_c > 1.0e-12, (C + h - sg_c / Bg) / np.maximum(so_c, 1.0e-12), 0.0), 0.0, Rs)
+        _lw_c, lo_c, lg_c = phase_mobilities(sw, so_c, sg_c, params)
+        dlg_dC = (lg_c - lam_g) / h
+        dlo_dC = (lo_c - lam_o) / h
+        dRs_dC = (Rs_c - Rs_act) / h
         J_ww = I + A @ diags(dlw_dsw)
+        # Derivative of the upwind dissolved-CO2 flux A@(Rs_act*lam_o): one
+        # combined column-scaling term d(Rs_act*lam_o)/d(sw,C) = dRs*lam_o + Rs*dlo.
         J_cw = (inv_Bg * A_g @ diags(dlg_dsw)
                 + A @ diags(dRs_dsw * lam_o + Rs_act * dlo_dsw))
-        J_cc = (diags(accum * dC_dx)
-                + inv_Bg * A_g @ diags(dlg_dx)
-                + A @ diags(dRs_dx * lam_o + Rs_act * dlo_dx))
+        J_cc = (I + inv_Bg * A_g @ diags(dlg_dC)
+                + A @ diags(dRs_dC * lam_o + Rs_act * dlo_dC))
+        # Block forward substitution (the Jacobian is lower block-triangular):
+        # two n×n solves instead of one 2n×2n — cheaper and better-conditioned.
         r = -r
         delta_sw = _solve_linear(J_ww, r[:n])
-        delta_x = _solve_linear(J_cc, r[n:] - J_cw @ delta_sw)
-        delta = np.concatenate([delta_sw, delta_x])
-        # line search with the primary kept in its bounded range.
+        delta_c = _solve_linear(J_cc, r[n:] - J_cw @ delta_sw)
+        delta = np.concatenate([delta_sw, delta_c])
+        # Backtracking line search (Armijo). C is *not* upper-clipped: the excess
+        # injected CO2 is carried and drained by the free-gas flux next substep
+        # (clipping it here silently destroys the plume mass).
         alpha = 1.0
         r_norm = float(np.linalg.norm(r))
         sw_new = sw.copy()
-        x_new = x.copy()
+        C_new = C.copy()
         r_new = r
         for _ in range(12):
             sw_new = np.clip(sw + alpha * delta[:n], 0.0, 1.0)
-            lo = np.where(sat, 0.0, 0.0)
-            hi = np.where(sat, 1.0 - sw_new, Rs_a)
-            x_new = np.clip(x + alpha * delta[n:], lo, hi)
-            r_new = residual(sw_new, x_new, sat)
+            C_new = np.clip(C + alpha * delta[n:], 0.0, None)
+            r_new = residual(sw_new, C_new)
             if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
                 break
             alpha *= 0.5
-        norm_d = float(np.linalg.norm(np.concatenate([sw_new - sw, x_new - x])))
-        sw, x = sw_new, x_new
-        norm_x = float(np.linalg.norm(np.concatenate([sw, x])))
+        norm_d = float(np.linalg.norm(np.concatenate([sw_new - sw, C_new - C])))
+        sw, C = sw_new, C_new
+        norm_x = float(np.linalg.norm(np.concatenate([sw, C])))
         if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
             converged = True
             break
         if norm_d < 1.0e-12 * max(1.0, norm_x):
             break  # stalled
-        # re-determine the state after the step (variable switch).
-        C, so, sg, Rs_act = _state(sw, x, sat)
-        new_sat = (C >= Rs_a * (1.0 - sw)) & (denom > 0.0)
-        if np.any(new_sat != sat):
-            # switch primary: saturated -> x=sg, undersaturated -> x=Rs_act.
-            x = np.where(new_sat, sg, np.clip(Rs_act, 0.0, Rs_a))
-            sat = new_sat
-    C, so, sg, Rs_act = _state(sw, x, sat)
+    _, so, sg = _split_compositional(sw, C, Rs, Bg, params.bo_slope)
     return sw, so, sg, C, converged
 
 
@@ -1262,6 +1246,11 @@ def _split_compositional(
     excess = C_p - dissolved_cap
     delta = smooth * np.maximum(dissolved_cap, 1.0e-6)
     sg = _smooth_relu(excess, delta) / np.maximum(denom, 1.0e-12)
+    # Smooth cap at the fully-saturated boundary (sg -> nw): a hard clip(sg,0,nw)
+    # has a vanishing derivative at sg=nw, so dsg/dC -> 0 once a cell is
+    # gas-saturated and the Newton Jacobian becomes singular. Cap sg towards nw
+    # with the same C¹-continuous _smooth_relu so dsg/dC stays finite.
+    sg = nw - _smooth_relu(nw - sg, smooth * np.maximum(nw, 1.0e-6))
     sg = np.clip(sg, 0.0, nw)
     so = nw - sg
     return sw_p, so, sg
