@@ -15,6 +15,7 @@ from ..core.cartesian import CartesianGrid
 from .mesh import PointMap, WellMap
 from .rock import (
     FluidParams,
+    WellModelParams,
     _face_cell_pairs,
     _face_geometry,
     _harmonic_mean,
@@ -22,6 +23,7 @@ from .rock import (
     corey_total_mobility,
     darcy_divergence,
     invert_rock,
+    peaceman_wi,
     solution_gas_ratio,
     well_cell_rates,
 )
@@ -234,6 +236,98 @@ def _solve_pressure_with_source(
     return p
 
 
+def solve_pressure_peaceman(
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64],
+    lam_total: NDArray[np.float64],
+    wells: WellMap,
+    well_bhp: NDArray[np.float64],
+    well_params: WellModelParams,
+) -> NDArray[np.float64]:
+    """Solve ``div(-k·λ_total·∇p) = Σ WI·λ_total·(bhp − p)`` (Peaceman well model).
+
+    Every well is a BHP-driven source ``q = WI·λ_total·(bhp − p_cell)``. Because the
+    source is *linear* in ``p``, the ``−WI·λ_total·p`` part moves to the diagonal and
+    acts as a relaxation toward the BHP: the matrix stays well-posed and the
+    reservoir pressure at each well is ``bhp − drawdown`` (with ``drawdown =
+    q/(WI·λ_total)``), instead of the raw wellbore BHP. The diagonal also keeps the
+    pressure bounded for a compressible (Bg ≪ 1) gas injector, where a fixed
+    reservoir-volume source cannot be balanced by the incompressible equation.
+    """
+    from scipy.sparse.linalg import spsolve
+
+    n = grid.n_cells
+    L = tpfa_matrix(grid, permeability, lam_total).tolil()
+    rhs = np.zeros(n)
+    bhp = np.asarray(well_bhp, dtype=float).ravel()
+    directions = wells.directions if wells.directions else [np.zeros(3)] * len(wells.cells)
+    for i, cells in enumerate(wells.cells):
+        cells = np.asarray(cells, dtype=np.int64).ravel()
+        if cells.size == 0 or i >= bhp.size or not np.isfinite(bhp[i]):
+            continue
+        direction = directions[i] if i < len(directions) else np.zeros(3)
+        wi = peaceman_wi(
+            grid, permeability, cells, direction,
+            rw=well_params.rw, skin=well_params.skin, kv_kh=well_params.kv_kh,
+        )
+        tw = wi * lam_total[cells]
+        for j, c in enumerate(cells):
+            L[c, c] += tw[j]
+            rhs[c] += tw[j] * float(bhp[i])
+    return spsolve(L.tocsr(), rhs)
+
+
+def well_cell_rates_peaceman(
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64],
+    lam_w: NDArray[np.float64],
+    lam_o: NDArray[np.float64],
+    lam_g: NDArray[np.float64],
+    wells: WellMap,
+    well_bhp: NDArray[np.float64],
+    pressure: NDArray[np.float64],
+    well_params: WellModelParams,
+    *,
+    injects_gas: NDArray[np.bool_],
+    bg: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Peaceman well phase rates (surface volume) from the solved pressure.
+
+    ``q_phase = WI·λ_phase·(bhp − p_cell)`` per completion cell, converted back to
+    *surface* volume (gas ÷ Bg, oil ÷ Bo≈1) so it sits in the same surface-volume
+    units as the CO₂ component source ``q_c = qg + Rs·qo``. A gas injector puts the
+    whole total rate into the gas phase (the injected fluid is pure gas); a
+    producer splits the total rate by phase mobility. Injection is positive.
+    """
+    n = grid.n_cells
+    qw = np.zeros(n)
+    qo = np.zeros(n)
+    qg = np.zeros(n)
+    bhp = np.asarray(well_bhp, dtype=float).ravel()
+    p = np.asarray(pressure, dtype=float).ravel()
+    directions = wells.directions if wells.directions else [np.zeros(3)] * len(wells.cells)
+    inj = np.asarray(injects_gas, dtype=bool).ravel()
+    for i, cells in enumerate(wells.cells):
+        cells = np.asarray(cells, dtype=np.int64).ravel()
+        if cells.size == 0 or i >= bhp.size or not np.isfinite(bhp[i]):
+            continue
+        direction = directions[i] if i < len(directions) else np.zeros(3)
+        wi = peaceman_wi(
+            grid, permeability, cells, direction,
+            rw=well_params.rw, skin=well_params.skin, kv_kh=well_params.kv_kh,
+        )
+        dp = float(bhp[i]) - p[cells]
+        if i < inj.size and inj[i]:
+            # Gas injector: the injected fluid is pure gas, so the whole total
+            # reservoir rate is gas; ÷ Bg converts to surface volume.
+            qg[cells] += wi * (lam_w[cells] + lam_o[cells] + lam_g[cells]) * dp / bg
+        else:
+            qw[cells] += wi * lam_w[cells] * dp
+            qo[cells] += wi * lam_o[cells] * dp
+            qg[cells] += wi * lam_g[cells] * dp / bg
+    return qw, qo, qg
+
+
 def _project_three(
     sw: NDArray[np.float64],
     so: NDArray[np.float64],
@@ -354,13 +448,18 @@ def forward_saturations(
     sg0: NDArray[np.float64],
     *,
     max_ds: float = 0.05,
+    well_bhp: NDArray[np.float64] | None = None,
+    well_params: WellModelParams | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Forward-simulate the saturation history from a given pressure field.
+    """Forward-simulate the saturation history.
 
     Returns ``(sw, so, sg)`` histories, each of shape ``(n_times, n_cells)``.
     ``model`` is ``"black_oil"`` or ``"compositional"`` (alias ``solution_gas`` /
-    ``co2``). The pressure ``pressure`` is ``(n_times, n_cells)``; only the
-    saturations are advanced.
+    ``co2``). By default the pressure ``pressure`` is used as the given flow field
+    and the well rates are the fixed ``well_qw/qo/qg``. When ``well_bhp`` and
+    ``well_params`` are supplied, the pressure is instead *solved* with the
+    Peaceman well model (BHP-driven wells) and the well rates are derived from the
+    solved pressure — the compressible-injection-correct path.
     """
     name = str(model).strip().lower()
     if name == "black_oil":
@@ -374,6 +473,7 @@ def forward_saturations(
         return _forward_compositional_saturations(
             grid, pressure, permeability, phi, params, wells,
             well_qw, well_qo, well_qg, times, sw0, so0, sg0, max_ds=max_ds,
+            well_bhp=well_bhp, well_params=well_params,
         )
     raise ValueError(f"unknown forward model {model!r}")
 
@@ -1168,6 +1268,8 @@ def _forward_compositional_saturations(
     sg0: NDArray[np.float64],
     *,
     max_ds: float = 0.05,
+    well_bhp: NDArray[np.float64] | None = None,
+    well_params: WellModelParams | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Solution-gas (CO2-in-oil) saturation transport (GEM-like component model).
 
@@ -1176,8 +1278,13 @@ def _forward_compositional_saturations(
     every substep from the equilibrium dissolved fraction. The CO2 component flux
     is the free-gas Darcy flux plus the dissolved CO2 carried by the oil phase,
     so injected CO2 largely dissolves and moves with the oil. Fully implicit
-    (backward Euler + Newton) with adaptive sub-stepping; the flow pressure is
-    the given (kriged) ``pressure`` field, not re-solved (see ``forward_saturations``).
+    (backward Euler + Newton) with adaptive sub-stepping.
+
+    When ``well_bhp``/``well_params`` are given, the flow pressure is *solved*
+    with the Peaceman well model (BHP-driven wells) and the well rates are derived
+    from that pressure, so a compressible gas injector gets the correct drawdown
+    and injection peak (and the plume can exsolve). Otherwise the given (kriged)
+    ``pressure`` field and the fixed well rates are used.
     """
     p_in = np.asarray(pressure, dtype=float)
     if p_in.ndim == 1:
@@ -1193,6 +1300,15 @@ def _forward_compositional_saturations(
     if qw.ndim == 1:
         qw, qo, qg = qw[None, :], qo[None, :], qg[None, :]
     qw, qo, qg = _balance_well_rates(qw, qo, qg)
+    # BHP-driven mode: solve pressure with the Peaceman well model. The BHP is
+    # the well control (injector 19.325 / producers 19.0 MPa); the well rates are
+    # derived from the solved pressure, not the fixed series rates.
+    bhp_mode = well_bhp is not None and well_params is not None
+    if bhp_mode:
+        bhp = np.asarray(well_bhp, dtype=float)
+        if bhp.ndim == 1:
+            bhp = bhp[None, :]
+        injects_gas = qg.sum(axis=1) > 0.0  # per-time injector mask (gas injector)
     times_a = np.asarray(times, dtype=float)
     inv_phiV = 1.0 / (phi_a * vol)
     sw = np.asarray(sw0, dtype=float).copy()
@@ -1207,24 +1323,42 @@ def _forward_compositional_saturations(
     so_hist = np.zeros((n_t, n_c))
     sg_hist = np.zeros((n_t, n_c))
     for t in range(n_t):
-        Rs_t = _eq_solution_gas_ratio(p_in[t], params)
         Bg = float(params.bg)
+        # Phase split from the current CO2 component and the *kriged* solubility
+        # (a good first guess; the BHP-driven path re-splits with the solved
+        # pressure below).
+        Rs_t = _eq_solution_gas_ratio(p_in[t], params)
         if kinetic:
             sw, so, sg, _No, Rs_act = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
         else:
             sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
             Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs_t)
-        qw_t = well_cell_rates(grid, wells, qw[t])
-        qo_t = well_cell_rates(grid, wells, qo[t])
-        qg_t = well_cell_rates(grid, wells, qg[t])
+        if bhp_mode:
+            # Solve the pressure from the Peaceman well model (BHP-driven), then
+            # derive the surface well rates from it. Re-split with the solved
+            # solubility so the CO2 source uses the self-consistent Rs(p).
+            lam_w, lam_o, lam_g = phase_mobilities(sw, so, sg, params)
+            p = solve_pressure_peaceman(
+                grid, k, lam_w + lam_o + lam_g, wells, bhp[t], well_params,
+            )
+            Rs_t = _eq_solution_gas_ratio(p, params)
+            qw_t, qo_t, qg_t = well_cell_rates_peaceman(
+                grid, k, lam_w, lam_o, lam_g, wells, bhp[t], p, well_params,
+                injects_gas=injects_gas[t], bg=Bg,
+            )
+            if kinetic:
+                sw, so, sg, _No, Rs_act = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
+            else:
+                sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
+                Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs_t)
+        else:
+            qw_t = well_cell_rates(grid, wells, qw[t])
+            qo_t = well_cell_rates(grid, wells, qo[t])
+            qg_t = well_cell_rates(grid, wells, qg[t])
+            p = p_in[t]
         # qg_t is already surface-volume (GEM *BHF is a surface rate), so the
         # surface-volume CO2 component source is qg_t + Rs*qo (NOT qg_t/Bg).
         q_c = qg_t + Rs_act * qo_t
-        # Use the kriged pressure field directly: the incompressible total-mobility
-        # re-solve treats the surface gas rate as a reservoir rate and over-drives
-        # the top->bottom gradient (2 MPa vs the true ~0.06 MPa), which is wrong
-        # for a compressible (Bg<<1) injection. The kriged field is already ~0.1%.
-        p = p_in[t]
         sw_hist[t] = sw.copy()
         so_hist[t] = so.copy()
         sg_hist[t] = sg.copy()

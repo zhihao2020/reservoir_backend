@@ -183,6 +183,7 @@ def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields
         qw_fwd = np.vstack([case.well_qw[:1], case.well_qw])
         qo_fwd = np.vstack([case.well_qo[:1], case.well_qo])
         qg_fwd = np.vstack([case.well_qg[:1], case.well_qg])
+        pw_fwd = np.vstack([case.well_pw[:1], case.well_pw])
         sw_f, so_f, sg_f = forward_saturations(
             case.forward_model,
             mesh.grid,
@@ -198,6 +199,8 @@ def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields
             sw0,
             so0,
             sg0,
+            well_bhp=pw_fwd,
+            well_params=case.well,
         )
         sw, so, sg = sw_f[1:], so_f[1:], sg_f[1:]
     # Re-invert k/phi against the forward-simulated (mass-conserving) saturation,
