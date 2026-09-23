@@ -1,0 +1,170 @@
+"""Peng-Robinson EOS for the shale-oil CO2 solubility (Rs_sat).
+
+The GEM deck ``examples/shailoil.dat`` is a full compositional model
+(``*MODEL *PR``, 14 components, ``*BIN``). Its CO2 solubility ``Rs_sat(p)`` is the
+bubble-point dissolved-gas ratio computed by the EOS, *not* a fitted Henry's-law
+slope. This module reproduces that solubility so the forward model's phase split
+uses the thermodynamic bound instead of ``rs_slope * p``.
+
+The 14 components and their critical properties are read from the GEM deck's
+``*PCRIT`` / ``*TCRIT`` / ``*AC`` / ``*MW``; the binary-interaction coefficients
+``*BIN`` have 0.15 for the CO2--C7+ pairs.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+_R = 8.314  # J/(mol K)
+
+# GEM deck *COMPNAME order.  (MW g/mol, Tc K, Pc Pa, acentric factor)
+_NAMES = ("C1", "N2", "C2", "C3", "CO2", "IC4", "NC4", "IC5", "NC5", "NC6",
+          "C7-10", "C11-14", "C15-19", "C20+")
+_MW = np.array([16.043, 28.013, 30.07, 44.097, 44.01, 58.124, 58.124, 72.151,
+                72.151, 86.178, 114.43, 177.78, 253.63, 350.0])
+_TC = np.array([190.56, 126.2, 305.32, 369.83, 304.2, 407.8, 425.2, 460.4, 469.7,
+                507.6, 573.45, 685.75, 748.331, 900.0])
+_PC = np.array([45.99, 33.94, 48.72, 42.48, 72.8, 36.48, 37.96, 33.8, 33.7, 30.25,
+                26.253, 19.987, 12.5544, 8.5]) * 101325.0
+_ACENTRIC = np.array([0.011, 0.04, 0.099, 0.152, 0.225, 0.184, 0.201, 0.227, 0.252,
+                      0.301, 0.361, 0.534, 0.724, 0.95])
+# *ZGLOBALC initial oil composition (mole fractions).
+_Z_OIL = np.array([0.35, 0.01, 0.08, 0.06, 0.03, 0.02, 0.04, 0.02, 0.02, 0.04,
+                   0.12, 0.10, 0.07, 0.04])
+_CO2_IDX = 4
+
+# *BIN: CO2 (idx 4) with the C7+ pseudo-components (idx >= 10) = 0.15.
+_BIN = np.zeros((14, 14))
+for _i in range(14):
+    for _j in range(14):
+        if (_i == _CO2_IDX and _j >= 10) or (_j == _CO2_IDX and _i >= 10):
+            _BIN[_i, _j] = 0.15
+
+# Standard-condition molar volumes (m3/mol). CO2 at 1 atm / 15.6 C is an ideal
+# gas; the oil is the liquid phase, so its molar volume is MW_oil / rho_oil.
+# rho_oil_std ~ 800 kg/m3 for a light oil. Rs = (molCO2/molOil) * V_CO2 / V_oil.
+_V_CO2_STD = 0.0237
+_RHO_OIL_STD = 800.0  # kg/m3
+_MW_OIL = float(np.sum(_Z_OIL * _MW))  # ~85 g/mol
+
+
+def _ab(T: float):
+    """PR ``a`` (Pa m6/mol2) and ``b`` (m3/mol) per component at temperature T."""
+    Tr = T / _TC
+    kappa = 0.37464 + 1.54226 * _ACENTRIC - 0.26992 * _ACENTRIC ** 2
+    alpha = (1.0 + kappa * (1.0 - np.sqrt(Tr))) ** 2
+    a = 0.45724 * _R ** 2 * _TC ** 2 / _PC * alpha
+    b = 0.07780 * _R * _TC / _PC
+    aij = np.sqrt(np.outer(a, a)) * (1.0 - _BIN)
+    return aij, b
+
+
+def _z_factor(x, aij, b, P, T, phase):
+    """Compressibility factor for composition ``x`` (liq = smallest root)."""
+    amix = float(x @ aij @ x)
+    bmix = float(x @ b)
+    A = amix * P / (_R * T) ** 2
+    B = bmix * P / (_R * T)
+    coef = [1.0, -(1.0 - B), A - 3.0 * B ** 2 - 2.0 * B, -(A * B - B ** 2 - B ** 3)]
+    roots = np.roots(coef)
+    real = roots[np.isreal(roots)].real
+    return (np.min(real) if phase == "liq" else np.max(real)), A, B, amix, bmix
+
+
+def _fugacity(x, aij, b, P, T, phase):
+    """Log-fugacity coefficients ``ln(phi_i)`` for composition ``x``."""
+    Z, A, B, amix, bmix = _z_factor(x, aij, b, P, T, phase)
+    s = (2.0 * aij @ x) / amix - b / bmix
+    return b / bmix * (Z - 1.0) - np.log(Z - B) - A / (2.0 * np.sqrt(2.0) * B) * s * np.log(
+        (Z + (1.0 + np.sqrt(2.0)) * B) / (Z + (1.0 - np.sqrt(2.0)) * B)
+    )
+
+
+def _flash(z, P, T):
+    """Rachford-Rice two-phase flash; returns (V, x, y)."""
+    aij, b = _ab(T)
+    K = (_PC / P) * np.exp(5.373 * (1.0 + _ACENTRIC) * (1.0 - _TC / T))
+    for _ in range(60):
+        # solve sum z(K-1)/(1+V(K-1)) = 0 by Newton on V in (0,1)
+        V = 0.5
+        for _ in range(40):
+            f = float(np.sum(z * (K - 1.0) / (1.0 + V * (K - 1.0))))
+            df = float(np.sum(-z * (K - 1.0) ** 2 / (1.0 + V * (K - 1.0)) ** 2))
+            if abs(df) > 1.0e-12:
+                V -= f / df
+            else:
+                V += 0.01 * (1.0 if f > 0.0 else -1.0)
+            V = float(np.clip(V, 0.0, 1.0))
+        x = z / (1.0 + V * (K - 1.0))
+        y = K * x
+        Knew = np.exp(_fugacity(x, aij, b, P, T, "liq") - _fugacity(y, aij, b, P, T, "vap"))
+        if np.max(np.abs(Knew - K)) < 1.0e-5:
+            break
+        K = Knew
+    return V, x, y
+
+
+def _bubble_point_co2(P: float, T: float) -> float:
+    """CO2 mole fraction in the liquid at the bubble point (binary search).
+
+    The bubble point is the smallest overall CO2 fraction where a vapor phase
+    appears (V > 0). A binary search needs ~log2(1/1e-3) ~ 10 flashes instead of
+    the ~180 of a linear scan.
+    """
+    lo, hi = 0.0, 0.95
+    for _ in range(11):
+        zc = 0.5 * (lo + hi)
+        z = (1.0 - zc) * _Z_OIL
+        z[_CO2_IDX] += zc
+        V, x, _ = _flash(z, P, T)
+        if V > 1.0e-4:
+            hi = zc
+        else:
+            lo = zc
+    z = (1.0 - hi) * _Z_OIL
+    z[_CO2_IDX] += hi
+    _, x, _ = _flash(z, P, T)
+    return float(x[_CO2_IDX])
+
+
+def rs_sat(P: float | np.ndarray, T: float = 393.0) -> float | np.ndarray:
+    """Equilibrium CO2 solubility ``Rs`` (surface m3 gas / surface m3 oil).
+
+    ``P`` is pressure (Pa), ``T`` temperature (K, default 120 C = 393.15). The
+    bubble-point CO2 mole fraction ``x`` converts to a surface-volume ratio via
+    the standard molar volumes: ``Rs = x/(1-x) * (V_co2 / V_oil)``.
+    """
+    scalar = np.ndim(P) == 0
+    P_arr = np.atleast_1d(np.asarray(P, dtype=float))
+    out = np.empty_like(P_arr)
+    cache: dict[float, float] = {}
+    v_oil = _MW_OIL / 1000.0 / _RHO_OIL_STD  # m3/mol oil at surface
+    for i, p in enumerate(P_arr):
+        p = float(p)
+        if p not in cache:
+            x = _bubble_point_co2(p, T)
+            cache[p] = (x / (1.0 - x)) * (_V_CO2_STD / v_oil) if np.isfinite(x) else float(np.nan)
+        out[i] = cache[p]
+    return float(out[0]) if scalar else out
+
+
+def rs_sat_table(pmin: float = 15.0e6, pmax: float = 22.0e6, n: int = 36, T: float = 393.0):
+    """Precompute ``(pressure, Rs_sat)`` points over ``[pmin, pmax]`` for
+    interpolation in the forward model."""
+    P = np.linspace(pmin, pmax, n)
+    return P, rs_sat(P, T)
+
+
+_TABLE_CACHE: tuple[np.ndarray, np.ndarray] | None = None
+
+
+def rs_sat_interp(pressure: float | np.ndarray, T: float = 393.0) -> float | np.ndarray:
+    """Linearly interpolate a cached Rs_sat(p) table (computes it once)."""
+    global _TABLE_CACHE
+    if _TABLE_CACHE is None:
+        _TABLE_CACHE = rs_sat_table(T=T)
+    P, Rs = _TABLE_CACHE
+    scalar = np.ndim(pressure) == 0
+    p = np.atleast_1d(np.asarray(pressure, dtype=float))
+    out = np.interp(p, P, Rs)
+    return float(out[0]) if scalar else out

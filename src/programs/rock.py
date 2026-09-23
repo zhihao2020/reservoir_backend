@@ -116,6 +116,13 @@ class FluidParams:
     rs_slope: float = 0.0
     rs_eq_slope: float = 0.0
     bo_slope: float = 0.0
+    # When True, the equilibrium Rs comes from the Peng-Robinson EOS bubble-point
+    # solubility ``Rs_sat(p)`` (``core.pr_eos.rs_sat_interp``), the thermodynamic
+    # bound GEM actually uses, instead of the Henry's-law ``rs_slope``/``rs_quad``.
+    # This reproduces the correct free-gas fraction (the injected CO2 beyond the
+    # solubility stays free gas), which the fitted Rs=187 throughput metric gets
+    # wrong (it dissolves everything).
+    rs_eos: bool = False
     # Quadratic solubility coefficient (1/Pa^2) so the equilibrium Rs can be a
     # *nonlinear* ``Rs(p) = rs_slope*p + rs_quad*p^2``. The GEM Peng-Robinson EOS
     # gives a solubility that is more pressure-sensitive than Henry's law near

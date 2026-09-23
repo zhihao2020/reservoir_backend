@@ -978,15 +978,17 @@ def _eq_solution_gas_ratio(
 ) -> NDArray[np.float64]:
     """Equilibrium solution gas-oil ratio ``Rs`` (surface gas / surface oil).
 
-    Uses the *equilibrium* solubility slope ``rs_eq_slope`` (falling back to
-    ``rs_slope`` when unset) plus an optional quadratic ``rs_quad*p^2`` term, so
-    ``Rs(p) = slope*p + rs_quad*p^2``. The quadratic captures the EOS's stronger
-    pressure sensitivity near the phase boundary (Henry's law is linear). This is
-    the surface-volume solubility bound used in the forward model's phase split,
-    distinct from the output ``rs`` metric.
+    With ``rs_eos`` the bound is the Peng-Robinson bubble-point solubility
+    ``Rs_sat(p)`` (``core.pr_eos.rs_sat_interp``), the thermodynamic bound GEM
+    uses; otherwise it is Henry's law ``rs_slope*p`` (or ``rs_eq_slope`` /
+    ``rs_quad``). This is the surface-volume solubility bound used in the forward
+    model's phase split, distinct from the output ``rs`` metric.
     """
-    slope = params.rs_eq_slope if params.rs_eq_slope > 0.0 else params.rs_slope
     p = np.asarray(pressure, dtype=float)
+    if params.rs_eos:
+        from ..core.pr_eos import rs_sat_interp
+        return np.maximum(rs_sat_interp(p), 0.0)
+    slope = params.rs_eq_slope if params.rs_eq_slope > 0.0 else params.rs_slope
     rs = slope * p + params.rs_quad * p * p
     return np.maximum(rs, 0.0)
 
