@@ -767,7 +767,13 @@ def _implicit_compositional_step(
         r_new = r
         for _ in range(12):
             sw_new = np.clip(sw + alpha * delta[:n], 0.0, 1.0)
-            C_new = np.clip(C + alpha * delta[n:], 0.0, None)
+            # C is the *conserved* CO2 component. Clipping it at the exact per-cell
+            # maximum (1/Bg·(1-sw)) destroys the injected CO2 whenever the free-gas
+            # flux cannot drain a cell fast enough (the plume under-production). Give
+            # it a generous headroom (100x the per-cell bound) so the excess is
+            # carried and drained by the flux, while keeping C bounded so the Newton
+            # stays well-conditioned (the unbounded C stalls on a large excess).
+            C_new = np.clip(C + alpha * delta[n:], 0.0, 100.0 * np.maximum(Rs, inv_Bg) * (1.0 - sw_new))
             r_new = residual(sw_new, C_new)
             if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
                 break
