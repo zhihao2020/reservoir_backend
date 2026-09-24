@@ -102,9 +102,15 @@ def _fugacity(x, aij, b, P, T, phase):
     )
 
 
-def _flash(z, P, T):
-    """Rachford-Rice two-phase flash; returns (V, x, y)."""
-    aij, b = _ab(T)
+def _flash(z, P, T, aij=None, b=None):
+    """Rachford-Rice two-phase flash; returns (V, x, y).
+
+    ``aij``/``b`` (the PR EOS parameters, functions of ``T`` only) are optional:
+    pass them in to avoid recomputing them for every pressure point of the
+    solubility table.
+    """
+    if aij is None:
+        aij, b = _ab(T)
     K = (_PC / P) * np.exp(5.373 * (1.0 + _ACENTRIC) * (1.0 - _TC / T))
     for _ in range(60):
         # solve sum z(K-1)/(1+V(K-1)) = 0 by Newton on V in (0,1)
@@ -126,26 +132,28 @@ def _flash(z, P, T):
     return V, x, y
 
 
-def _bubble_point_co2(P: float, T: float) -> float:
+def _bubble_point_co2(P: float, T: float, aij=None, b=None) -> float:
     """CO2 mole fraction in the liquid at the bubble point (binary search).
 
     The bubble point is the smallest overall CO2 fraction where a vapor phase
     appears (V > 0). A binary search needs ~log2(1/1e-3) ~ 10 flashes instead of
     the ~180 of a linear scan.
     """
+    if aij is None:
+        aij, b = _ab(T)
     lo, hi = 0.0, 0.95
     for _ in range(11):
         zc = 0.5 * (lo + hi)
         z = (1.0 - zc) * _Z_OIL
         z[_CO2_IDX] += zc
-        V, x, _ = _flash(z, P, T)
+        V, x, _ = _flash(z, P, T, aij, b)
         if V > 1.0e-4:
             hi = zc
         else:
             lo = zc
     z = (1.0 - hi) * _Z_OIL
     z[_CO2_IDX] += hi
-    _, x, _ = _flash(z, P, T)
+    _, x, _ = _flash(z, P, T, aij, b)
     return float(x[_CO2_IDX])
 
 
@@ -160,11 +168,12 @@ def rs_sat(P: float | np.ndarray, T: float = 393.0) -> float | np.ndarray:
     P_arr = np.atleast_1d(np.asarray(P, dtype=float))
     out = np.empty_like(P_arr)
     cache: dict[float, float] = {}
+    aij, b = _ab(T)  # PR EOS parameters depend on T only — compute once.
     v_oil = _MW_OIL / 1000.0 / _RHO_OIL_STD  # m3/mol oil at surface
     for i, p in enumerate(P_arr):
         p = float(p)
         if p not in cache:
-            x = _bubble_point_co2(p, T)
+            x = _bubble_point_co2(p, T, aij, b)
             cache[p] = (x / (1.0 - x)) * (_V_CO2_STD / v_oil) if np.isfinite(x) else float(np.nan)
         out[i] = cache[p]
     return float(out[0]) if scalar else out
