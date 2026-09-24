@@ -59,16 +59,38 @@ def _ab(T: float):
     return aij, b
 
 
+def _cubic_roots(a0: float, a1: float, a2: float) -> np.ndarray:
+    """Real roots of ``Z³ + a2·Z² + a1·Z + a0 = 0`` (Cardano's formula).
+
+    The PR-EOS compressibility cubic has real coefficients and (below the critical
+    point) three real roots, so the analytic formula avoids the general
+    ``np.roots``/``eigvals`` polynomial solver (the hot spot of the flash).
+    """
+    p = a1 - a2 ** 2 / 3.0
+    q = 2.0 * a2 ** 3 / 27.0 - a2 * a1 / 3.0 + a0
+    disc = (q / 2.0) ** 2 + (p / 3.0) ** 3
+    if disc > 0.0:  # one real root
+        s = np.sqrt(disc)
+        u = np.cbrt(-q / 2.0 + s)
+        v = np.cbrt(-q / 2.0 - s)
+        return np.array([u + v - a2 / 3.0])
+    if disc < 0.0:  # three real roots
+        r = 2.0 * np.sqrt(-p / 3.0)
+        theta = np.arccos(np.clip(3.0 * q / (2.0 * p) * np.sqrt(-3.0 / p), -1.0, 1.0)) / 3.0
+        return np.array([r * np.cos(theta + 2.0 * np.pi * k / 3.0) - a2 / 3.0 for k in range(3)])
+    u = np.cbrt(-q / 2.0)  # repeated roots
+    return np.array([2.0 * u - a2 / 3.0, -u - a2 / 3.0])
+
+
 def _z_factor(x, aij, b, P, T, phase):
     """Compressibility factor for composition ``x`` (liq = smallest root)."""
     amix = float(x @ aij @ x)
     bmix = float(x @ b)
     A = amix * P / (_R * T) ** 2
     B = bmix * P / (_R * T)
-    coef = [1.0, -(1.0 - B), A - 3.0 * B ** 2 - 2.0 * B, -(A * B - B ** 2 - B ** 3)]
-    roots = np.roots(coef)
-    real = roots[np.isreal(roots)].real
-    return (np.min(real) if phase == "liq" else np.max(real)), A, B, amix, bmix
+    roots = _cubic_roots(-(A * B - B ** 2 - B ** 3), A - 3.0 * B ** 2 - 2.0 * B, -(1.0 - B))
+    Z = float(np.min(roots) if phase == "liq" else np.max(roots))
+    return Z, A, B, amix, bmix
 
 
 def _fugacity(x, aij, b, P, T, phase):
