@@ -238,6 +238,8 @@ def corey_phase_mobilities(
     krw = params.krw_end * np.power(swe, params.nw)
     kro = params.kro_end * np.power(soe, params.no)
     krg = params.krg_end * np.power(sge, params.ng)
+    if params.krg_floor > 0.0:
+        krg = np.maximum(krg, params.krg_floor)
     return krw / params.mu_w, kro / params.mu_o, krg / params.mu_g
 
 

@@ -876,6 +876,10 @@ def _implicit_compositional_pressure_step(
     bhp_full = np.zeros(n)
     for idx in range(cells.size):
         bhp_full[cells[idx]] = bhp_w[idx]
+    # per-cell gas-injector mask (for the well rate p-derivatives below).
+    inj_cell = np.zeros(n, dtype=bool)
+    for idx in range(cells.size):
+        inj_cell[cells[idx]] = is_inj[idx]
 
     def well_diag_rates(p_, lam_w_, lam_o_, lam_g_):
         """Return the well diagonal ``D`` and the surface phase rates (qw, qo, qg)."""
@@ -946,8 +950,11 @@ def _implicit_compositional_pressure_step(
         # J_pw / J_pc: well-diagonal mobility feedback (diagonal approximation).
         J_pw = diags(D * (dlam_t_dsw / np.maximum(lam_t, 1.0e-12)) * (bhp_full - p))
         J_pc = diags(D * (dlam_t_dC / np.maximum(lam_t, 1.0e-12)) * (bhp_full - p))
-        J_wp = diags(D * (lam_w / np.maximum(lam_t, 1.0e-12)))
-        J_cp = diags(D * ((lam_g / Bg + Rs_act * lam_o) / np.maximum(lam_t, 1.0e-12)))
+        # Well p-derivatives (diagonal). For a gas injector the total rate is gas
+        # (qw=qo=0, qg=w·λt·dp/Bg), so ∂r_sw/∂p=0 and ∂r_c/∂p=w·λt/Bg; for a
+        # producer the phases split by mobility.
+        J_wp = diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, 1.0e-12))))
+        J_cp = diags(np.where(inj_cell, D / Bg, D * ((lam_g / Bg + Rs_act * lam_o) / np.maximum(lam_t, 1.0e-12))))
         J_ww = I + A @ diags(dlw_dsw)
         J_wc = A @ diags(dlw_dC)
         J_cw = inv_Bg * A_g @ diags(dlg_dsw) + A @ diags(dRs_dsw * lam_o + Rs_act * dlo_dsw)
@@ -1512,7 +1519,10 @@ def _forward_compositional_saturations(
         bhp = np.asarray(well_bhp, dtype=float)
         if bhp.ndim == 1:
             bhp = bhp[None, :]
-        injects_gas = qg.sum(axis=1) > 0.0  # per-time injector mask (gas injector)
+        # Gas injector mask: a *per-well* boolean (a well injects gas if any of its
+        # time steps has a positive gas rate). The well type is fixed, so this is
+        # computed once over the whole series, not per time step.
+        injects_gas = (qg > 0.0).any(axis=0)
     times_a = np.asarray(times, dtype=float)
     inv_phiV = 1.0 / (phi_a * vol)
     sw = np.asarray(sw0, dtype=float).copy()
@@ -1523,13 +1533,16 @@ def _forward_compositional_saturations(
     C = sg0_a.copy() / float(params.bg)
     kinetic = float(params.k_diss) > 0.0
     Cd = np.zeros(n_c)  # dissolved CO2 (kinetic state); 0 initially (oil CO2-free)
+    # Flow pressure: in BHP mode this is the *solved* Peaceman pressure (carried
+    # across time steps); the kriged field is only the initial guess.
+    p = np.asarray(p_in[0], dtype=float).copy()
     sw_hist = np.zeros((n_t, n_c))
     so_hist = np.zeros((n_t, n_c))
     sg_hist = np.zeros((n_t, n_c))
     for t in range(n_t):
         Bg = float(params.bg)
         # Start-of-step phase split (for the t-value records), then advance C.
-        Rs_t = _eq_solution_gas_ratio(p_in[t], params)
+        Rs_t = _eq_solution_gas_ratio(p if bhp_mode else p_in[t], params)
         if kinetic:
             _sw_r, so_r, sg_r, _No, _ = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
         else:
@@ -1553,13 +1566,23 @@ def _forward_compositional_saturations(
             while remaining > 1.0e-12 and dt > 1.0e-3:
                 p, sw, so, sg, C, conv = _implicit_compositional_pressure_step(
                     grid, k, inv_phiV, dt, sw, C, p, wells, bhp[t], well_params,
-                    params, injects_gas[t],
+                    params, injects_gas,
                 )
                 if conv:
                     remaining -= dt
                     dt = min(remaining, _MAX_DT, max(dt * 1.5, 1.0))
                 else:
                     dt *= 0.5
+            if remaining > 1.0e-12:
+                # Newton stalled even at the minimum substep: accept the partial
+                # advance and surface it (the unsolved tail's injection is lost).
+                import warnings
+
+                warnings.warn(
+                    f"compositional forward step t={t} left {remaining:.3g} s unsolved "
+                    f"(Newton did not converge at dt<=1e-3)",
+                    RuntimeWarning,
+                )
             continue
         sw_t, C_t, Cd_t = sw.copy(), C.copy(), Cd.copy()
         C_prev = None
@@ -1581,7 +1604,7 @@ def _forward_compositional_saturations(
                 Rs_t = _eq_solution_gas_ratio(p, params)
                 qw_t, qo_t, qg_t = well_cell_rates_peaceman(
                     grid, k, lam_w, lam_o, lam_g, wells, bhp[t], p, well_params,
-                    injects_gas=injects_gas[t], bg=Bg,
+                    injects_gas=injects_gas, bg=Bg,
                 )
                 if kinetic:
                     sw, so, sg, _No, Rs_act = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)

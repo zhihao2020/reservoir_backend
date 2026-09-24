@@ -13,6 +13,7 @@ The 14 components and their critical properties are read from the GEM deck's
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -192,6 +193,17 @@ _TABLE_CACHE: tuple[np.ndarray, np.ndarray] | None = None
 _CACHE_FILE = Path(__file__).parent / ".rs_sat_cache.npz"
 
 
+def _eos_fingerprint() -> str:
+    """Checksum of the EOS inputs, so the disk cache is invalidated whenever a
+    critical property, composition, binary-interaction coefficient, or standard
+    density/volume changes."""
+    h = hashlib.sha256()
+    for arr in (_MW, _TC, _PC, _ACENTRIC, _Z_OIL, _BIN):
+        h.update(np.asarray(arr, dtype=float).tobytes())
+    h.update(np.array([_R, _RHO_OIL_STD, _V_CO2_STD], dtype=float).tobytes())
+    return h.hexdigest()
+
+
 def _load_table() -> tuple[np.ndarray, np.ndarray]:
     """Return the cached Rs_sat table, from disk when available.
 
@@ -206,13 +218,14 @@ def _load_table() -> tuple[np.ndarray, np.ndarray]:
     if _CACHE_FILE.is_file():
         try:
             z = np.load(_CACHE_FILE)
-            _TABLE_CACHE = (np.asarray(z["P"], dtype=float), np.asarray(z["Rs"], dtype=float))
-            return _TABLE_CACHE
+            if str(z["fingerprint"]) == _eos_fingerprint():
+                _TABLE_CACHE = (np.asarray(z["P"], dtype=float), np.asarray(z["Rs"], dtype=float))
+                return _TABLE_CACHE
         except Exception:
             pass  # corrupt / incompatible cache: rebuild below
     P, Rs = rs_sat_table()
     try:
-        np.savez(_CACHE_FILE, P=P, Rs=Rs)
+        np.savez(_CACHE_FILE, P=P, Rs=Rs, fingerprint=np.array(_eos_fingerprint()))
     except Exception:
         pass  # read-only install: keep the in-memory cache only
     _TABLE_CACHE = (P, Rs)
