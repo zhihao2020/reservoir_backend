@@ -7,6 +7,9 @@ __pycache__/
 *.egg-info/
 .eggs/
 
+# Local caches (regenerated on demand)
+*.rs_sat_cache.npz
+
 # Nuitka / pack
 build/
 dist/

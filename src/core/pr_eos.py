@@ -13,6 +13,8 @@ The 14 components and their critical properties are read from the GEM deck's
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 _R = 8.314  # J/(mol K)
@@ -187,14 +189,43 @@ def rs_sat_table(pmin: float = 15.0e6, pmax: float = 22.0e6, n: int = 36, T: flo
 
 
 _TABLE_CACHE: tuple[np.ndarray, np.ndarray] | None = None
+_CACHE_FILE = Path(__file__).parent / ".rs_sat_cache.npz"
+
+
+def _load_table() -> tuple[np.ndarray, np.ndarray]:
+    """Return the cached Rs_sat table, from disk when available.
+
+    The PR-EOS flash that builds the table is the dominant one-time cost (~13s
+    after the Cardano cubic roots), so the table is persisted to a ``.npz`` file
+    next to this module and reused on the next run. Falls back to a fresh build
+    (and tries to write the cache) on the first run or a read-only install.
+    """
+    global _TABLE_CACHE
+    if _TABLE_CACHE is not None:
+        return _TABLE_CACHE
+    if _CACHE_FILE.is_file():
+        try:
+            z = np.load(_CACHE_FILE)
+            _TABLE_CACHE = (np.asarray(z["P"], dtype=float), np.asarray(z["Rs"], dtype=float))
+            return _TABLE_CACHE
+        except Exception:
+            pass  # corrupt / incompatible cache: rebuild below
+    P, Rs = rs_sat_table()
+    try:
+        np.savez(_CACHE_FILE, P=P, Rs=Rs)
+    except Exception:
+        pass  # read-only install: keep the in-memory cache only
+    _TABLE_CACHE = (P, Rs)
+    return _TABLE_CACHE
 
 
 def rs_sat_interp(pressure: float | np.ndarray, T: float = 393.0) -> float | np.ndarray:
     """Linearly interpolate a cached Rs_sat(p) table (computes it once)."""
-    global _TABLE_CACHE
-    if _TABLE_CACHE is None:
-        _TABLE_CACHE = rs_sat_table(T=T)
-    P, Rs = _TABLE_CACHE
+    if T != 393.0:
+        # non-default temperature: don't use the default-temperature disk cache.
+        P, Rs = rs_sat_table(T=T)
+    else:
+        P, Rs = _load_table()
     scalar = np.ndim(pressure) == 0
     p = np.atleast_1d(np.asarray(pressure, dtype=float))
     out = np.interp(p, P, Rs)
