@@ -257,7 +257,7 @@ def solve_pressure_peaceman(
     from scipy.sparse.linalg import spsolve
 
     n = grid.n_cells
-    L = tpfa_matrix(grid, permeability, lam_total).tolil()
+    L = _tpfa_matrix_vec(grid, permeability, lam_total).tolil()
     rhs = np.zeros(n)
     bhp = np.asarray(well_bhp, dtype=float).ravel()
     directions = wells.directions if wells.directions else [np.zeros(3)] * len(wells.cells)
@@ -859,7 +859,6 @@ def _implicit_compositional_pressure_step(
     diagonal part, kept as a diagonal approximation). Returns ``(p, sw, so, sg, C, conv)``.
     """
     from scipy.sparse import diags
-    from scipy.sparse.linalg import spsolve
 
     Bg = float(params.bg)
     inv_Bg = 1.0 / max(Bg, 1.0e-12)
@@ -906,7 +905,7 @@ def _implicit_compositional_pressure_step(
     def residual(p_, sw_, C_):
         Rs_, so_, sg_, Rs_act_, lam_w_, lam_o_, lam_g_ = state(p_, sw_, C_)
         lam_t_ = lam_w_ + lam_o_ + lam_g_
-        L_ = tpfa_matrix(grid, permeability, lam_t_)
+        L_ = _tpfa_matrix_vec(grid, permeability, lam_t_)
         D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_o_, lam_g_)
         r_p_ = L_ @ p_ + D_ * p_ - D_ * bhp_full
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
@@ -921,7 +920,7 @@ def _implicit_compositional_pressure_step(
     for _ in range(max_iter):
         Rs, so, sg, Rs_act, lam_w, lam_o, lam_g = state(p, sw, C)
         lam_t = lam_w + lam_o + lam_g
-        L = tpfa_matrix(grid, permeability, lam_t)
+        L = _tpfa_matrix_vec(grid, permeability, lam_t)
         D, qw, qo, qg = well_diag_rates(p, lam_w, lam_o, lam_g)
         A = _mobility_divergence_matrix(grid, permeability, p)
         A_g = A - params.rho_g * A_grav
@@ -954,8 +953,9 @@ def _implicit_compositional_pressure_step(
         J_cw = inv_Bg * A_g @ diags(dlg_dsw) + A @ diags(dRs_dsw * lam_o + Rs_act * dlo_dsw)
         J_cc = I + inv_Bg * A_g @ diags(dlg_dC) + A @ diags(dRs_dC * lam_o + Rs_act * dlo_dC)
         r = -r
-        # block forward substitution: δp → δsw → δC.
-        delta_p = spsolve(J_pp, r[:n])
+        # block forward substitution: δp → δsw → δC. J_pp is symmetric positive
+        # definite (tpfa + well diagonal), so GMRES converges fast.
+        delta_p = _solve_linear(J_pp, r[:n])
         rhs_w = r[n:2 * n] - J_wp @ delta_p
         delta_sw = _solve_linear(J_ww, rhs_w)
         rhs_c = r[2 * n:] - J_cw @ delta_sw - J_cp @ delta_p
