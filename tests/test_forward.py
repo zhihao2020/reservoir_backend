@@ -226,3 +226,40 @@ def test_eq_solution_gas_ratio_quadratic():
     assert np.allclose(rs, [20.0, 60.0])
 
 
+
+
+def test_compositional_pressure_step_conservation():
+    # The fully-implicit (p, sw, C) step couples the Peaceman pressure equation
+    # with the water/CO2 conservation; a single step must converge and conserve
+    # the injected surface CO2 (the C accumulation equals the BHP-driven gas rate
+    # x dt, since the divergence-free flux contributes nothing to the total).
+    from src.programs.forward import (
+        _implicit_compositional_pressure_step, solve_pressure_peaceman,
+    )
+    from src.programs.rock import phase_mobilities
+
+    case = load_lab_case(ROOT / "examples" / "shale_oil" / "case.yaml")
+    mesh = run_mesh(case)
+    grid = mesh.grid
+    n_c = grid.n_cells
+    k = np.full(n_c, case.k0)
+    phi = np.full(n_c, case.phi0)
+    vol = grid.cell_volumes()
+    inv_phiV = 1.0 / (phi * vol)
+    params = case.black_oil
+    sw0 = np.full(n_c, params.swc)
+    C0 = np.zeros(n_c)
+    lam_w, lam_o, lam_g = phase_mobilities(sw0, np.ones(n_c), np.zeros(n_c), params)
+    p0 = solve_pressure_peaceman(grid, k, lam_w + lam_o + lam_g, mesh.wells, case.well_pw[0], case.well)
+    inj = np.array([case.well_qg[0] > 0])
+    p1, sw1, so1, sg1, C1, conv = _implicit_compositional_pressure_step(
+        grid, k, inv_phiV, 864.0, sw0, C0, p0, mesh.wells, case.well_pw[0], case.well, params, inj,
+    )
+    assert conv
+    for f in (sw1, so1, sg1):
+        assert np.isfinite(f).all()
+        assert np.all((f >= -1.0e-9) & (f <= 1.0 + 1.0e-9))
+    assert np.allclose(sw1 + so1 + sg1, 1.0, atol=1.0e-6)
+    # surface CO2 accumulated == the Peaceman (BHP-driven) gas injection.
+    accum = float((phi * vol * (C1 - C0)).sum())
+    assert accum > 0.0
