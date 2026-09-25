@@ -889,6 +889,8 @@ def _implicit_compositional_pressure_step(
     qg_fixed = np.zeros(n, dtype=float)
     if rate_controlled:
         qg_fixed = np.asarray(well_qg_fixed, dtype=float).ravel()
+    # Total surface gas rate target (m3/s surface) for the rate-controlled injector.
+    qg_target = float(qg_fixed.sum())
     bhp_full = np.zeros(n)
     for idx in range(cells.size):
         bhp_full[cells[idx]] = bhp_w[idx]
@@ -896,28 +898,36 @@ def _implicit_compositional_pressure_step(
     inj_cell = np.zeros(n, dtype=bool)
     for idx in range(cells.size):
         inj_cell[cells[idx]] = is_inj[idx]
+    # Injector BHP is a *variable* under rate control (GEM OPERATE MAX BHF): solved
+    # so the Peaceman rate matches qg_target, preserving the wellbore drawdown.
+    bhp_inj = float(np.mean(bhp_w[is_inj])) if is_inj.any() else 0.0
 
-    def well_diag_rates(p_, lam_w_, lam_o_, lam_g_):
+    def well_diag_rates(p_, lam_w_, lam_o_, lam_g_, bhp_inj_):
         """Return the well diagonal ``D`` and the surface phase rates (qw, qo, qg)."""
         D_ = np.zeros(n)
         qw_ = np.zeros(n); qo_ = np.zeros(n); qg_ = np.zeros(n)
         lam_t_ = lam_w_ + lam_o_ + lam_g_
-        dp = bhp_w - p_[cells]
         for idx in range(cells.size):
             c = cells[idx]
             w = wi[idx]
-            if is_inj[idx] and rate_controlled:
-                # Rate-controlled gas injector: fixed surface rate, no well diagonal.
-                qg_[c] += qg_fixed[c]
+            bhp_eff = bhp_inj_ if (is_inj[idx] and rate_controlled) else bhp_w[idx]
+            dp = bhp_eff - p_[c]
+            D_[c] += w * lam_t_[c]
+            if is_inj[idx]:
+                qg_[c] += w * lam_t_[c] * dp / Bg
             else:
-                D_[c] += w * lam_t_[c]
-                if is_inj[idx]:
-                    qg_[c] += w * lam_t_[c] * dp[idx] / Bg  # BHP-driven injector
-                else:
-                    qw_[c] += w * lam_w_[c] * dp[idx]
-                    qo_[c] += w * lam_o_[c] * dp[idx]
-                    qg_[c] += w * lam_g_[c] * dp[idx] / Bg
+                qw_[c] += w * lam_w_[c] * dp
+                qo_[c] += w * lam_o_[c] * dp
+                qg_[c] += w * lam_g_[c] * dp / Bg
         return D_, qw_, qo_, qg_
+
+    def inj_diag(lam_t_):
+        """Injector well diagonal ``D_inj`` (n_cells,), non-zero on the injector cells."""
+        D_inj_ = np.zeros(n)
+        for idx in range(cells.size):
+            if is_inj[idx]:
+                D_inj_[cells[idx]] += wi[idx] * lam_t_[cells[idx]]
+        return D_inj_
 
     def state(p_, sw_, C_):
         Rs_ = _eq_solution_gas_ratio(p_, params)
@@ -926,29 +936,35 @@ def _implicit_compositional_pressure_step(
         lam_w_, lam_o_, lam_g_ = phase_mobilities(sw_, so_, sg_, params)
         return Rs_, so_, sg_, Rs_act_, lam_w_, lam_o_, lam_g_
 
-    def residual(p_, sw_, C_):
+    def residual(p_, sw_, C_, bhp_inj_):
         Rs_, so_, sg_, Rs_act_, lam_w_, lam_o_, lam_g_ = state(p_, sw_, C_)
         lam_t_ = lam_w_ + lam_o_ + lam_g_
         L_ = _tpfa_matrix_vec(grid, permeability, lam_t_)
-        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_o_, lam_g_)
-        r_p_ = L_ @ p_ + D_ * p_ - D_ * bhp_full - qg_fixed * Bg
+        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_o_, lam_g_, bhp_inj_)
+        bhp_eff = bhp_full.copy()
+        if rate_controlled:
+            bhp_eff[inj_cell] = bhp_inj_
+        r_p_ = L_ @ p_ + D_ * p_ - D_ * bhp_eff
+        D_inj_ = inj_diag(lam_t_)
+        r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
         A_g_ = A_ - params.rho_g * A_grav
         r_sw_ = accum * (sw_ - sw0) - (qw_ - A_ @ lam_w_)
         q_c_ = qg_ + Rs_act_ * qo_
         r_c_ = accum * (C_ - C0) - (q_c_ - (inv_Bg * A_g_ @ lam_g_ + A_ @ (Rs_act_ * lam_o_)))
-        return np.concatenate([r_p_, r_sw_, r_c_])
+        return np.concatenate([r_p_, r_sw_, r_c_, np.array([r_rate_])])
 
-    r0_norm = float(np.linalg.norm(residual(p, sw, C)))
+    r0_norm = float(np.linalg.norm(residual(p, sw, C, bhp_inj)))
     converged = False
     for _ in range(max_iter):
         Rs, so, sg, Rs_act, lam_w, lam_o, lam_g = state(p, sw, C)
         lam_t = lam_w + lam_o + lam_g
         L = _tpfa_matrix_vec(grid, permeability, lam_t)
-        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_o, lam_g)
+        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_o, lam_g, bhp_inj)
+        D_inj = inj_diag(lam_t)
         A = _mobility_divergence_matrix(grid, permeability, p)
         A_g = A - params.rho_g * A_grav
-        r = residual(p, sw, C)
+        r = residual(p, sw, C, bhp_inj)
         # numerical derivatives wrt sw and C (through the phase split + relperm).
         _, so_p, sg_p, Rs_sw, lw_p, lo_p, lg_p = state(p, sw + h, C)
         dlw_dsw = (lw_p - lam_w) / h
@@ -976,28 +992,41 @@ def _implicit_compositional_pressure_step(
         J_cw = inv_Bg * A_g @ diags(dlg_dsw) + A @ diags(dRs_dsw * lam_o + Rs_act * dlo_dsw)
         J_cc = I + inv_Bg * A_g @ diags(dlg_dC) + A @ diags(dRs_dC * lam_o + Rs_act * dlo_dC)
         r = -r
-        # block forward substitution: δp → δsw → δC. J_pp is symmetric positive
-        # definite (tpfa + well diagonal), so GMRES converges fast.
-        delta_p = _solve_linear(J_pp, r[:n])
+        # Block forward substitution: δ(p, bhp_inj) → δsw → δC. The injector BHP is
+        # eliminated by the Schur complement of J_pp (rank-1: column/row = ±D_inj).
+        u = _solve_linear(J_pp, r[:n])
+        if rate_controlled:
+            w = _solve_linear(J_pp, D_inj)
+            denom = float(D_inj.sum()) - float(D_inj @ w)
+            delta_bhp = (r[3 * n] + float(D_inj @ u)) / denom if abs(denom) > 1.0e-30 else 0.0
+            delta_p = u + delta_bhp * w
+        else:
+            delta_bhp = 0.0
+            delta_p = u
         rhs_w = r[n:2 * n] - J_wp @ delta_p
         delta_sw = _solve_linear(J_ww, rhs_w)
-        rhs_c = r[2 * n:] - J_cw @ delta_sw - J_cp @ delta_p
+        # Complete well Jacobian: the C equation couples to bhp_inj via the injector's
+        # qg=w·λt·(bhp−p)/Bg, so ∂r_c/∂bhp_inj = −D_inj/Bg adds +D_inj/Bg·δbhp to rhs_c.
+        rhs_c = r[2 * n:3 * n] - J_cw @ delta_sw - J_cp @ delta_p
+        if rate_controlled:
+            rhs_c = rhs_c + (D_inj / Bg) * delta_bhp
         delta_c = _solve_linear(J_cc, rhs_c)
         delta = np.concatenate([delta_p, delta_sw, delta_c])
         alpha = 1.0
         r_norm = float(np.linalg.norm(r))
-        p_new = p.copy(); sw_new = sw.copy(); C_new = C.copy()
+        p_new = p.copy(); sw_new = sw.copy(); C_new = C.copy(); bhp_new = bhp_inj
         r_new = r
         for _ in range(12):
             p_new = p + alpha * delta[:n]
             sw_new = np.clip(sw + alpha * delta[n:2 * n], 0.0, 1.0)
-            C_new = np.clip(C + alpha * delta[2 * n:], 0.0, 100.0 * np.maximum(Rs, inv_Bg) * (1.0 - sw_new))
-            r_new = residual(p_new, sw_new, C_new)
+            C_new = np.clip(C + alpha * delta[2 * n:3 * n], 0.0, 100.0 * np.maximum(Rs, inv_Bg) * (1.0 - sw_new))
+            bhp_new = bhp_inj + alpha * delta_bhp
+            r_new = residual(p_new, sw_new, C_new, bhp_new)
             if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
                 break
             alpha *= 0.5
         norm_d = float(np.linalg.norm(np.concatenate([p_new - p, sw_new - sw, C_new - C])))
-        p, sw, C = p_new, sw_new, C_new
+        p, sw, C, bhp_inj = p_new, sw_new, C_new, bhp_new
         norm_x = float(np.linalg.norm(np.concatenate([p, sw, C])))
         if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
             converged = True
@@ -1060,33 +1089,39 @@ def _implicit_compositional_pressure_kinetic_step(
     qg_fixed = np.zeros(n, dtype=float)
     if rate_controlled:
         qg_fixed = np.asarray(well_qg_fixed, dtype=float).ravel()
+    qg_target = float(qg_fixed.sum())
     bhp_full = np.zeros(n)
     for idx in range(cells.size):
         bhp_full[cells[idx]] = bhp_w[idx]
     inj_cell = np.zeros(n, dtype=bool)
     for idx in range(cells.size):
         inj_cell[cells[idx]] = is_inj[idx]
+    bhp_inj = float(np.mean(bhp_w[is_inj])) if is_inj.any() else 0.0
 
-    def well_diag_rates(p_, lam_w_, lam_o_, lam_g_):
+    def well_diag_rates(p_, lam_w_, lam_o_, lam_g_, bhp_inj_):
         D_ = np.zeros(n)
         qw_ = np.zeros(n); qo_ = np.zeros(n); qg_ = np.zeros(n)
         lam_t_ = lam_w_ + lam_o_ + lam_g_
-        dp = bhp_w - p_[cells]
         for idx in range(cells.size):
             c = cells[idx]
             w = wi[idx]
-            if is_inj[idx] and rate_controlled:
-                # Rate-controlled gas injector: fixed surface rate, no well diagonal.
-                qg_[c] += qg_fixed[c]
+            bhp_eff = bhp_inj_ if (is_inj[idx] and rate_controlled) else bhp_w[idx]
+            dp = bhp_eff - p_[c]
+            D_[c] += w * lam_t_[c]
+            if is_inj[idx]:
+                qg_[c] += w * lam_t_[c] * dp / Bg
             else:
-                D_[c] += w * lam_t_[c]
-                if is_inj[idx]:
-                    qg_[c] += w * lam_t_[c] * dp[idx] / Bg  # BHP-driven injector
-                else:
-                    qw_[c] += w * lam_w_[c] * dp[idx]
-                    qo_[c] += w * lam_o_[c] * dp[idx]
-                    qg_[c] += w * lam_g_[c] * dp[idx] / Bg
+                qw_[c] += w * lam_w_[c] * dp
+                qo_[c] += w * lam_o_[c] * dp
+                qg_[c] += w * lam_g_[c] * dp / Bg
         return D_, qw_, qo_, qg_
+
+    def inj_diag(lam_t_):
+        D_inj_ = np.zeros(n)
+        for idx in range(cells.size):
+            if is_inj[idx]:
+                D_inj_[cells[idx]] += wi[idx] * lam_t_[cells[idx]]
+        return D_inj_
 
     def state(p_, sw_, C_, Cd_):
         Rs_ = _eq_solution_gas_ratio(p_, params)
@@ -1094,12 +1129,17 @@ def _implicit_compositional_pressure_kinetic_step(
         lam_w_, lam_o_, lam_g_ = phase_mobilities(sw_, so_, sg_, params)
         return Rs_, so_, sg_, No_, Rs_act_, lam_w_, lam_o_, lam_g_
 
-    def residual(p_, sw_, C_, Cd_):
+    def residual(p_, sw_, C_, Cd_, bhp_inj_):
         Rs_, so_, sg_, No_, Rs_act_, lam_w_, lam_o_, lam_g_ = state(p_, sw_, C_, Cd_)
         lam_t_ = lam_w_ + lam_o_ + lam_g_
         L_ = _tpfa_matrix_vec(grid, permeability, lam_t_)
-        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_o_, lam_g_)
-        r_p_ = L_ @ p_ + D_ * p_ - D_ * bhp_full - qg_fixed * Bg
+        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_o_, lam_g_, bhp_inj_)
+        bhp_eff = bhp_full.copy()
+        if rate_controlled:
+            bhp_eff[inj_cell] = bhp_inj_
+        r_p_ = L_ @ p_ + D_ * p_ - D_ * bhp_eff
+        D_inj_ = inj_diag(lam_t_)
+        r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
         A_g_ = A_ - params.rho_g * A_grav
         flux_dissolved_ = A_ @ (Rs_act_ * lam_o_)
@@ -1107,18 +1147,19 @@ def _implicit_compositional_pressure_kinetic_step(
         r_C_ = accum * (C_ - C0) - (qg_ + Rs_act_ * qo_ - (inv_Bg * A_g_ @ lam_g_ + flux_dissolved_))
         r_Cd_ = (accum * (Cd_ - Cd0) - k_diss * (Rs_ * No_ - Cd_) * phiV
                  - Rs_act_ * qo_ + flux_dissolved_)
-        return np.concatenate([r_p_, r_sw_, r_C_, r_Cd_])
+        return np.concatenate([r_p_, r_sw_, r_C_, r_Cd_, np.array([r_rate_])])
 
-    r0_norm = float(np.linalg.norm(residual(p, sw, C, Cd)))
+    r0_norm = float(np.linalg.norm(residual(p, sw, C, Cd, bhp_inj)))
     converged = False
     for _ in range(max_iter):
         Rs, so, sg, No, Rs_act, lam_w, lam_o, lam_g = state(p, sw, C, Cd)
         lam_t = lam_w + lam_o + lam_g
         L = _tpfa_matrix_vec(grid, permeability, lam_t)
-        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_o, lam_g)
+        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_o, lam_g, bhp_inj)
+        D_inj = inj_diag(lam_t)
         A = _mobility_divergence_matrix(grid, permeability, p)
         A_g = A - params.rho_g * A_grav
-        r = residual(p, sw, C, Cd)
+        r = residual(p, sw, C, Cd, bhp_inj)
         # numerical derivatives wrt sw / C / Cd (through the kinetic split + relperm)
         _, so_s, sg_s, No_s, Rs_s, lw_s, lo_s, lg_s = state(p, sw + h, C, Cd)
         dlw_dsw = (lw_s - lam_w) / h
@@ -1160,14 +1201,26 @@ def _implicit_compositional_pressure_kinetic_step(
         J_CdC = -k_diss * diags(Rs * dNo_dC * phiV) + A @ diags(dF_C) - diags(dRs_dC * qo)
         J_CdCd = I + k_diss * diags((1.0 - Rs * dNo_dCd) * phiV) + A @ diags(dF_Cd) - diags(dRs_dCd * qo)
         r = -r
-        # Block forward substitution: δp → δsw → (δC, δCd). J_pp is symmetric positive
-        # definite (tpfa + well diagonal); the (C, Cd) block is solved *together* (the
-        # free-gas split couples them at the same order).
-        delta_p = _solve_linear(J_pp, r[:n])
+        # Block forward substitution: δ(p, bhp_inj) → δsw → (δC, δCd). The injector BHP
+        # is eliminated by the Schur complement of J_pp (rank-1); the (C, Cd) block is
+        # solved *together* (the free-gas split couples them at the same order).
+        u = _solve_linear(J_pp, r[:n])
+        if rate_controlled:
+            w = _solve_linear(J_pp, D_inj)
+            denom = float(D_inj.sum()) - float(D_inj @ w)
+            delta_bhp = (r[4 * n] + float(D_inj @ u)) / denom if abs(denom) > 1.0e-30 else 0.0
+            delta_p = u + delta_bhp * w
+        else:
+            delta_bhp = 0.0
+            delta_p = u
         rhs_w = r[n:2 * n] - J_wp @ delta_p
         delta_sw = _solve_linear(J_ww, rhs_w)
+        # Complete well Jacobian: ∂r_C/∂bhp_inj = −D_inj/Bg (the injector's qg), so
+        # add +D_inj/Bg·δbhp to rhs_c (r_Cd has no direct bhp_inj dependence).
         rhs_c = r[2 * n:3 * n] - J_Cw @ delta_sw - J_cp @ delta_p
-        rhs_cd = r[3 * n:] - J_Cdw @ delta_sw - J_dp @ delta_p
+        if rate_controlled:
+            rhs_c = rhs_c + (D_inj / Bg) * delta_bhp
+        rhs_cd = r[3 * n:4 * n] - J_Cdw @ delta_sw - J_dp @ delta_p
         J_blk = bmat([[J_CC, J_CCd], [J_CdC, J_CdCd]], format="csr")
         d_ccd = _solve_linear(J_blk, np.concatenate([rhs_c, rhs_cd]))
         delta_c = d_ccd[:n]
@@ -1175,19 +1228,20 @@ def _implicit_compositional_pressure_kinetic_step(
         delta = np.concatenate([delta_p, delta_sw, delta_c, delta_cd])
         alpha = 1.0
         r_norm = float(np.linalg.norm(r))
-        p_new = p.copy(); sw_new = sw.copy(); C_new = C.copy(); Cd_new = Cd.copy()
+        p_new = p.copy(); sw_new = sw.copy(); C_new = C.copy(); Cd_new = Cd.copy(); bhp_new = bhp_inj
         r_new = r
         for _ in range(12):
             p_new = p + alpha * delta[:n]
             sw_new = np.clip(sw + alpha * delta[n:2 * n], 0.0, 1.0)
             C_new = np.clip(C + alpha * delta[2 * n:3 * n], 0.0, 100.0 * np.maximum(Rs, inv_Bg) * (1.0 - sw_new))
-            Cd_new = np.clip(Cd + alpha * delta[3 * n:], 0.0, Rs * (1.0 - sw_new))
-            r_new = residual(p_new, sw_new, C_new, Cd_new)
+            Cd_new = np.clip(Cd + alpha * delta[3 * n:4 * n], 0.0, Rs * (1.0 - sw_new))
+            bhp_new = bhp_inj + alpha * delta_bhp
+            r_new = residual(p_new, sw_new, C_new, Cd_new, bhp_new)
             if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
                 break
             alpha *= 0.5
         norm_d = float(np.linalg.norm(np.concatenate([p_new - p, sw_new - sw, C_new - C, Cd_new - Cd])))
-        p, sw, C, Cd = p_new, sw_new, C_new, Cd_new
+        p, sw, C, Cd, bhp_inj = p_new, sw_new, C_new, Cd_new, bhp_new
         norm_x = float(np.linalg.norm(np.concatenate([p, sw, C, Cd])))
         if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
             converged = True
