@@ -859,8 +859,7 @@ def _implicit_compositional_pressure_step(
     surface-volume-CO2 conservation, with the well rates
     ``q_phase = WI·λ_phase·(bhp − p)`` and the EOS solubility ``Rs(p)``. The pressure
     is a primary, so the mobility feedback (free gas accumulates → λ_total drops →
-    injection rate drops) is in the Jacobian's ``J_pw``/``J_pc`` columns (the well
-    diagonal part, kept as a diagonal approximation).
+    injection rate drops) is in the well coupling.
 
     ``well_qg_fixed`` (n_cells,) is the *surface* gas rate of the rate-controlled
     injector, placed on its completion cells (GEM ``OPERATE MAX BHF``). When given,
@@ -971,24 +970,17 @@ def _implicit_compositional_pressure_step(
         dlg_dsw = (lg_p - lam_g) / h
         dlo_dsw = (lo_p - lam_o) / h
         dRs_dsw = (Rs_sw - Rs_act) / h
-        dlam_t_dsw = (lw_p + lo_p + lg_p - lam_t) / h
         _, so_c, sg_c, Rs_c, lw_c, lo_c, lg_c = state(p, sw, C + h)
-        dlw_dC = (lw_c - lam_w) / h
         dlg_dC = (lg_c - lam_g) / h
         dlo_dC = (lo_c - lam_o) / h
         dRs_dC = (Rs_c - Rs_act) / h
-        dlam_t_dC = (lw_c + lo_c + lg_c - lam_t) / h
         J_pp = (L + diags(D)).tocsr()
-        # J_pw / J_pc: well-diagonal mobility feedback (diagonal approximation).
-        J_pw = diags(D * (dlam_t_dsw / np.maximum(lam_t, 1.0e-12)) * (bhp_full - p))
-        J_pc = diags(D * (dlam_t_dC / np.maximum(lam_t, 1.0e-12)) * (bhp_full - p))
         # Well p-derivatives (diagonal). For a gas injector the total rate is gas
         # (qw=qo=0, qg=w·λt·dp/Bg), so ∂r_sw/∂p=0 and ∂r_c/∂p=w·λt/Bg; for a
         # producer the phases split by mobility.
         J_wp = diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, 1.0e-12))))
         J_cp = diags(np.where(inj_cell, D / Bg, D * ((lam_g / Bg + Rs_act * lam_o) / np.maximum(lam_t, 1.0e-12))))
         J_ww = I + A @ diags(dlw_dsw)
-        J_wc = A @ diags(dlw_dC)
         J_cw = inv_Bg * A_g @ diags(dlg_dsw) + A @ diags(dRs_dsw * lam_o + Rs_act * dlo_dsw)
         J_cc = I + inv_Bg * A_g @ diags(dlg_dC) + A @ diags(dRs_dC * lam_o + Rs_act * dlo_dC)
         r = -r
