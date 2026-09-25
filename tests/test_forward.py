@@ -263,3 +263,108 @@ def test_compositional_pressure_step_conservation():
     # surface CO2 accumulated == the Peaceman (BHP-driven) gas injection.
     accum = float((phi * vol * (C1 - C0)).sum())
     assert accum > 0.0
+
+
+def test_compositional_pressure_kinetic_step_conservation():
+    # The kinetic fully-implicit (p, sw, C, Cd) step couples the Peaceman pressure
+    # with water/CO2 conservation AND finite-rate dissolution: the injected CO2
+    # stays free gas (does not instantly dissolve). A single step must converge,
+    # produce finite/conserved saturations, accumulate positive CO2, and keep the
+    # dissolved CO2 (Cd) inside [0, Rs·(1−sw)].
+    from src.programs.forward import (
+        _implicit_compositional_pressure_kinetic_step, solve_pressure_peaceman,
+        _eq_solution_gas_ratio, _split_kinetic, well_cell_rates_peaceman,
+    )
+    from src.programs.rock import phase_mobilities
+
+    case = load_lab_case(ROOT / "examples" / "shale_oil" / "case.yaml")
+    mesh = run_mesh(case)
+    grid = mesh.grid
+    n_c = grid.n_cells
+    k = np.full(n_c, case.k0)
+    phi = np.full(n_c, case.phi0)
+    vol = grid.cell_volumes()
+    inv_phiV = 1.0 / (phi * vol)
+    params = replace(case.black_oil, k_diss=1.0e-6)
+    sw0 = np.full(n_c, params.swc)
+    C0 = np.zeros(n_c)
+    Cd0 = np.zeros(n_c)
+    lam_w, lam_o, lam_g = phase_mobilities(sw0, np.ones(n_c), np.zeros(n_c), params)
+    p0 = solve_pressure_peaceman(grid, k, lam_w + lam_o + lam_g, mesh.wells, case.well_pw[0], case.well)
+    inj = np.array([case.well_qg[0] > 0])
+    p1, sw1, so1, sg1, C1, Cd1, conv = _implicit_compositional_pressure_kinetic_step(
+        grid, k, inv_phiV, 864.0, sw0, C0, Cd0, p0, mesh.wells, case.well_pw[0], case.well, params, inj,
+    )
+    assert conv
+    for f in (sw1, so1, sg1):
+        assert np.isfinite(f).all()
+        assert np.all((f >= -1.0e-9) & (f <= 1.0 + 1.0e-9))
+    assert np.allclose(sw1 + so1 + sg1, 1.0, atol=1.0e-6)
+    accum = float((phi * vol * (C1 - C0)).sum())
+    assert accum > 0.0
+    # Surface CO2 is conserved: the net accumulation equals the net surface CO2
+    # injected over the step (BHP-driven gas injection − produced dissolved gas),
+    # since the divergence-free flux contributes nothing to the total.
+    Rs = _eq_solution_gas_ratio(p1, params)
+    _, _, _, _No, Rs_act = _split_kinetic(sw1, C1, Cd1, Rs, params.bg, params.bo_slope)
+    lam_w, lam_o, lam_g = phase_mobilities(sw1, so1, sg1, params)
+    qw1, qo1, qg1 = well_cell_rates_peaceman(
+        grid, k, lam_w, lam_o, lam_g, mesh.wells, case.well_pw[0], p1, case.well,
+        injects_gas=inj, bg=params.bg,
+    )
+    net_injected = float((qg1 + Rs_act * qo1).sum()) * 864.0
+    assert np.isclose(accum, net_injected, rtol=0.05, atol=0.0), (
+        f"kinetic pressure step CO2 not conserved: accumulated {accum:.3e} vs "
+        f"net injected {net_injected:.3e}"
+    )
+    # Dissolved CO2 is bounded by the equilibrium capacity Rs·(1−sw).
+    assert np.all(Cd1 >= -1.0e-9)
+    assert np.all(Cd1 <= Rs * (1.0 - sw1) + 1.0e-6)
+
+
+def test_compositional_pressure_step_rate_controlled():
+    # Rate-controlled gas injector (GEM ``OPERATE MAX BHF``): the injector injects
+    # the FIXED surface rate from the well data, not the BHP-driven Peaceman rate
+    # (``WI·λt·(bhp−p)/Bg``). A single step must converge, produce finite/conserved
+    # saturations, and accumulate exactly the fixed injected surface CO2.
+    from src.programs.forward import _implicit_compositional_pressure_step, solve_pressure_peaceman
+    from src.programs.rock import phase_mobilities
+
+    case = load_lab_case(ROOT / "examples" / "shale_oil" / "case.yaml")
+    mesh = run_mesh(case)
+    grid = mesh.grid
+    n_c = grid.n_cells
+    k = np.full(n_c, case.k0)
+    phi = np.full(n_c, case.phi0)
+    vol = grid.cell_volumes()
+    inv_phiV = 1.0 / (phi * vol)
+    params = case.black_oil
+    sw0 = np.full(n_c, params.swc)
+    C0 = np.zeros(n_c)
+    lam_w, lam_o, lam_g = phase_mobilities(sw0, np.ones(n_c), np.zeros(n_c), params)
+    p0 = solve_pressure_peaceman(grid, k, lam_w + lam_o + lam_g, mesh.wells, case.well_pw[0], case.well)
+    inj = np.array([case.well_qg[0] > 0])
+    # Fixed injector surface gas rate, distributed over the injector's completions.
+    qg_fixed = np.zeros(n_c)
+    for i in np.flatnonzero(inj):
+        cells_i = mesh.wells.cells[i]
+        if cells_i.size > 0:
+            qg_fixed[cells_i] += case.well_qg[0, i] / cells_i.size
+    p1, sw1, so1, sg1, C1, conv = _implicit_compositional_pressure_step(
+        grid, k, inv_phiV, 864.0, sw0, C0, p0, mesh.wells, case.well_pw[0], case.well, params, inj,
+        well_qg_fixed=qg_fixed,
+    )
+    assert conv
+    for f in (sw1, so1, sg1):
+        assert np.isfinite(f).all()
+        assert np.all((f >= -1.0e-9) & (f <= 1.0 + 1.0e-9))
+    assert np.allclose(sw1 + so1 + sg1, 1.0, atol=1.0e-6)
+    # The fixed injection is the surface rate, so the accumulated surface CO2
+    # equals sum(qg_fixed)*dt (the produced dissolved gas is ~0 at the first step).
+    accum = float((phi * vol * (C1 - C0)).sum())
+    injected = float(qg_fixed.sum()) * 864.0
+    assert np.isclose(accum, injected, rtol=0.05, atol=0.0), (
+        f"rate-controlled CO2 not conserved: accumulated {accum:.3e} vs "
+        f"fixed injected {injected:.3e}"
+    )
+
