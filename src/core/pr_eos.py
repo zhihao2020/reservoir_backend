@@ -243,3 +243,91 @@ def rs_sat_interp(pressure: float | np.ndarray, T: float = 393.0) -> float | np.
     p = np.atleast_1d(np.asarray(pressure, dtype=float))
     out = np.interp(p, P, Rs)
     return float(out[0]) if scalar else out
+
+
+# --- two-phase flash table (vapor fraction V, liquid/gas CO2 mole fractions) ---
+#
+# The compositional phase split (GEM-style) uses the full Peng-Robinson flash
+# ``V(z), x_CO2(z), y_CO2(z)`` rather than the black-oil bubble-point solubility
+# ``Rs(p)``. At the injector the flash keeps most injected CO2 as a *gas phase*
+# (V ≈ 0.86 at the accumulated state z ≈ 0.81), whereas the black-oil Rs dissolves
+# it. The flash is per-cell and expensive, so it is tabulated over (p, z) and
+# interpolated. ``x_CO2`` is the liquid (oil) phase CO2 mole fraction, ``y_CO2``
+# the gas (vapor) phase CO2 mole fraction.
+_FLASH_CACHE: tuple[np.ndarray, ...] | None = None
+_FLASH_CACHE_FILE = Path(__file__).parent / ".flash_table_cache.npz"
+
+
+def flash_table(
+    pmin: float = 15.0e6,
+    pmax: float = 22.0e6,
+    np_: int = 36,
+    zmin: float = 0.0,
+    zmax: float = 0.999,
+    nz: int = 50,
+    T: float = 393.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Precompute the two-phase flash over a ``(pressure, CO2 mole fraction)`` grid.
+
+    Returns ``(P, Z, V, X, Y)`` where ``V[i, j]`` is the vapor (gas) mole fraction,
+    ``X[i, j]`` the liquid (oil) CO2 mole fraction and ``Y[i, j]`` the gas (vapor)
+    CO2 mole fraction at ``(P[i], Z[j])``. ``X``/``Y`` are the *overall* CO2 mole
+    fraction ``Z`` in the single-phase regions (X = Z for V = 0, Y = Z for V = 1)
+    so the composition fields stay continuous across the phase boundary.
+    """
+    P = np.linspace(pmin, pmax, np_)
+    Z = np.linspace(zmin, zmax, nz)
+    aij, b = _ab(T)
+    V = np.zeros((np_, nz))
+    X = np.zeros((np_, nz))
+    Y = np.zeros((np_, nz))
+    for i, p in enumerate(P):
+        for j, zc in enumerate(Z):
+            z = (1.0 - zc) * _Z_OIL
+            z[_CO2_IDX] += zc
+            v, x, y = _flash(z, float(p), T, aij, b)
+            V[i, j] = v
+            X[i, j] = x[_CO2_IDX] if v > 1.0e-6 else zc
+            Y[i, j] = y[_CO2_IDX] if v < 1.0 - 1.0e-6 else zc
+    return P, Z, V, X, Y
+
+
+def _load_flash_table() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    global _FLASH_CACHE
+    if _FLASH_CACHE is not None:
+        return _FLASH_CACHE
+    if _FLASH_CACHE_FILE.is_file():
+        try:
+            z = np.load(_FLASH_CACHE_FILE)
+            if str(z["fingerprint"]) == _eos_fingerprint():
+                _FLASH_CACHE = (z["P"], z["Z"], z["V"], z["X"], z["Y"])
+                return _FLASH_CACHE
+        except Exception:
+            pass
+    P, Z, V, X, Y = flash_table()
+    try:
+        np.savez(_FLASH_CACHE_FILE, P=P, Z=Z, V=V, X=X, Y=Y,
+                 fingerprint=np.array(_eos_fingerprint()))
+    except Exception:
+        pass
+    _FLASH_CACHE = (P, Z, V, X, Y)
+    return _FLASH_CACHE
+
+
+def flash_interp(pressure: float | np.ndarray, z_co2: float | np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bilinearly interpolate the flash table → ``(vapor_fraction, liquid_x_co2, gas_y_co2)``."""
+    P, Z, V, X, Y = _load_flash_table()
+    p = np.asarray(pressure, dtype=float)
+    zc = np.asarray(z_co2, dtype=float)
+    ip = np.clip(np.searchsorted(P, p, side="right") - 1, 0, len(P) - 2)
+    iz = np.clip(np.searchsorted(Z, zc, side="right") - 1, 0, len(Z) - 2)
+    tp = (p - P[ip]) / (P[ip + 1] - P[ip])
+    tz = (zc - Z[iz]) / (Z[iz + 1] - Z[iz])
+    w00 = (1.0 - tp) * (1.0 - tz)
+    w10 = tp * (1.0 - tz)
+    w01 = (1.0 - tp) * tz
+    w11 = tp * tz
+    v = V[ip, iz] * w00 + V[ip + 1, iz] * w10 + V[ip, iz + 1] * w01 + V[ip + 1, iz + 1] * w11
+    x = X[ip, iz] * w00 + X[ip + 1, iz] * w10 + X[ip, iz + 1] * w01 + X[ip + 1, iz + 1] * w11
+    y = Y[ip, iz] * w00 + Y[ip + 1, iz] * w10 + Y[ip, iz + 1] * w01 + Y[ip + 1, iz + 1] * w11
+    return v, x, y

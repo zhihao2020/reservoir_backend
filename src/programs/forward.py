@@ -1029,6 +1029,220 @@ def _implicit_compositional_pressure_step(
     return p, sw, so, sg, C, converged
 
 
+def _implicit_compositional_two_step(
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64],
+    inv_phiV: NDArray[np.float64],
+    dt: float,
+    sw0: NDArray[np.float64],
+    z0: NDArray[np.float64],
+    p0: NDArray[np.float64],
+    wells: WellMap,
+    well_bhp: NDArray[np.float64],
+    well_params: WellModelParams,
+    params: FluidParams,
+    injects_gas: NDArray[np.bool_],
+    *,
+    well_qg_fixed: NDArray[np.float64] | None = None,
+    max_iter: int = 30,
+    tol: float = 1.0e-3,
+) -> tuple[NDArray[np.float64], ...]:
+    """One fully-implicit two-component (CO2 + oil) compositional step (Newton).
+
+    Primary variables ``(p, sw, z)`` where ``z`` is the overall CO2 mole fraction
+    in the hydrocarbon. The PR EOS flash (``pr_eos.flash_interp``) gives the vapor
+    fraction ``V`` and the phase compositions ``x_CO2``/``y_CO2``; the total moles
+    are fixed by the volume balance ``sw + sg + sl = 1`` and the CO2 surface volume
+    ``C = z*N*V_CO2_STD`` is the conserved quantity. The CO2 flux is the
+    compositional flux ``y_CO2/Bg*λg + x_CO2*223*λl`` (gas carries ``y_CO2``, the
+    *swollen* liquid carries ``x_CO2``), which is what lets the gas displace the
+    liquid to residual at high ``z``. Returns ``(p, sw, sl, sg, z, converged)``.
+    """
+    from scipy.sparse import diags
+
+    from ..core.pr_eos import _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+
+    Bg = float(params.bg)
+    inv_Bg = 1.0 / max(Bg, 1.0e-12)
+    v_l = _MW_OIL / 1000.0 / _RHO_OIL_STD  # liquid (oil) molar volume (m3/mol)
+    r_co2 = _V_CO2_STD / v_l  # CO2 surface / oil surface ratio (≈223)
+    v_g = Bg * _V_CO2_STD  # gas molar volume (m3/mol)
+    inv_v_g = 1.0 / v_g
+    inv_v_co2 = 1.0 / _V_CO2_STD
+    inv_v_oil = 1.0 / v_l
+    n = grid.n_cells
+    sw = np.asarray(sw0, dtype=float).copy()
+    z = np.asarray(z0, dtype=float).copy()
+    p = np.asarray(p0, dtype=float).copy()
+    h = 1.0e-6
+    accum = 1.0 / (dt * inv_phiV)  # phi*vol/dt (flux form)
+    I = diags(accum)
+    A_grav = _gravity_divergence_matrix(grid, permeability)
+    cells, wi, bhp_w, is_inj = _peaceman_well_data(
+        grid, permeability, wells, well_bhp, well_params, injects_gas,
+    )
+    rate_controlled = well_qg_fixed is not None
+    qg_fixed = np.zeros(n, dtype=float)
+    if rate_controlled:
+        qg_fixed = np.asarray(well_qg_fixed, dtype=float).ravel()
+    qg_target = float(qg_fixed.sum())
+    bhp_full = np.zeros(n)
+    for idx in range(cells.size):
+        bhp_full[cells[idx]] = bhp_w[idx]
+    inj_cell = np.zeros(n, dtype=bool)
+    for idx in range(cells.size):
+        inj_cell[cells[idx]] = is_inj[idx]
+    bhp_inj = float(np.mean(bhp_w[is_inj])) if is_inj.any() else 0.0
+
+    def state(p_, sw_, z_):
+        sw_r, sl_, sg_, V_, x_, y_, N_, C_, O_ = _split_compositional_two(sw_, z_, p_, params)
+        lam_w_, lam_l_, lam_g_ = phase_mobilities(sw_r, sl_, sg_, params)
+        m_co2_, m_oil_ = _component_mobilities(V_, x_, y_, lam_l_, lam_g_, params)
+        m_N_ = lam_g_ * inv_v_g + lam_l_ * inv_v_oil  # hydrocarbon moles mobility
+        Rs_ = x_ * r_co2 / np.maximum(1.0 - x_, 1.0e-12)  # dissolved ratio (surface)
+        return sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_, m_oil_, lam_w_, lam_l_, lam_g_, Rs_
+
+    def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_):
+        D_ = np.zeros(n)
+        qw_ = np.zeros(n); qo_ = np.zeros(n); qg_ = np.zeros(n)
+        lam_t_ = lam_w_ + lam_l_ + lam_g_
+        for idx in range(cells.size):
+            c = cells[idx]
+            w = wi[idx]
+            bhp_eff = bhp_inj_ if (is_inj[idx] and rate_controlled) else bhp_w[idx]
+            dp = bhp_eff - p_[c]
+            D_[c] += w * lam_t_[c]
+            if is_inj[idx]:
+                qg_[c] += w * lam_t_[c] * dp / Bg
+            else:
+                qw_[c] += w * lam_w_[c] * dp
+                qo_[c] += w * lam_l_[c] * dp
+                qg_[c] += w * lam_g_[c] * dp / Bg
+        return D_, qw_, qo_, qg_
+
+    def inj_diag(lam_t_):
+        D_inj_ = np.zeros(n)
+        for idx in range(cells.size):
+            if is_inj[idx]:
+                D_inj_[cells[idx]] += wi[idx] * lam_t_[cells[idx]]
+        return D_inj_
+
+    def residual(p_, sw_, z_, bhp_inj_):
+        (sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_, m_oil_,
+         lam_w_, lam_l_, lam_g_, Rs_) = state(p_, sw_, z_)
+        lam_t_ = lam_w_ + lam_l_ + lam_g_
+        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
+        A_ = _mobility_divergence_matrix(grid, permeability, p_)
+        A_g_ = A_ - params.rho_g * A_grav
+        # Hydrocarbon *moles* balance (the compressible-gas pressure equation):
+        # the oil is conserved by this + the CO2 equation (see the split above).
+        # The divergence uses the tpfa Laplacian in the moles mobility m_N (its
+        # p-dependence is the pressure gradient, not the weak flash V(p,z)).
+        q_N_ = qg_ * inv_v_co2 + qo_ * inv_v_oil  # hydrocarbon moles source
+        L_N_ = _tpfa_matrix_vec(grid, permeability, m_N_)
+        r_p_ = accum * (N_ - N0) + L_N_ @ p_ - q_N_
+        D_inj_ = inj_diag(lam_t_)
+        r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
+        r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
+        q_c_ = np.where(inj_cell, qg_, y_ * qg_ + x_ * r_co2 * qo_)
+        r_c_ = accum * (C_ - C0) - q_c_ + A_g_ @ m_co2_
+        return np.concatenate([r_p_, r_sw_, r_c_, np.array([r_rate_])])
+
+    N0 = _split_compositional_two(sw0, z0, p0, params)[6]  # hydrocarbon moles at t0
+    C0 = _split_compositional_two(sw0, z0, p0, params)[7]  # CO2 surface at t0
+    r0_norm = float(np.linalg.norm(residual(p, sw, z, bhp_inj)))
+    converged = False
+    for _ in range(max_iter):
+        (sl, sg, V, x, y, N, C, m_N, m_co2, m_oil,
+         lam_w, lam_l, lam_g, Rs) = state(p, sw, z)
+        lam_t = lam_w + lam_l + lam_g
+        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
+        D_inj = inj_diag(lam_t)
+        A = _mobility_divergence_matrix(grid, permeability, p)
+        A_g = A - params.rho_g * A_grav
+        r = residual(p, sw, z, bhp_inj)
+        # numerical derivatives wrt p / sw / z (through the flash split + relperm).
+        (_, _, _, _, _, N_p, C_p, m_N_p, m_co2_p, _,
+         lw_p, ll_p, lg_p, _) = state(p + h, sw, z)
+        dN_dp = (N_p - N) / h
+        dm_N_dp = (m_N_p - m_N) / h
+        dC_dp = (C_p - C) / h
+        dm_co2_dp = (m_co2_p - m_co2) / h
+        (_, _, _, _, _, N_s, C_s, m_N_s, m_co2_s, _,
+         lw_s, ll_s, lg_s, _) = state(p, sw + h, z)
+        dN_dsw = (N_s - N) / h
+        dm_N_dsw = (m_N_s - m_N) / h
+        dC_dsw = (C_s - C) / h
+        dm_co2_dsw = (m_co2_s - m_co2) / h
+        dlw_dsw = (lw_s - lam_w) / h
+        (_, _, _, _, _, N_z, C_z, m_N_z, m_co2_z, _,
+         lw_z, ll_z, lg_z, _) = state(p, sw, z + h)
+        dN_dz = (N_z - N) / h
+        dm_N_dz = (m_N_z - m_N) / h
+        dC_dz = (C_z - C) / h
+        dm_co2_dz = (m_co2_z - m_co2) / h
+        dlw_dz = (lw_z - lam_w) / h
+        # well p-derivatives (diagonal): injector is pure-CO2 gas, producers split.
+        eps = 1.0e-12
+        J_Np = diags(np.where(inj_cell, D / (Bg * _V_CO2_STD),
+                              D * ((lam_g / (Bg * _V_CO2_STD) + lam_l / v_l) / np.maximum(lam_t, eps))))
+        J_wp = diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, eps))))
+        J_cp = diags(np.where(inj_cell, D / Bg,
+                              D * ((y * lam_g / Bg + x * r_co2 * lam_l) / np.maximum(lam_t, eps))))
+        # Jacobian blocks (full 3x3, solved together — the moles pressure equation
+        # couples to sw and z through N and m_N, so no block-triangular dropping).
+        J_pp = (_tpfa_matrix_vec(grid, permeability, m_N)
+                + diags(dN_dp * accum) + J_Np).tocsr()
+        J_pw = _tpfa_matrix_vec(grid, permeability, dm_N_dsw) + diags(dN_dsw * accum)
+        J_pz = _tpfa_matrix_vec(grid, permeability, dm_N_dz) + diags(dN_dz * accum)
+        J_ww = I + A @ diags(dlw_dsw)
+        J_wz = A @ diags(dlw_dz)
+        J_cw = diags(dC_dsw * accum) + A_g @ diags(dm_co2_dsw)
+        J_cc = diags(dC_dz * accum) + A_g @ diags(dm_co2_dz)
+        r = -r
+        # Block forward substitution (p, bhp_inj) -> sw -> z. The moles-pressure
+        # Laplacian J_pp is well-posed (positive definite); the injector BHP is
+        # Schur-eliminated as a rank-1 update of J_pp (same as the black-oil step).
+        u = _solve_linear(J_pp, r[:n])
+        delta_bhp = 0.0
+        if rate_controlled:
+            w = _solve_linear(J_pp, D_inj)
+            denom = float(D_inj.sum()) - float(D_inj @ w)
+            delta_bhp = (r[3 * n] + float(D_inj @ u)) / denom if abs(denom) > 1.0e-30 else 0.0
+            delta_p = u + delta_bhp * w
+        else:
+            delta_p = u
+        rhs_w = r[n:2 * n] - J_wp @ delta_p
+        delta_sw = _solve_linear(J_ww, rhs_w)
+        rhs_c = r[2 * n:3 * n] - J_cw @ delta_sw - J_cp @ delta_p
+        if rate_controlled:
+            rhs_c = rhs_c + (D_inj / Bg) * delta_bhp
+        delta_z = _solve_linear(J_cc, rhs_c)
+        alpha = 1.0
+        r_norm = float(np.linalg.norm(r))
+        p_new = p.copy(); sw_new = sw.copy(); z_new = z.copy(); bhp_new = bhp_inj
+        r_new = r
+        for _ in range(12):
+            p_new = p + alpha * delta_p
+            sw_new = np.clip(sw + alpha * delta_sw, 0.0, 1.0)
+            z_new = np.clip(z + alpha * delta_z, 0.0, 0.999)
+            bhp_new = bhp_inj + alpha * delta_bhp
+            r_new = residual(p_new, sw_new, z_new, bhp_new)
+            if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
+                break
+            alpha *= 0.5
+        norm_d = float(np.linalg.norm(np.concatenate([p_new - p, sw_new - sw, z_new - z])))
+        p, sw, z, bhp_inj = p_new, sw_new, z_new, bhp_new
+        norm_x = float(np.linalg.norm(np.concatenate([p, sw, z])))
+        if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
+            converged = True
+            break
+        if norm_d < 1.0e-12 * max(1.0, norm_x):
+            break  # stalled
+    sl, sg, V, x, y, N, C, m_N, m_co2, m_oil, lam_w, lam_l, lam_g, Rs = state(p, sw, z)
+    return p, sw, sl, sg, z, converged
+
+
 def _implicit_compositional_pressure_kinetic_step(
     grid: CartesianGrid,
     permeability: NDArray[np.float64],
@@ -1713,6 +1927,68 @@ def _split_compositional(
     sg = np.clip(sg, 0.0, nw)
     so = nw - sg
     return sw_p, so, sg
+
+
+def _split_compositional_two(
+    sw: NDArray[np.float64],
+    z: NDArray[np.float64],
+    p: NDArray[np.float64],
+    params: FluidParams,
+) -> tuple[NDArray[np.float64], ...]:
+    """Two-component (CO2 + oil) compositional phase split via the PR EOS flash.
+
+    ``z`` is the overall CO2 mole fraction in the hydrocarbon (CO2 + oil); the
+    flash gives the vapor mole fraction ``V`` and the phase compositions
+    ``x_CO2`` (liquid) / ``y_CO2`` (vapor). The hydrocarbon mixture molar volume
+    ``V*v_g + (1-V)*v_l`` (gas molar volume ``v_g = Bg*V_CO2_STD``, liquid molar
+    volume ``v_l = MW_oil/rho_oil``) fixes the total moles ``N = (1-sw)/denom``
+    from the volume balance ``sw + sg + sl = 1``, then the saturations and the
+    surface-volume components follow.
+
+    Returns ``(sw, sl, sg, V, x_co2, y_co2, N, C, O)`` where ``sl`` is the
+    *liquid* (oil + dissolved CO2) saturation, ``C`` the CO2 surface volume and
+    ``O`` the oil surface volume.
+    """
+    from ..core.pr_eos import flash_interp, _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+
+    sw_p = np.clip(np.asarray(sw, dtype=float), 0.0, 1.0)
+    z_p = np.clip(np.asarray(z, dtype=float), 0.0, 1.0)
+    p_a = np.asarray(p, dtype=float)
+    v_g = float(params.bg) * _V_CO2_STD  # gas molar volume (m3/mol)
+    v_l = _MW_OIL / 1000.0 / _RHO_OIL_STD  # liquid molar volume (m3/mol)
+    V, x_co2, y_co2 = flash_interp(p_a, z_p)
+    denom = V * v_g + (1.0 - V) * v_l
+    N = (1.0 - sw_p) / np.maximum(denom, 1.0e-30)
+    sg = V * N * v_g
+    sl = (1.0 - V) * N * v_l
+    C = z_p * N * _V_CO2_STD  # CO2 surface volume
+    O = (1.0 - z_p) * N * v_l  # oil surface volume
+    return sw_p, sl, sg, V, x_co2, y_co2, N, C, O
+
+
+def _component_mobilities(
+    V: NDArray[np.float64],
+    x_co2: NDArray[np.float64],
+    y_co2: NDArray[np.float64],
+    lam_l: NDArray[np.float64],
+    lam_g: NDArray[np.float64],
+    params: FluidParams,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Component (surface-volume) mobilities ``(m_CO2, m_oil)``.
+
+    ``m_CO2 = y_CO2/Bg*λg + x_CO2*(V_CO2_STD/V_oil)*λl`` is the CO2 surface flux
+    mobility (gas carries ``y_CO2`` of the gas, liquid carries ``x_CO2`` of the
+    liquid, converted to surface CO2 volume); ``m_oil`` the oil surface flux
+    mobility. ``V_CO2_STD/V_oil = 223``.
+    """
+    from ..core.pr_eos import _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+
+    v_l = _MW_OIL / 1000.0 / _RHO_OIL_STD  # liquid (oil) molar volume
+    r_co2 = _V_CO2_STD / v_l  # CO2 surface / oil surface ratio (≈223)
+    inv_Bg = 1.0 / max(float(params.bg), 1.0e-12)
+    m_co2 = y_co2 * inv_Bg * lam_g + x_co2 * r_co2 * lam_l
+    m_oil = (1.0 - y_co2) * inv_Bg * lam_g / r_co2 + (1.0 - x_co2) * lam_l
+    return m_co2, m_oil
 
 
 def _forward_compositional_saturations(
