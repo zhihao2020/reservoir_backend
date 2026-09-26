@@ -1144,8 +1144,9 @@ def _implicit_compositional_two_step(
         # The divergence uses the tpfa Laplacian in the moles mobility m_N (its
         # p-dependence is the pressure gradient, not the weak flash V(p,z)).
         q_N_ = qg_ * inv_v_co2 + qo_ * inv_v_oil  # hydrocarbon moles source
-        L_N_ = _tpfa_matrix_vec(grid, permeability, m_N_)
-        r_p_ = accum * (N_ - N0) + L_N_ @ p_ - q_N_
+        # Upwind hydrocarbon-moles flux (consistent with the CO2/oil component
+        # equations, which also use the upwind A / A_g).
+        r_p_ = accum * (N_ - N0) - q_N_ + A_ @ m_N_
         D_inj_ = inj_diag(lam_t_)
         r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
         r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
@@ -1199,12 +1200,13 @@ def _implicit_compositional_two_step(
         J_cp = (diags(np.where(inj_cell, D / Bg,
                               D * ((y * lam_g / Bg + x * r_co2 * lam_l) / np.maximum(lam_t, eps))))
                 - _tpfa_matrix_vec(grid, permeability, m_co2_gas + m_co2_liq)).tocsr()
-        # Jacobian blocks (full 3x3, solved together — the moles pressure equation
-        # couples to sw and z through N and m_N, so no block-triangular dropping).
-        J_pp = (_tpfa_matrix_vec(grid, permeability, m_N)
-                + diags(dN_dp * accum) + J_Np).tocsr()
-        J_pw = _tpfa_matrix_vec(grid, permeability, dm_N_dsw) + diags(dN_dsw * accum)
-        J_pz = _tpfa_matrix_vec(grid, permeability, dm_N_dz) + diags(dN_dz * accum)
+        # Jacobian blocks (full 3x3). The pressure block keeps the upwind flux's
+        # p-dependence: A@m_N = -L(m_N)·p, so ∂(A@m_N)/∂p = -L(m_N) (the tpfa
+        # Laplacian, well-posed) + A@diag(dm_N/dp) (the weak flash part).
+        J_pp = (diags(dN_dp * accum) + A @ diags(dm_N_dp)
+                - _tpfa_matrix_vec(grid, permeability, m_N) + J_Np).tocsr()
+        J_pw = diags(dN_dsw * accum) + A @ diags(dm_N_dsw)
+        J_pz = diags(dN_dz * accum) + A @ diags(dm_N_dz)
         J_ww = I + A @ diags(dlw_dsw)
         J_wz = A @ diags(dlw_dz)
         # CO2 flux splits gas (gravity) / liquid (no gravity), so the Jacobian does too.
