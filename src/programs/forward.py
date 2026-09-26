@@ -8,6 +8,8 @@ report how well the true field is recovered.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -1058,7 +1060,7 @@ def _implicit_compositional_two_step(
     *swollen* liquid carries ``x_CO2``), which is what lets the gas displace the
     liquid to residual at high ``z``. Returns ``(p, sw, sl, sg, z, converged)``.
     """
-    from scipy.sparse import diags
+    from scipy.sparse import bmat, diags
 
     from ..core.pr_eos import _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
 
@@ -1097,10 +1099,13 @@ def _implicit_compositional_two_step(
     def state(p_, sw_, z_):
         sw_r, sl_, sg_, V_, x_, y_, N_, C_, O_ = _split_compositional_two(sw_, z_, p_, params)
         lam_w_, lam_l_, lam_g_ = phase_mobilities(sw_r, sl_, sg_, params)
-        m_co2_, m_oil_ = _component_mobilities(V_, x_, y_, lam_l_, lam_g_, params)
+        # Split the CO2 flux into the buoyant *gas* part (y_CO2*λg/Bg, gravity acts
+        # on it) and the dissolved *liquid* part (x_CO2*223*λl, no gravity).
+        m_co2_gas_ = y_ * inv_Bg * lam_g_
+        m_co2_liq_ = x_ * r_co2 * lam_l_
         m_N_ = lam_g_ * inv_v_g + lam_l_ * inv_v_oil  # hydrocarbon moles mobility
         Rs_ = x_ * r_co2 / np.maximum(1.0 - x_, 1.0e-12)  # dissolved ratio (surface)
-        return sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_, m_oil_, lam_w_, lam_l_, lam_g_, Rs_
+        return sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_gas_, m_co2_liq_, lam_w_, lam_l_, lam_g_, Rs_
 
     def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_):
         D_ = np.zeros(n)
@@ -1128,7 +1133,7 @@ def _implicit_compositional_two_step(
         return D_inj_
 
     def residual(p_, sw_, z_, bhp_inj_):
-        (sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_, m_oil_,
+        (sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_gas_, m_co2_liq_,
          lam_w_, lam_l_, lam_g_, Rs_) = state(p_, sw_, z_)
         lam_t_ = lam_w_ + lam_l_ + lam_g_
         D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
@@ -1145,7 +1150,9 @@ def _implicit_compositional_two_step(
         r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
         r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
         q_c_ = np.where(inj_cell, qg_, y_ * qg_ + x_ * r_co2 * qo_)
-        r_c_ = accum * (C_ - C0) - q_c_ + A_g_ @ m_co2_
+        # CO2 flux: gravity acts only on the *free gas* part (buoyant), not the
+        # dissolved CO2 carried by the liquid.
+        r_c_ = accum * (C_ - C0) - q_c_ + A_g_ @ m_co2_gas_ + A_ @ m_co2_liq_
         return np.concatenate([r_p_, r_sw_, r_c_, np.array([r_rate_])])
 
     N0 = _split_compositional_two(sw0, z0, p0, params)[6]  # hydrocarbon moles at t0
@@ -1153,7 +1160,7 @@ def _implicit_compositional_two_step(
     r0_norm = float(np.linalg.norm(residual(p, sw, z, bhp_inj)))
     converged = False
     for _ in range(max_iter):
-        (sl, sg, V, x, y, N, C, m_N, m_co2, m_oil,
+        (sl, sg, V, x, y, N, C, m_N, m_co2_gas, m_co2_liq,
          lam_w, lam_l, lam_g, Rs) = state(p, sw, z)
         lam_t = lam_w + lam_l + lam_g
         D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
@@ -1162,33 +1169,36 @@ def _implicit_compositional_two_step(
         A_g = A - params.rho_g * A_grav
         r = residual(p, sw, z, bhp_inj)
         # numerical derivatives wrt p / sw / z (through the flash split + relperm).
-        (_, _, _, _, _, N_p, C_p, m_N_p, m_co2_p, _,
+        (_, _, _, _, _, N_p, C_p, m_N_p, m_cg_p, m_cl_p,
          lw_p, ll_p, lg_p, _) = state(p + h, sw, z)
         dN_dp = (N_p - N) / h
         dm_N_dp = (m_N_p - m_N) / h
         dC_dp = (C_p - C) / h
-        dm_co2_dp = (m_co2_p - m_co2) / h
-        (_, _, _, _, _, N_s, C_s, m_N_s, m_co2_s, _,
+        (_, _, _, _, _, N_s, C_s, m_N_s, m_cg_s, m_cl_s,
          lw_s, ll_s, lg_s, _) = state(p, sw + h, z)
         dN_dsw = (N_s - N) / h
         dm_N_dsw = (m_N_s - m_N) / h
         dC_dsw = (C_s - C) / h
-        dm_co2_dsw = (m_co2_s - m_co2) / h
+        dm_cg_dsw = (m_cg_s - m_co2_gas) / h
+        dm_cl_dsw = (m_cl_s - m_co2_liq) / h
         dlw_dsw = (lw_s - lam_w) / h
-        (_, _, _, _, _, N_z, C_z, m_N_z, m_co2_z, _,
+        (_, _, _, _, _, N_z, C_z, m_N_z, m_cg_z, m_cl_z,
          lw_z, ll_z, lg_z, _) = state(p, sw, z + h)
         dN_dz = (N_z - N) / h
         dm_N_dz = (m_N_z - m_N) / h
         dC_dz = (C_z - C) / h
-        dm_co2_dz = (m_co2_z - m_co2) / h
+        dm_cg_dz = (m_cg_z - m_co2_gas) / h
+        dm_cl_dz = (m_cl_z - m_co2_liq) / h
         dlw_dz = (lw_z - lam_w) / h
         # well p-derivatives (diagonal): injector is pure-CO2 gas, producers split.
         eps = 1.0e-12
         J_Np = diags(np.where(inj_cell, D / (Bg * _V_CO2_STD),
                               D * ((lam_g / (Bg * _V_CO2_STD) + lam_l / v_l) / np.maximum(lam_t, eps))))
-        J_wp = diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, eps))))
-        J_cp = diags(np.where(inj_cell, D / Bg,
+        J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, eps))))
+                - _tpfa_matrix_vec(grid, permeability, lam_w)).tocsr()
+        J_cp = (diags(np.where(inj_cell, D / Bg,
                               D * ((y * lam_g / Bg + x * r_co2 * lam_l) / np.maximum(lam_t, eps))))
+                - _tpfa_matrix_vec(grid, permeability, m_co2_gas + m_co2_liq)).tocsr()
         # Jacobian blocks (full 3x3, solved together — the moles pressure equation
         # couples to sw and z through N and m_N, so no block-triangular dropping).
         J_pp = (_tpfa_matrix_vec(grid, permeability, m_N)
@@ -1197,27 +1207,30 @@ def _implicit_compositional_two_step(
         J_pz = _tpfa_matrix_vec(grid, permeability, dm_N_dz) + diags(dN_dz * accum)
         J_ww = I + A @ diags(dlw_dsw)
         J_wz = A @ diags(dlw_dz)
-        J_cw = diags(dC_dsw * accum) + A_g @ diags(dm_co2_dsw)
-        J_cc = diags(dC_dz * accum) + A_g @ diags(dm_co2_dz)
+        # CO2 flux splits gas (gravity) / liquid (no gravity), so the Jacobian does too.
+        J_cw = diags(dC_dsw * accum) + A_g @ diags(dm_cg_dsw) + A @ diags(dm_cl_dsw)
+        J_cc = diags(dC_dz * accum) + A_g @ diags(dm_cg_dz) + A @ diags(dm_cl_dz)
         r = -r
-        # Block forward substitution (p, bhp_inj) -> sw -> z. The moles-pressure
-        # Laplacian J_pp is well-posed (positive definite); the injector BHP is
-        # Schur-eliminated as a rank-1 update of J_pp (same as the black-oil step).
-        u = _solve_linear(J_pp, r[:n])
+        # Fully-coupled solve (OPM-style): assemble the complete 3x3 block Jacobian
+        # and solve it directly. The block forward substitution drops J_pw/J_pz and
+        # leaves a residual floor; the full Jacobian recovers quadratic Newton.
+        r_p = r[:n]; r_sw = r[n:2 * n]; r_c = r[2 * n:3 * n]
+        delta_p = np.zeros(n); delta_sw = np.zeros(n); delta_z = np.zeros(n)
         delta_bhp = 0.0
+        J_blk = bmat([[J_pp, J_pw, J_pz],
+                      [J_wp, J_ww, J_wz],
+                      [J_cp, J_cw, J_cc]], format="csr")
+        rhs = np.concatenate([r_p, r_sw, r_c])
         if rate_controlled:
-            w = _solve_linear(J_pp, D_inj)
-            denom = float(D_inj.sum()) - float(D_inj @ w)
-            delta_bhp = (r[3 * n] + float(D_inj @ u)) / denom if abs(denom) > 1.0e-30 else 0.0
-            delta_p = u + delta_bhp * w
-        else:
-            delta_p = u
-        rhs_w = r[n:2 * n] - J_wp @ delta_p
-        delta_sw = _solve_linear(J_ww, rhs_w)
-        rhs_c = r[2 * n:3 * n] - J_cw @ delta_sw - J_cp @ delta_p
-        if rate_controlled:
-            rhs_c = rhs_c + (D_inj / Bg) * delta_bhp
-        delta_z = _solve_linear(J_cc, rhs_c)
+            bhp_col = np.concatenate([-D_inj, np.zeros(n), -D_inj / Bg])
+            # Schur-eliminate bhp_inj (its equation is D_inj @ (bhp - p) = qg_target*Bg).
+            u = _solve_linear(J_blk, bhp_col)
+            denom = float(D_inj.sum()) + float(np.concatenate([D_inj, np.zeros(n), D_inj / Bg]) @ u)
+            delta_bhp = (r[3 * n] - float(np.concatenate([D_inj, np.zeros(n), D_inj / Bg]) @ u)
+                         ) / denom if abs(denom) > 1.0e-30 else 0.0
+            rhs = rhs + delta_bhp * bhp_col
+        delta = _solve_linear(J_blk, rhs)
+        delta_p = delta[:n]; delta_sw = delta[n:2 * n]; delta_z = delta[2 * n:3 * n]
         alpha = 1.0
         r_norm = float(np.linalg.norm(r))
         p_new = p.copy(); sw_new = sw.copy(); z_new = z.copy(); bhp_new = bhp_inj
@@ -1234,6 +1247,12 @@ def _implicit_compositional_two_step(
         norm_d = float(np.linalg.norm(np.concatenate([p_new - p, sw_new - sw, z_new - z])))
         p, sw, z, bhp_inj = p_new, sw_new, z_new, bhp_new
         norm_x = float(np.linalg.norm(np.concatenate([p, sw, z])))
+        if "TWODIAG" in os.environ:
+            print(f"    iter: rn={np.linalg.norm(r_new):.3e} r0={r0_norm:.3e} "
+                  f"norm_d={norm_d:.3e} alpha={alpha:.3f} zmax={z.max():.4f} "
+                  f"|rp|={np.linalg.norm(r_new[:n]):.2e} "
+                  f"|rw|={np.linalg.norm(r_new[n:2*n]):.2e} "
+                  f"|rc|={np.linalg.norm(r_new[2*n:3*n]):.2e}")
         if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
             converged = True
             break
