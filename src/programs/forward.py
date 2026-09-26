@@ -8,8 +8,6 @@ report how well the true field is recovered.
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 from numpy.typing import NDArray
 
@@ -1196,15 +1194,16 @@ def _implicit_compositional_two_step(
         J_Np = diags(np.where(inj_cell, D / (Bg * _V_CO2_STD),
                               D * ((lam_g / (Bg * _V_CO2_STD) + lam_l / v_l) / np.maximum(lam_t, eps))))
         J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, eps))))
-                - _tpfa_matrix_vec(grid, permeability, lam_w)).tocsr()
+                + _tpfa_matrix_vec(grid, permeability, lam_w)).tocsr()
         J_cp = (diags(np.where(inj_cell, D / Bg,
                               D * ((y * lam_g / Bg + x * r_co2 * lam_l) / np.maximum(lam_t, eps))))
-                - _tpfa_matrix_vec(grid, permeability, m_co2_gas + m_co2_liq)).tocsr()
+                + _tpfa_matrix_vec(grid, permeability, m_co2_gas + m_co2_liq)).tocsr()
         # Jacobian blocks (full 3x3). The pressure block keeps the upwind flux's
-        # p-dependence: A@m_N = -L(m_N)·p, so ∂(A@m_N)/∂p = -L(m_N) (the tpfa
-        # Laplacian, well-posed) + A@diag(dm_N/dp) (the weak flash part).
+        # p-dependence: A@m_N = div(-k·m_N·∇p) = +L(m_N)·p (L is the *negative*
+        # tpfa Laplacian, so A and L carry the same sign), hence ∂(A@m_N)/∂p =
+        # +L(m_N) + A@diag(dm_N/dp).
         J_pp = (diags(dN_dp * accum) + A @ diags(dm_N_dp)
-                - _tpfa_matrix_vec(grid, permeability, m_N) + J_Np).tocsr()
+                + _tpfa_matrix_vec(grid, permeability, m_N) + J_Np).tocsr()
         J_pw = diags(dN_dsw * accum) + A @ diags(dm_N_dsw)
         J_pz = diags(dN_dz * accum) + A @ diags(dm_N_dz)
         J_ww = I + A @ diags(dlw_dsw)
@@ -1249,12 +1248,6 @@ def _implicit_compositional_two_step(
         norm_d = float(np.linalg.norm(np.concatenate([p_new - p, sw_new - sw, z_new - z])))
         p, sw, z, bhp_inj = p_new, sw_new, z_new, bhp_new
         norm_x = float(np.linalg.norm(np.concatenate([p, sw, z])))
-        if "TWODIAG" in os.environ:
-            print(f"    iter: rn={np.linalg.norm(r_new):.3e} r0={r0_norm:.3e} "
-                  f"norm_d={norm_d:.3e} alpha={alpha:.3f} zmax={z.max():.4f} "
-                  f"|rp|={np.linalg.norm(r_new[:n]):.2e} "
-                  f"|rw|={np.linalg.norm(r_new[n:2*n]):.2e} "
-                  f"|rc|={np.linalg.norm(r_new[2*n:3*n]):.2e}")
         if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
             converged = True
             break
