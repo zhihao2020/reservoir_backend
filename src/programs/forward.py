@@ -1058,7 +1058,7 @@ def _implicit_compositional_two_step(
     *swollen* liquid carries ``x_CO2``), which is what lets the gas displace the
     liquid to residual at high ``z``. Returns ``(p, sw, sl, sg, z, converged)``.
     """
-    from scipy.sparse import bmat, diags
+    from scipy.sparse import diags
 
     from ..core.pr_eos import _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
 
@@ -1212,26 +1212,24 @@ def _implicit_compositional_two_step(
         J_cw = diags(dC_dsw * accum) + A_g @ diags(dm_cg_dsw) + A @ diags(dm_cl_dsw)
         J_cc = diags(dC_dz * accum) + A_g @ diags(dm_cg_dz) + A @ diags(dm_cl_dz)
         r = -r
-        # Fully-coupled solve (OPM-style): assemble the complete 3x3 block Jacobian
-        # and solve it directly. The block forward substitution drops J_pw/J_pz and
-        # leaves a residual floor; the full Jacobian recovers quadratic Newton.
-        r_p = r[:n]; r_sw = r[n:2 * n]; r_c = r[2 * n:3 * n]
-        delta_p = np.zeros(n); delta_sw = np.zeros(n); delta_z = np.zeros(n)
+        # Block forward substitution (p, bhp_inj) -> sw -> z, same as the black-oil
+        # step. The pressure block J_pp = L(m_N) + J_Np is a well-posed Laplacian;
+        # the injector BHP is Schur-eliminated as a rank-1 update.
+        u = _solve_linear(J_pp, r[:n])
         delta_bhp = 0.0
-        J_blk = bmat([[J_pp, J_pw, J_pz],
-                      [J_wp, J_ww, J_wz],
-                      [J_cp, J_cw, J_cc]], format="csr")
-        rhs = np.concatenate([r_p, r_sw, r_c])
         if rate_controlled:
-            bhp_col = np.concatenate([-D_inj, np.zeros(n), -D_inj / Bg])
-            # Schur-eliminate bhp_inj (its equation is D_inj @ (bhp - p) = qg_target*Bg).
-            u = _solve_linear(J_blk, bhp_col)
-            denom = float(D_inj.sum()) + float(np.concatenate([D_inj, np.zeros(n), D_inj / Bg]) @ u)
-            delta_bhp = (r[3 * n] - float(np.concatenate([D_inj, np.zeros(n), D_inj / Bg]) @ u)
-                         ) / denom if abs(denom) > 1.0e-30 else 0.0
-            rhs = rhs + delta_bhp * bhp_col
-        delta = _solve_linear(J_blk, rhs)
-        delta_p = delta[:n]; delta_sw = delta[n:2 * n]; delta_z = delta[2 * n:3 * n]
+            w = _solve_linear(J_pp, D_inj)
+            denom = float(D_inj.sum()) - float(D_inj @ w)
+            delta_bhp = (r[3 * n] + float(D_inj @ u)) / denom if abs(denom) > 1.0e-30 else 0.0
+            delta_p = u + delta_bhp * w
+        else:
+            delta_p = u
+        rhs_w = r[n:2 * n] - J_wp @ delta_p
+        delta_sw = _solve_linear(J_ww, rhs_w)
+        rhs_c = r[2 * n:3 * n] - J_cw @ delta_sw - J_cp @ delta_p
+        if rate_controlled:
+            rhs_c = rhs_c + (D_inj / Bg) * delta_bhp
+        delta_z = _solve_linear(J_cc, rhs_c)
         alpha = 1.0
         r_norm = float(np.linalg.norm(r))
         p_new = p.copy(); sw_new = sw.copy(); z_new = z.copy(); bhp_new = bhp_inj
