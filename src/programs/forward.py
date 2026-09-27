@@ -1173,6 +1173,8 @@ def _implicit_compositional_two_step(
         dN_dp = (N_p - N) / h
         dm_N_dp = (m_N_p - m_N) / h
         dC_dp = (C_p - C) / h
+        dm_cg_dp = (m_cg_p - m_co2_gas) / h
+        dm_cl_dp = (m_cl_p - m_co2_liq) / h
         (_, _, _, _, _, N_s, C_s, m_N_s, m_cg_s, m_cl_s,
          lw_s, ll_s, lg_s, _) = state(p, sw + h, z)
         dN_dsw = (N_s - N) / h
@@ -1209,16 +1211,17 @@ def _implicit_compositional_two_step(
         J_Np = diags(np.where(inj_cell, D / (Bg * _V_CO2_STD),
                               D * ((lam_g / (Bg * _V_CO2_STD) + lam_l / v_l) / np.maximum(lam_t, eps))))
         J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, eps))))
-                + _tpfa_matrix_vec(grid, permeability, lam_w)).tocsr()
-        J_cp = (diags(np.where(inj_cell, D / Bg,
-                              D * ((y * lam_g / Bg + x * r_co2 * lam_l) / np.maximum(lam_t, eps))))
-                + _tpfa_matrix_vec(grid, permeability, m_co2_gas + m_co2_liq)).tocsr()
+                + _upwind_tpfa_matrix_vec(grid, permeability, lam_w, p)).tocsr()
+        J_cp = (diags(dC_dp * accum) + A_g @ diags(dm_cg_dp) + A @ diags(dm_cl_dp)
+                + diags(np.where(inj_cell, D / Bg,
+                                 D * ((y * lam_g / Bg + x * r_co2 * lam_l) / np.maximum(lam_t, eps))))
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_co2_gas + m_co2_liq, p)).tocsr()
         # Jacobian blocks (full 3x3). The pressure block keeps the upwind flux's
         # p-dependence: A@m_N = div(-k·m_N·∇p) = +L(m_N)·p (L is the *negative*
         # tpfa Laplacian, so A and L carry the same sign), hence ∂(A@m_N)/∂p =
         # +L(m_N) + A@diag(dm_N/dp).
         J_pp = (diags(dN_dp * accum) + A @ diags(dm_N_dp)
-                + _tpfa_matrix_vec(grid, permeability, m_N) + J_Np).tocsr()
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_N, p) + J_Np).tocsr()
         J_pw = diags(dN_dsw * accum) + A @ diags(dm_N_dsw) - diags(dq_N_dsw)
         J_pz = diags(dN_dz * accum) + A @ diags(dm_N_dz) - diags(dq_N_dz)
         J_ww = I + A @ diags(dlw_dsw)
@@ -1269,6 +1272,77 @@ def _implicit_compositional_two_step(
             break  # stalled
     sl, sg, V, x, y, N, C, m_N, m_co2, m_oil, lam_w, lam_l, lam_g, Rs = state(p, sw, z)
     return p, sw, sl, sg, z, converged
+
+
+def _implicit_compositional_two_adaptive(
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64],
+    inv_phiV: NDArray[np.float64],
+    dt: float,
+    sw0: NDArray[np.float64],
+    z0: NDArray[np.float64],
+    p0: NDArray[np.float64],
+    wells: WellMap,
+    well_bhp: NDArray[np.float64],
+    well_params: WellModelParams,
+    params: FluidParams,
+    injects_gas: NDArray[np.bool_],
+    *,
+    well_qg_fixed: NDArray[np.float64] | None = None,
+    max_iter: int = 30,
+    tol: float = 1.0e-3,
+    dt_sub0: float | None = None,
+    dt_min: float | None = None,
+    dt_max: float | None = None,
+    dt_growth: float = 2.0,
+    max_substeps: int = 64,
+) -> tuple[NDArray[np.float64], ...]:
+    """Adaptive-time-step two-component step (Newton with sub-stepping).
+
+    The single-step Newton in :func:`_implicit_compositional_two_step` stalls when
+    one ``dt`` carries the injector across the bubble point (the phase transition is
+    a stiff nonlinearity), so this wrapper sub-steps the target ``dt``: it tries a
+    sub-step, on non-convergence halves ``dt`` and retries from the pre-step state,
+    and after a converged sub-step grows ``dt`` back (capped at ``dt_max``). This is
+    the adaptive sub-stepping CMG/OPM do via ``*DTMAX``/``*DTMIN``.
+
+    ``dt_sub0`` is the first sub-step to try (default: ``dt_max``); a caller looping
+    over report steps can pass the returned ``last_dt`` back as ``dt_sub0`` so the
+    converged step size is remembered across steps instead of re-trying a too-large
+    ``dt`` every time.
+
+    Returns ``(p, sw, sl, sg, z, converged, last_dt)``; ``converged`` is ``True``
+    only when the whole target ``dt`` was covered (the state then sits at ``t0+dt``).
+    """
+    dt_min = (dt / 64.0) if dt_min is None else dt_min
+    dt_max = dt if dt_max is None else dt_max
+    p = np.asarray(p0, dtype=float).copy()
+    sw = np.asarray(sw0, dtype=float).copy()
+    z = np.asarray(z0, dtype=float).copy()
+    # Initial phase split (so sl/sg are valid even if the very first sub-step fails).
+    _, sl, sg, _, _, _, _, _, _ = _split_compositional_two(sw, z, p, params)
+    remaining = float(dt)
+    dt_sub = min(dt_sub0 if dt_sub0 is not None else dt_max, remaining, dt_max)
+    last_dt = dt_sub
+    for _ in range(max_substeps):
+        if remaining <= 1.0e-12:
+            break
+        p_new, sw_new, sl_new, sg_new, z_new, conv = _implicit_compositional_two_step(
+            grid, permeability, inv_phiV, dt_sub, sw, z, p,
+            wells, well_bhp, well_params, params, injects_gas,
+            well_qg_fixed=well_qg_fixed, max_iter=max_iter, tol=tol,
+        )
+        if conv:
+            p, sw, z = p_new, sw_new, z_new
+            sl, sg = sl_new, sg_new
+            remaining -= dt_sub
+            last_dt = dt_sub
+            dt_sub = min(dt_growth * dt_sub, dt_max, remaining)
+        else:
+            dt_sub *= 0.5
+            if dt_sub < dt_min:
+                break  # cannot converge even at the minimum sub-step
+    return p, sw, sl, sg, z, remaining <= 1.0e-12, last_dt
 
 
 def _implicit_compositional_pressure_kinetic_step(
@@ -1772,6 +1846,59 @@ def _tpfa_matrix_vec(grid, permeability, mobility):
     return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
 
 
+def _upwind_tpfa_matrix_vec(grid, permeability, mobility, pressure):
+    """Upwind TPFA Laplacian: ``L @ p == div(-k mobility^up grad p)``.
+
+    The flux-p-derivative of the residual's upwind divergence ``A @ m`` (see
+    :func:`_mobility_divergence_matrix`) is the TPFA Laplacian with the *upwind*
+    face mobility, not the arithmetic-mean face mobility used by
+    :func:`_tpfa_matrix_vec`. The two agree only for a uniform mobility field, so
+    the fully-implicit Jacobian's flux-p block was wrong where the phase mobilities
+    jump (the injector's gas front), which stalled the Newton.
+    """
+    from scipy.sparse import coo_matrix
+
+    n = grid.n_cells
+    k3 = np.asarray(permeability, dtype=float).reshape((grid.nz, grid.ny, grid.nx))
+    lam3 = np.asarray(mobility, dtype=float).reshape((grid.nz, grid.ny, grid.nx))
+    _, up_x, _, up_y, _, up_z = _face_geometry(grid, pressure)
+    dx, dy, dz = grid.dx, grid.dy, grid.dz
+    (c1x, c2x), (c1y, c2y), (c1z, c2z) = _face_cell_pairs(grid.nx, grid.ny, grid.nz)
+    rows: list = []
+    cols: list = []
+    vals: list = []
+
+    def add(c1, c2, t):
+        t = np.asarray(t, dtype=float).ravel()
+        rows.append(c1); cols.append(c1); vals.append(t)
+        rows.append(c2); cols.append(c2); vals.append(t)
+        rows.append(c1); cols.append(c2); vals.append(-t)
+        rows.append(c2); cols.append(c1); vals.append(-t)
+
+    if grid.nx > 1:
+        kh = _harmonic_mean(k3[:, :, :-1], k3[:, :, 1:])
+        lamf = np.where(up_x, lam3[:, :, :-1], lam3[:, :, 1:])
+        area = dy[None, :, None] * dz[:, None, None]
+        dist = 0.5 * (dx[:-1] + dx[1:])
+        add(c1x, c2x, kh * lamf * area / dist[None, None, :])
+    if grid.ny > 1:
+        kh = _harmonic_mean(k3[:, :-1, :], k3[:, 1:, :])
+        lamf = np.where(up_y, lam3[:, :-1, :], lam3[:, 1:, :])
+        area = dz[:, None, None] * dx[None, None, :]
+        dist = 0.5 * (dy[:-1] + dy[1:])
+        add(c1y, c2y, kh * lamf * area / dist[None, :, None])
+    if grid.nz > 1:
+        kh = _harmonic_mean(k3[:-1, :, :], k3[1:, :, :])
+        lamf = np.where(up_z, lam3[:-1, :, :], lam3[1:, :, :])
+        area = dx[None, None, :] * dy[None, :, None]
+        dist = 0.5 * (dz[:-1] + dz[1:])
+        add(c1z, c2z, kh * lamf * area / dist[:, None, None])
+    rows = np.concatenate(rows)
+    cols = np.concatenate(cols)
+    vals = np.concatenate(vals)
+    return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
+
+
 def _eq_solution_gas_ratio(
     pressure: NDArray[np.float64],
     params: FluidParams,
@@ -1977,14 +2104,14 @@ def _split_compositional_two(
     *liquid* (oil + dissolved CO2) saturation, ``C`` the CO2 surface volume and
     ``O`` the oil surface volume.
     """
-    from ..core.pr_eos import flash_interp, _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+    from ..core.pr_eos import flash_direct, _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
 
     sw_p = np.clip(np.asarray(sw, dtype=float), 0.0, 1.0)
     z_p = np.clip(np.asarray(z, dtype=float), 0.0, 1.0)
     p_a = np.asarray(p, dtype=float)
     v_g = float(params.bg) * _V_CO2_STD  # gas molar volume (m3/mol)
     v_l = _MW_OIL / 1000.0 / _RHO_OIL_STD  # liquid molar volume (m3/mol)
-    V, x_co2, y_co2 = flash_interp(p_a, z_p)
+    V, x_co2, y_co2 = flash_direct(p_a, z_p)
     denom = V * v_g + (1.0 - V) * v_l
     N = (1.0 - sw_p) / np.maximum(denom, 1.0e-30)
     sg = V * N * v_g

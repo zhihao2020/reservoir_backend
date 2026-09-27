@@ -105,12 +105,14 @@ def _fugacity(x, aij, b, P, T, phase):
     )
 
 
-def _flash(z, P, T, aij=None, b=None):
+def _flash(z, P, T, aij=None, b=None, tol: float = 1.0e-5):
     """Rachford-Rice two-phase flash; returns (V, x, y).
 
     ``aij``/``b`` (the PR EOS parameters, functions of ``T`` only) are optional:
     pass them in to avoid recomputing them for every pressure point of the
-    solubility table.
+    solubility table. ``tol`` is the K-value convergence tolerance; use a tighter
+    value (e.g. 1e-8) when the flash feeds a finite-difference Jacobian so the
+    derivative noise stays below the perturbation step.
     """
     if aij is None:
         aij, b = _ab(T)
@@ -120,6 +122,8 @@ def _flash(z, P, T, aij=None, b=None):
         V = 0.5
         for _ in range(40):
             f = float(np.sum(z * (K - 1.0) / (1.0 + V * (K - 1.0))))
+            if abs(f) < 1.0e-10:
+                break  # Rachford-Rice converged
             df = float(np.sum(-z * (K - 1.0) ** 2 / (1.0 + V * (K - 1.0)) ** 2))
             if abs(df) > 1.0e-12:
                 V -= f / df
@@ -129,7 +133,7 @@ def _flash(z, P, T, aij=None, b=None):
         x = z / (1.0 + V * (K - 1.0))
         y = K * x
         Knew = np.exp(_fugacity(x, aij, b, P, T, "liq") - _fugacity(y, aij, b, P, T, "vap"))
-        if np.max(np.abs(Knew - K)) < 1.0e-5:
+        if np.max(np.abs(Knew - K)) < tol:
             break
         K = Knew
     return V, x, y
@@ -331,3 +335,172 @@ def flash_interp(pressure: float | np.ndarray, z_co2: float | np.ndarray) -> tup
     x = X[ip, iz] * w00 + X[ip + 1, iz] * w10 + X[ip, iz + 1] * w01 + X[ip + 1, iz + 1] * w11
     y = Y[ip, iz] * w00 + Y[ip + 1, iz] * w10 + Y[ip, iz + 1] * w01 + Y[ip + 1, iz + 1] * w11
     return v, x, y
+
+
+# PR EOS parameters for the direct (iterative) flash at the reservoir temperature.
+# Building ``aij``/``b`` is the expensive part of a flash, and they depend only on
+# ``T``, so cache them here for the per-cell Newton loop in the forward model.
+_AB_DIRECT: tuple[tuple[np.ndarray, np.ndarray], float] | None = None
+
+
+def _cubic_roots_vec(a0, a1, a2):
+    """Vectorized Cardano roots of ``Z³ + a2·Z² + a1·Z + a0 = 0``.
+
+    ``a0``/``a1``/``a2`` are arrays of the same length ``n``; returns an
+    ``(n, 3)`` array of real roots sorted ascending, with ``NaN`` filling the
+    unused slots when a cubic has a single real root (``NaN`` sorts last).
+    """
+    a0 = np.atleast_1d(np.asarray(a0, dtype=float))
+    a1 = np.atleast_1d(np.asarray(a1, dtype=float))
+    a2 = np.atleast_1d(np.asarray(a2, dtype=float))
+    n = a0.size
+    p = a1 - a2 ** 2 / 3.0
+    q = 2.0 * a2 ** 3 / 27.0 - a2 * a1 / 3.0 + a0
+    disc = (q / 2.0) ** 2 + (p / 3.0) ** 3
+    roots = np.full((n, 3), np.nan)
+    one = disc >= 0.0
+    three = disc < 0.0
+    if one.any():
+        s = np.sqrt(np.maximum(disc[one], 0.0))
+        u = np.cbrt(-q[one] / 2.0 + s)
+        v = np.cbrt(-q[one] / 2.0 - s)
+        roots[one, 0] = u + v - a2[one] / 3.0
+    if three.any():
+        r = 2.0 * np.sqrt(-p[three] / 3.0)
+        arg = 3.0 * q[three] / (2.0 * p[three]) * np.sqrt(-3.0 / p[three])
+        arg = np.clip(arg, -1.0, 1.0)
+        theta = np.arccos(arg) / 3.0
+        for k in range(3):
+            roots[three, k] = r * np.cos(theta + 2.0 * np.pi * k / 3.0) - a2[three] / 3.0
+    roots.sort(axis=1)  # ascending, NaN last
+    return roots
+
+
+def _z_factor_vec(x, aij, b, P, T, phase):
+    """Vectorized compressibility factor for ``x`` (n×14); liq = smallest root."""
+    amix = np.einsum("ij,jk,ik->i", x, aij, x)
+    bmix = x @ b
+    A = amix * P / (_R * T) ** 2
+    B = bmix * P / (_R * T)
+    roots = _cubic_roots_vec(-(A * B - B ** 2 - B ** 3), A - 3.0 * B ** 2 - 2.0 * B, -(1.0 - B))
+    Z = np.nanmin(roots, axis=1) if phase == "liq" else np.nanmax(roots, axis=1)
+    return Z, A, B, amix, bmix
+
+
+def _fugacity_vec(x, aij, b, P, T, phase):
+    """Vectorized log-fugacity coefficients ``ln(phi_i)`` for ``x`` (n×14)."""
+    Z, A, B, amix, bmix = _z_factor_vec(x, aij, b, P, T, phase)
+    s = (2.0 * (x @ aij)) / amix[:, None] - b[None, :] / bmix[:, None]
+    Zc = Z[:, None]
+    Bc = B[:, None]
+    Ac = A[:, None]
+    return (b[None, :] / bmix[:, None]) * (Zc - 1.0) - np.log(Zc - Bc) - Ac / (
+        2.0 * np.sqrt(2.0) * Bc
+    ) * s * np.log((Zc + (1.0 + np.sqrt(2.0)) * Bc) / (Zc + (1.0 - np.sqrt(2.0)) * Bc))
+
+
+def _flash_vec(z_cells, P_cells, T, aij, b, tol=1.0e-5):
+    """Vectorized Rachford-Rice flash over cells; returns ``(V, x, y)``.
+
+    ``z_cells`` is an ``(n, 14)`` overall mole-fraction matrix and ``P_cells`` the
+    per-cell pressures; the K-value (Wilson init) / Rachford-Rice / fugacity update
+    loops run once for the whole cell batch, so the per-cell cost drops from the
+    scalar flash's Python-loop overhead to vectorized numpy.
+    """
+    n = P_cells.size
+    K = (_PC[None, :] / P_cells[:, None]) * np.exp(
+        5.373 * (1.0 + _ACENTRIC)[None, :] * (1.0 - _TC[None, :] / T)
+    )
+    for _ in range(60):
+        V = np.full(n, 0.5)
+        for _ in range(40):
+            denom = 1.0 + V[:, None] * (K - 1.0)
+            f = np.sum(z_cells * (K - 1.0) / denom, axis=1)
+            # Converged: |f|≈0 (two-phase root), or V pinned at a boundary with f
+            # pointing outward — single-phase liquid (V=0, f≤0) / vapor (V=1, f≥0)
+            # has no Rachford-Rice root inside (0,1), so it would otherwise spin the
+            # full 40 iterations at the boundary.
+            conv = ((np.abs(f) < 1.0e-10)
+                    | ((V <= 1.0e-12) & (f <= 0.0))
+                    | ((V >= 1.0 - 1.0e-12) & (f >= 0.0)))
+            if conv.all():
+                break
+            df = np.sum(-z_cells * (K - 1.0) ** 2 / denom ** 2, axis=1)
+            step = np.where(np.abs(df) > 1.0e-12, f / np.where(np.abs(df) > 1.0e-12, df, 1.0),
+                            np.where(f > 0.0, 0.01, -0.01))
+            V = np.clip(V - step, 0.0, 1.0)
+        x = z_cells / (1.0 + V[:, None] * (K - 1.0))
+        y = K * x
+        Knew = np.exp(_fugacity_vec(x, aij, b, P_cells, T, "liq")
+                      - _fugacity_vec(y, aij, b, P_cells, T, "vap"))
+        if np.max(np.abs(Knew - K)) < tol:
+            break
+        K = Knew
+    return V, x, y
+
+
+def flash_direct(
+    pressure: float | np.ndarray,
+    z_co2: float | np.ndarray,
+    T: float = 393.0,
+    tol: float = 1.0e-5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Iterative Rachford-Rice flash (no interpolation) → ``(V, x_CO2, y_CO2)``.
+
+    Evaluates the full Peng-Robinson two-phase flash at every requested
+    ``(pressure, z_co2)`` point instead of interpolating the precomputed table, so
+    the phase split has no interpolation kink at the bubble point — the formulation
+    CMG/OPM use. ``pressure`` (Pa) and ``z_co2`` (overall CO2 mole fraction in the
+    hydrocarbon) are broadcast against each other; returns scalars only when both
+    inputs are scalars.
+
+    The K-value tolerance ``tol`` (default 1e-5) is tight enough that the vapor
+    fraction ``V`` is smooth to well below the 1e-6 finite-difference step the
+    forward model uses to build its Jacobian, so the derivatives stay clean without
+    the extra outer iterations a 1e-8 tolerance would cost.
+    """
+    global _AB_DIRECT
+    if _AB_DIRECT is None or _AB_DIRECT[1] != T:
+        _AB_DIRECT = (_ab(T), T)
+    aij, b = _AB_DIRECT[0]
+    scalar = np.ndim(pressure) == 0 and np.ndim(z_co2) == 0
+    p_arr = np.atleast_1d(np.asarray(pressure, dtype=float))
+    z_arr = np.atleast_1d(np.asarray(z_co2, dtype=float))
+    n = max(p_arr.size, z_arr.size)
+    pp = np.broadcast_to(p_arr if p_arr.size == n else p_arr[0], (n,)).astype(float)
+    zz = np.broadcast_to(z_arr if z_arr.size == n else z_arr[0], (n,)).astype(float)
+    z_cells = np.outer(1.0 - zz, _Z_OIL)
+    z_cells[:, _CO2_IDX] += zz
+    # Phase classification from the cached table (bilinear V is good enough to say
+    # *whether* a phase exists), then run the exact iterative flash only on the
+    # two-phase cells. This keeps the full-grid cost near the table look-up while
+    # the two-phase cells (the only ones with a nontrivial V/x/y) get the exact
+    # smooth flash — no interpolation kink where it matters.
+    P, Z, Vtab, _, _ = _load_flash_table()
+    ip = np.clip(np.searchsorted(P, pp, side="right") - 1, 0, len(P) - 2)
+    iz = np.clip(np.searchsorted(Z, zz, side="right") - 1, 0, len(Z) - 2)
+    tp = (pp - P[ip]) / (P[ip + 1] - P[ip])
+    tz = (zz - Z[iz]) / (Z[iz + 1] - Z[iz])
+    w00 = (1.0 - tp) * (1.0 - tz)
+    w10 = tp * (1.0 - tz)
+    w01 = (1.0 - tp) * tz
+    w11 = tp * tz
+    Vclass = (Vtab[ip, iz] * w00 + Vtab[ip + 1, iz] * w10
+              + Vtab[ip, iz + 1] * w01 + Vtab[ip + 1, iz + 1] * w11)
+    liquid = Vclass <= 1.0e-8
+    vapor = Vclass >= 1.0 - 1.0e-8
+    two_phase = ~(liquid | vapor)
+    V = np.zeros(n)
+    x = np.zeros((n, _Z_OIL.size))
+    y = np.zeros((n, _Z_OIL.size))
+    V[vapor] = 1.0
+    x[liquid] = z_cells[liquid]
+    y[vapor] = z_cells[vapor]
+    if two_phase.any():
+        V[two_phase], x[two_phase], y[two_phase] = _flash_vec(
+            z_cells[two_phase], pp[two_phase], T, aij, b, tol=tol)
+    x_co2 = np.where(V > 1.0e-6, x[:, _CO2_IDX], zz)
+    y_co2 = np.where(V < 1.0 - 1.0e-6, y[:, _CO2_IDX], zz)
+    if scalar:
+        return float(V[0]), float(x_co2[0]), float(y_co2[0])
+    return V, x_co2, y_co2
