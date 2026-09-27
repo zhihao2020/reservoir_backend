@@ -1227,24 +1227,25 @@ def _implicit_compositional_two_step(
         J_cw = diags(dC_dsw * accum) + A_g @ diags(dm_cg_dsw) + A @ diags(dm_cl_dsw) - diags(dq_c_dsw)
         J_cc = diags(dC_dz * accum) + A_g @ diags(dm_cg_dz) + A @ diags(dm_cl_dz) - diags(dq_c_dz)
         r = -r
-        # Block forward substitution (p, bhp_inj) -> sw -> z, same as the black-oil
-        # step. The pressure block J_pp = L(m_N) + J_Np is a well-posed Laplacian;
-        # the injector BHP is Schur-eliminated as a rank-1 update.
-        u = _solve_linear(J_pp, r[:n])
+        # Fully-coupled solve: assemble the complete 3x3 block Jacobian and solve
+        # it with the direct sparse LU (the block forward substitution drops J_pw/J_pz
+        # and converges only linearly, which is what stalls the Newton).
+        from scipy.sparse import bmat as _bmat
+        from scipy.sparse.linalg import spsolve as _spsolve
+        J_blk = _bmat([[J_pp, J_pw, J_pz],
+                       [J_wp, J_ww, J_wz],
+                       [J_cp, J_cw, J_cc]], format="csr")
+        rhs = r[:3 * n].copy()
         delta_bhp = 0.0
         if rate_controlled:
-            w = _solve_linear(J_pp, D_inj)
-            denom = float(D_inj.sum()) - float(D_inj @ w)
-            delta_bhp = (r[3 * n] + float(D_inj @ u)) / denom if abs(denom) > 1.0e-30 else 0.0
-            delta_p = u + delta_bhp * w
-        else:
-            delta_p = u
-        rhs_w = r[n:2 * n] - J_wp @ delta_p
-        delta_sw = _solve_linear(J_ww, rhs_w)
-        rhs_c = r[2 * n:3 * n] - J_cw @ delta_sw - J_cp @ delta_p
-        if rate_controlled:
-            rhs_c = rhs_c + (D_inj / Bg) * delta_bhp
-        delta_z = _solve_linear(J_cc, rhs_c)
+            bhp_col = np.concatenate([-D_inj, np.zeros(n), -D_inj / Bg])
+            u = _solve_linear(J_blk, bhp_col)
+            denom = float(D_inj.sum()) + float(np.concatenate([D_inj, np.zeros(n), D_inj / Bg]) @ u)
+            delta_bhp = (r[3 * n] - float(np.concatenate([D_inj, np.zeros(n), D_inj / Bg]) @ u)
+                         ) / denom if abs(denom) > 1.0e-30 else 0.0
+            rhs = rhs + delta_bhp * bhp_col
+        delta = _spsolve(J_blk.tocsc(), rhs)
+        delta_p = delta[:n]; delta_sw = delta[n:2 * n]; delta_z = delta[2 * n:3 * n]
         alpha = 1.0
         r_norm = float(np.linalg.norm(r))
         p_new = p.copy(); sw_new = sw.copy(); z_new = z.copy(); bhp_new = bhp_inj
