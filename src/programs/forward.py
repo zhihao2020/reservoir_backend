@@ -1189,6 +1189,21 @@ def _implicit_compositional_two_step(
         dm_cg_dz = (m_cg_z - m_co2_gas) / h
         dm_cl_dz = (m_cl_z - m_co2_liq) / h
         dlw_dz = (lw_z - lam_w) / h
+        # well source's sw/z derivatives (the injector rate qg=WI·λt·(bhp-p)/Bg
+        # depends on sw/z through λt; these are diagonal and were missing).
+        def _q_srcs(sw_, z_):
+            sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_cg_, m_cl_, lw_, ll_, lg_, Rs_ = state(p, sw_, z_)
+            D_, qw_, qo_, qg_ = well_diag_rates(p, lw_, ll_, lg_, bhp_inj)
+            q_c_ = np.where(inj_cell, qg_, y_ * qg_ + x_ * r_co2 * qo_)
+            q_N_ = qg_ * inv_v_co2 + qo_ * inv_v_oil
+            return q_c_, q_N_
+        q_c0, q_N0 = _q_srcs(sw, z)
+        q_cs, q_Ns = _q_srcs(sw + h, z)
+        q_cz, q_Nz = _q_srcs(sw, z + h)
+        dq_c_dsw = (q_cs - q_c0) / h
+        dq_c_dz = (q_cz - q_c0) / h
+        dq_N_dsw = (q_Ns - q_N0) / h
+        dq_N_dz = (q_Nz - q_N0) / h
         # well p-derivatives (diagonal): injector is pure-CO2 gas, producers split.
         eps = 1.0e-12
         J_Np = diags(np.where(inj_cell, D / (Bg * _V_CO2_STD),
@@ -1204,13 +1219,13 @@ def _implicit_compositional_two_step(
         # +L(m_N) + A@diag(dm_N/dp).
         J_pp = (diags(dN_dp * accum) + A @ diags(dm_N_dp)
                 + _tpfa_matrix_vec(grid, permeability, m_N) + J_Np).tocsr()
-        J_pw = diags(dN_dsw * accum) + A @ diags(dm_N_dsw)
-        J_pz = diags(dN_dz * accum) + A @ diags(dm_N_dz)
+        J_pw = diags(dN_dsw * accum) + A @ diags(dm_N_dsw) - diags(dq_N_dsw)
+        J_pz = diags(dN_dz * accum) + A @ diags(dm_N_dz) - diags(dq_N_dz)
         J_ww = I + A @ diags(dlw_dsw)
         J_wz = A @ diags(dlw_dz)
         # CO2 flux splits gas (gravity) / liquid (no gravity), so the Jacobian does too.
-        J_cw = diags(dC_dsw * accum) + A_g @ diags(dm_cg_dsw) + A @ diags(dm_cl_dsw)
-        J_cc = diags(dC_dz * accum) + A_g @ diags(dm_cg_dz) + A @ diags(dm_cl_dz)
+        J_cw = diags(dC_dsw * accum) + A_g @ diags(dm_cg_dsw) + A @ diags(dm_cl_dsw) - diags(dq_c_dsw)
+        J_cc = diags(dC_dz * accum) + A_g @ diags(dm_cg_dz) + A @ diags(dm_cl_dz) - diags(dq_c_dz)
         r = -r
         # Block forward substitution (p, bhp_inj) -> sw -> z, same as the black-oil
         # step. The pressure block J_pp = L(m_N) + J_Np is a well-posed Laplacian;
