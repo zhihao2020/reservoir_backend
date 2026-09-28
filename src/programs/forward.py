@@ -1898,6 +1898,249 @@ def _implicit_compositional_three_step(
     return p, sw, sl, sg, zc, zl, converged
 
 
+def _implicit_compositional_full_step(
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64],
+    inv_phiV: NDArray[np.float64],
+    dt: float,
+    sw0: NDArray[np.float64],
+    z0: NDArray[np.float64],
+    p0: NDArray[np.float64],
+    wells: WellMap,
+    well_bhp: NDArray[np.float64],
+    well_params: WellModelParams,
+    params: FluidParams,
+    injects_gas: NDArray[np.bool_],
+    *,
+    well_qg_fixed: NDArray[np.float64] | None = None,
+    max_iter: int = 30,
+    tol: float = 1.0e-3,
+) -> tuple[NDArray[np.float64], ...]:
+    """One fully-implicit full-compositional (14-component) step (Newton).
+
+    Primary variables ``(p, sw, z_1..z_13)`` (``z`` is the 14-component overall
+    mole fraction, the last component implied). Each component is conserved as
+    *moles* (``z_c·N``) with the molar flux ``y_c·λg/v_g + x_c·λl/v_l``; the
+    pressure is the volume balance and the gas/liquid split is the full PR flash.
+    Returns ``(p, sw, sl, sg, z, converged)``.
+    """
+    from scipy.sparse import bmat as _bmat
+    from scipy.sparse import diags
+    from scipy.sparse.linalg import spsolve as _spsolve
+
+    from ..core.pr_eos import (_Z_OIL, _CO2_IDX, _MW, _MW_OIL, _V_CO2_STD, _RHO_OIL_STD,
+                               flash_direct_full)
+
+    ncomp = _Z_OIL.size  # 14
+    Bg = float(params.bg)
+    v_g = Bg * _V_CO2_STD
+    v_l = _MW_OIL / 1000.0 / _RHO_OIL_STD  # liquid molar volume (m3/mol)
+    n = grid.n_cells
+    sw = np.asarray(sw0, dtype=float).copy()
+    z = np.asarray(z0, dtype=float).copy()  # (n, 14)
+    p = np.asarray(p0, dtype=float).copy()
+    h = 1.0e-6
+    accum = 1.0 / (dt * inv_phiV)
+    I = diags(accum)
+    A_grav = _gravity_divergence_matrix(grid, permeability)
+    cells, wi, bhp_w, is_inj = _peaceman_well_data(
+        grid, permeability, wells, well_bhp, well_params, injects_gas,
+    )
+    rate_controlled = well_qg_fixed is not None
+    qg_fixed = np.zeros(n, dtype=float)
+    if rate_controlled:
+        qg_fixed = np.asarray(well_qg_fixed, dtype=float).ravel()
+    qg_target = float(qg_fixed.sum())
+    bhp_full = np.zeros(n)
+    for idx in range(cells.size):
+        bhp_full[cells[idx]] = bhp_w[idx]
+    inj_cell = np.zeros(n, dtype=bool)
+    for idx in range(cells.size):
+        inj_cell[cells[idx]] = is_inj[idx]
+    bhp_inj = float(np.mean(bhp_w[is_inj])) if is_inj.any() else 0.0
+
+    def state(p_, sw_, z_):
+        V_, x_, y_ = flash_direct_full(z_, p_)
+        denom = V_ * v_g + (1.0 - V_) * v_l
+        N_ = (1.0 - sw_) / np.maximum(denom, 1.0e-30)
+        sg_ = V_ * N_ * v_g
+        sl_ = (1.0 - V_) * N_ * v_l
+        lam_w_, lam_l_, lam_g_ = phase_mobilities(sw_, sl_, sg_, params)
+        return sl_, sg_, V_, x_, y_, N_, lam_w_, lam_l_, lam_g_
+
+    def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_):
+        D_ = np.zeros(n)
+        qw_ = np.zeros(n); qo_ = np.zeros(n); qg_ = np.zeros(n)
+        lam_t_ = lam_w_ + lam_l_ + lam_g_
+        for idx in range(cells.size):
+            c = cells[idx]
+            w = wi[idx]
+            bhp_eff = bhp_inj_ if (is_inj[idx] and rate_controlled) else bhp_w[idx]
+            dp = bhp_eff - p_[c]
+            D_[c] += w * lam_t_[c]
+            if is_inj[idx]:
+                qg_[c] += w * lam_t_[c] * dp / Bg
+            else:
+                qw_[c] += w * lam_w_[c] * dp
+                qo_[c] += w * lam_l_[c] * dp
+                qg_[c] += w * lam_g_[c] * dp / Bg
+        return D_, qw_, qo_, qg_
+
+    def inj_diag(lam_t_):
+        D_inj_ = np.zeros(n)
+        for idx in range(cells.size):
+            if is_inj[idx]:
+                D_inj_[cells[idx]] += wi[idx] * lam_t_[cells[idx]]
+        return D_inj_
+
+    def residual(p_, sw_, z_, bhp_inj_):
+        sl_, sg_, V_, x_, y_, N_, lam_w_, lam_l_, lam_g_ = state(p_, sw_, z_)
+        lam_t_ = lam_w_ + lam_l_ + lam_g_
+        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
+        A_ = _mobility_divergence_matrix(grid, permeability, p_)
+        A_g_ = A_ - params.rho_g * A_grav
+        q_vol_ = qw_ + qo_ + qg_ * Bg
+        r_p_ = A_ @ lam_t_ - q_vol_
+        r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
+        # molar component sources (injector pure CO2; producer gas+liquid split)
+        qg_mol_ = qg_ / _V_CO2_STD   # gas moles (surface ideal-gas molar volume)
+        qo_mol_ = qo_ / v_l          # liquid moles
+        # component residuals (moles)
+        rc = []
+        for c in range(ncomp):
+            q_c_ = np.where(inj_cell, (qg_mol_ if c == _CO2_IDX else 0.0),
+                            y_[:, c] * qg_mol_ + x_[:, c] * qo_mol_)
+            r_c_ = (accum * (z_[:, c] * N_ - z0[:, c] * N0)
+                    - q_c_ + A_g_ @ (y_[:, c] * lam_g_ / v_g) + A_ @ (x_[:, c] * lam_l_ / v_l))
+            rc.append(r_c_)
+        D_inj_ = inj_diag(lam_t_)
+        r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
+        return np.concatenate([r_p_, r_sw_] + rc + [np.array([r_rate_])])
+
+    N0 = _split_full_N(sw0, z0, p0, params)
+    r0_norm = float(np.linalg.norm(residual(p, sw, z, bhp_inj)))
+    converged = False
+    for _ in range(max_iter):
+        sl, sg, V, x, y, N, lam_w, lam_l, lam_g = state(p, sw, z)
+        lam_t = lam_w + lam_l + lam_g
+        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
+        D_inj = inj_diag(lam_t)
+        A = _mobility_divergence_matrix(grid, permeability, p)
+        A_g = A - params.rho_g * A_grav
+        r = residual(p, sw, z, bhp_inj)
+        # numerical derivatives of the split (N, x, y, λ) wrt p/sw/z (per component)
+        _, _, _, _, _, N_p, lw_p, ll_p, lg_p = state(p + h, sw, z)
+        dN_dp = (N_p - N) / h
+        _, _, _, _, _, N_s, lw_s, ll_s, lg_s = state(p, sw + h, z)
+        dN_dsw = (N_s - N) / h
+        dlw_dsw = (lw_s - lam_w) / h
+        # z-derivatives: perturb each of the first ncomp-1 mole fractions
+        dz = {}
+        for c in range(ncomp - 1):
+            zc = z.copy(); zc[:, c] += h; zc[:, -1] -= h
+            zc = zc / zc.sum(axis=1, keepdims=True)
+            _, _, _, x_c, y_c, N_c, lw_c, ll_c, lg_c = state(p, sw, zc)
+            dz[c] = (x_c, y_c, N_c, lw_c, ll_c, lg_c)
+        # pressure / water blocks
+        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h
+        J_pp = (A @ diags(dlam_t_dp) + _upwind_tpfa_matrix_vec(grid, permeability, lam_t, p)
+                + diags(D)).tocsr()
+        J_pw = A @ diags((lw_s + ll_s + lg_s - lam_t) / h)
+        J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, 1.0e-12))))
+                + _upwind_tpfa_matrix_vec(grid, permeability, lam_w, p)).tocsr()
+        J_ww = I + A @ diags(dlw_dsw)
+        # component blocks (molar formulation)
+        qg_mol = qg / _V_CO2_STD
+        qo_mol = qo / v_l
+        row_blocks = []
+        for c in range(ncomp - 1):
+            # ∂r_c/∂p (well p-derivative + flux ∇p-derivative)
+            J_cp = (diags(np.where(inj_cell, (D / Bg / _V_CO2_STD if c == _CO2_IDX else 0.0),
+                            D * ((y[:, c] * lam_g / v_g + x[:, c] * lam_l / v_l) / np.maximum(lam_t, 1.0e-12))))
+                    + _upwind_tpfa_matrix_vec(grid, permeability, y[:, c] * lam_g / v_g + x[:, c] * lam_l / v_l, p)).tocsr()
+            # ∂r_c/∂sw
+            dF_dsw = (y[:, c] * (lg_s - lam_g) / h / v_g + x[:, c] * (ll_s - lam_l) / h / v_l)
+            dq_c_dsw = np.where(inj_cell, 0.0,
+                                y[:, c] * (qg * 0.0) + x[:, c] * 0.0)  # lag well sw-deriv
+            J_cw = diags((dN_dsw * z[:, c]) * accum) + A_g @ diags(dF_dsw) - diags(dq_c_dsw)
+            # ∂r_c/∂z_j
+            col_blocks = []
+            for j in range(ncomp - 1):
+                x_j, y_j, N_j, lw_j, ll_j, lg_j = dz[j]
+                dN_dzj = (N_j - N) / h
+                dy_dzj = (y_j[:, c] - y[:, c]) / h
+                dx_dzj = (x_j[:, c] - x[:, c]) / h
+                dlamg_dzj = (lg_j - lam_g) / h
+                dlaml_dzj = (ll_j - lam_l) / h
+                J_cc = (diags((dN_dzj * z[:, c] + (1.0 if j == c else 0.0) * N) * accum)
+                        + A_g @ diags(dy_dzj * lam_g / v_g + y[:, c] * dlamg_dzj / v_g)
+                        + A @ diags(dx_dzj * lam_l / v_l + x[:, c] * dlaml_dzj / v_l))
+                col_blocks.append(J_cc)
+            row_blocks.append([J_cp, J_cw] + col_blocks)
+        r = -r
+        # assemble the (ncomp+1)×(ncomp+1) block Jacobian
+        top = [[J_pp, J_pw] + [None] * (ncomp - 1)]
+        wrow = [[J_wp, J_ww] + [None] * (ncomp - 1)]
+        blocks = top + wrow + [[b if b is not None else None for b in row] for row in row_blocks]
+        J_blk = _bmat(blocks, format="csr")
+        rhs = r[: (ncomp + 1) * n].copy()
+        delta_bhp = 0.0
+        if rate_controlled:
+            B_c = np.concatenate([-D_inj, np.zeros(n), -D_inj / Bg / _V_CO2_STD]
+                                 + [np.zeros(n)] * (ncomp - 2))
+            C_b = np.concatenate([-D_inj, np.zeros(n), np.zeros(n)] + [np.zeros(n)] * (ncomp - 2))
+            d_rr = float(D_inj.sum())
+            u = _spsolve(J_blk.tocsc(), B_c)
+            delta_x0 = _spsolve(J_blk.tocsc(), rhs)
+            denom = d_rr - float(C_b @ u)
+            delta_bhp = ((r[(ncomp + 1) * n] - float(C_b @ delta_x0)) / denom
+                         if abs(denom) > 1.0e-30 else 0.0)
+            delta = delta_x0 - delta_bhp * u
+        else:
+            delta = _spsolve(J_blk.tocsc(), rhs)
+        delta_p = delta[:n]
+        delta_sw = delta[n:2 * n]
+        delta_z = delta[2 * n: (ncomp + 1) * n].reshape(ncomp - 1, n).T
+        alpha = 1.0
+        r_norm = float(np.linalg.norm(r))
+        p_new = p.copy(); sw_new = sw.copy(); z_new = z.copy(); bhp_new = bhp_inj
+        r_new = r
+        for _ in range(12):
+            p_new = p + alpha * delta_p
+            sw_new = np.clip(sw + alpha * delta_sw, 0.0, 1.0)
+            z_new = z.copy()
+            for c in range(ncomp - 1):
+                z_new[:, c] += alpha * delta_z[:, c]
+            z_new = np.clip(z_new, 0.0, 1.0)
+            z_new = z_new / z_new.sum(axis=1, keepdims=True)
+            bhp_new = bhp_inj + alpha * delta_bhp
+            r_new = residual(p_new, sw_new, z_new, bhp_new)
+            if np.isfinite(r_new).all() and float(np.linalg.norm(r_new)) < (1.0 - 1.0e-4 * alpha) * r_norm:
+                break
+            alpha *= 0.5
+        norm_d = float(np.linalg.norm(np.concatenate(
+            [p_new - p, sw_new - sw, (z_new - z).ravel()])))
+        p, sw, z, bhp_inj = p_new, sw_new, z_new, bhp_new
+        norm_x = float(np.linalg.norm(np.concatenate([p, sw, z.ravel()])))
+        if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
+            converged = True
+            break
+        if norm_d < 1.0e-12 * max(1.0, norm_x):
+            break  # stalled
+    sl, sg, V, x, y, N, lam_w, lam_l, lam_g = state(p, sw, z)
+    return p, sw, sl, sg, z, converged
+
+
+def _split_full_N(sw, z, p, params):
+    """Total hydrocarbon moles N for the full-compositional model."""
+    from ..core.pr_eos import flash_direct_full, _V_CO2_STD, _MW, _MW_OIL, _RHO_OIL_STD
+    v_g = float(params.bg) * _V_CO2_STD
+    v_l = _MW_OIL / 1000.0 / _RHO_OIL_STD
+    V, _, _ = flash_direct_full(z, p)
+    denom = V * v_g + (1.0 - V) * v_l
+    return (1.0 - sw) / np.maximum(denom, 1.0e-30)
+
+
 def _implicit_compositional_pressure_kinetic_step(
     grid: CartesianGrid,
     permeability: NDArray[np.float64],

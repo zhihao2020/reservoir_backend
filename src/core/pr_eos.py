@@ -558,3 +558,25 @@ def flash_direct_3comp(
         return (float(V[0]), float(x_co2[0]), float(x_light[0]),
                 float(y_co2[0]), float(y_light[0]))
     return V, x_co2, x_light, y_co2, y_light
+
+
+def flash_direct_full(
+    z_full: np.ndarray,
+    pressure: float | np.ndarray,
+    T: float = 393.0,
+    tol: float = 1.0e-5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Full 14-component flash → ``(V, x, y)``.
+
+    ``z_full`` is an ``(n, 14)`` overall mole-fraction matrix; returns the vapor
+    mole fraction ``V`` (n,) and the liquid/gas compositions ``x``/``y`` (n, 14).
+    """
+    global _AB_DIRECT
+    if _AB_DIRECT is None or _AB_DIRECT[1] != T:
+        _AB_DIRECT = (_ab(T), T)
+    aij, b = _AB_DIRECT[0]
+    z = np.atleast_2d(np.asarray(z_full, dtype=float))
+    pp = np.atleast_1d(np.asarray(pressure, dtype=float)).astype(float)
+    if pp.size == 1:
+        pp = np.full(z.shape[0], float(pp[0]))
+    return _flash_vec(z, pp, T, aij, b, tol=tol)
