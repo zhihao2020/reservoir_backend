@@ -170,14 +170,16 @@ class WellModelParams:
     """Well completion model parameters.
 
     ``rw`` wellbore radius (m), ``skin`` dimensionless skin/damage factor,
-    ``kv_kh`` vertical-to-horizontal permeability ratio, ``rho_g`` the fluid
-    density times gravity (Pa/m) for the along-wellbore hydrostatic head (0 =
-    no head).
+    ``kv_kh`` vertical-to-horizontal permeability ratio, ``geofac`` the GEM
+    ``GEOMETRY`` geometric factor (a multiplier on the Peaceman well index, e.g.
+    0.34 for the shailoil injector), ``rho_g`` the fluid density times gravity
+    (Pa/m) for the along-wellbore hydrostatic head (0 = no head).
     """
 
     rw: float = 0.005
     skin: float = 0.0
     kv_kh: float = 1.0
+    geofac: float = 1.0
     rho_g: float = 0.0
 
 
@@ -365,13 +367,16 @@ def peaceman_wi(
     rw: float = 0.005,
     skin: float = 0.0,
     kv_kh: float = 1.0,
+    geofac: float = 1.0,
 ) -> NDArray[np.float64]:
     """Anisotropic Peaceman well index per completion cell.
 
     Permeabilities are ``kx = ky = k_field`` and ``kz = kv_kh * k_field``; the
     well ``direction`` (unit heel->toe) selects the axis the well runs along and
     hence the perpendicular effective permeability and equivalent radius. A point
-    well (direction ~ 0) uses an isotropic geometric-mean form.
+    well (direction ~ 0) uses an isotropic geometric-mean form. ``geofac`` is the
+    GEM ``GEOMETRY`` geometric factor (a multiplier on the well index, e.g. 0.34
+    for the shailoil injector).
     """
     k = np.asarray(k_field, dtype=float).ravel()
     kz = max(float(kv_kh), 0.0) * k
@@ -400,7 +405,7 @@ def peaceman_wi(
         h = (dx_c * dy_c * dz_c) ** (1.0 / 3.0)
         re = 0.2 * h
     denom = np.log(np.maximum(re, 1.0e-12) / max(float(rw), 1.0e-12)) + float(skin)
-    return 2.0 * np.pi * kh * h / np.maximum(denom, 1.0e-12)
+    return float(geofac) * 2.0 * np.pi * kh * h / np.maximum(denom, 1.0e-12)
 
 
 def well_cell_rates_weighted(
@@ -416,6 +421,7 @@ def well_cell_rates_weighted(
     skin: float = 0.0,
     kv_kh: float = 1.0,
     rho_g: float = 0.0,
+    geofac: float = 1.0,
 ) -> NDArray[np.float64]:
     """Allocate well rates across completions by ``Peaceman WI * mobility * |drawdown|``.
 
@@ -436,7 +442,7 @@ def well_cell_rates_weighted(
         if i >= rates.size or not np.isfinite(rates[i]) or cells.size == 0:
             continue
         direction = directions[i] if i < len(directions) else np.zeros(3)
-        wi = peaceman_wi(grid, k, cells, direction, rw=rw, skin=skin, kv_kh=kv_kh)
+        wi = peaceman_wi(grid, k, cells, direction, rw=rw, skin=skin, kv_kh=kv_kh, geofac=geofac)
         # wellbore head: BHP_ref + rho_g * (z_ref - z_cell)
         z_ref = float(wells.xyz[i, 2])
         bhp_eff = float(bhp[i]) + float(rho_g) * (z_ref - centers[cells, 2])

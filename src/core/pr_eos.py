@@ -36,6 +36,14 @@ _Z_OIL = np.array([0.35, 0.01, 0.08, 0.06, 0.03, 0.02, 0.04, 0.02, 0.02, 0.04,
                    0.12, 0.10, 0.07, 0.04])
 _CO2_IDX = 4
 
+# CO2-free (dead-oil) base composition: the reservoir oil before any injected CO2
+# dissolves. The native _Z_OIL carries 0.03 CO2, so a two-component flash built on
+# _Z_OIL would flash a 0.03-CO2 mixture even at z=0. The dead-oil base makes the
+# injected-CO2 mole fraction zz the true total CO2 fraction of the flashed mixture.
+_Z_OIL_DEAD = _Z_OIL.copy()
+_Z_OIL_DEAD[_CO2_IDX] = 0.0
+_Z_OIL_DEAD = _Z_OIL_DEAD / _Z_OIL_DEAD.sum()
+
 # 3-component lumping: CO2 (idx 4) / light C1-NC6 (volatile, goes to the gas) /
 # heavy C7+ (the oil). The light components are the ones that co-evaporate into
 # the CO2-rich gas phase, which is exactly what the 2-component model (pure-CO2
@@ -58,6 +66,15 @@ for _i in range(14):
 _V_CO2_STD = 0.0237
 _RHO_OIL_STD = 800.0  # kg/m3
 _MW_OIL = float(np.sum(_Z_OIL * _MW))  # ~85 g/mol
+
+# Peneloux volume-shift parameters (m3/mol). The PR EOS without a volume
+# translation over-predicts the supercritical CO2 molar volume: pure CO2 at
+# 20 MPa / 120 C gives Z=0.69 -> 390 kg/m3, while NIST gives ~590 kg/m3 (Z~0.45).
+# The shift corrects v = Z*R*T/p - sum(x_i s_i); s_CO2 is set so the CO2-rich gas
+# density hits NIST (~590 kg/m3), which the raw PR Z gets backwards (390 < oil
+# 535 kg/m3, i.e. the raw EOS says CO2 floats when it actually sinks).
+_VOL_SHIFT = np.zeros(14)
+_VOL_SHIFT[_CO2_IDX] = 3.818e-5  # m3/mol, calibrated to NIST rho_CO2=590 @ 20MPa/120C
 
 
 def _ab(T: float):
@@ -408,6 +425,26 @@ def _fugacity_vec(x, aij, b, P, T, phase):
     ) * s * np.log((Zc + (1.0 + np.sqrt(2.0)) * Bc) / (Zc + (1.0 - np.sqrt(2.0)) * Bc))
 
 
+def phase_molar_volumes(x, y, P, T=393.0):
+    """EOS phase molar volumes ``(v_l, v_g)`` (m3/mol) with the Peneloux shift.
+
+    ``x``/``y`` are the (n,14) liquid/vapor mole-fraction matrices returned by the
+    flash; ``P`` the per-cell pressure (Pa). Each phase molar volume is
+    ``v = Z(P,T,comp)*R*T/P - sum(x_i s_i)``, so the gas/liquid densities follow the
+    EOS compressibility (with the volume shift fixing the supercritical-CO2 density).
+    """
+    global _AB_DIRECT
+    if _AB_DIRECT is None or _AB_DIRECT[1] != T:
+        _AB_DIRECT = (_ab(T), T)
+    aij, b = _AB_DIRECT[0]
+    P_arr = np.atleast_1d(np.asarray(P, dtype=float))
+    Z_l = _z_factor_vec(x, aij, b, P_arr, T, "liq")[0]
+    Z_g = _z_factor_vec(y, aij, b, P_arr, T, "vap")[0]
+    v_l = Z_l * _R * T / P_arr - x @ _VOL_SHIFT
+    v_g = Z_g * _R * T / P_arr - y @ _VOL_SHIFT
+    return v_l, v_g
+
+
 def _flash_vec(z_cells, P_cells, T, aij, b, tol=1.0e-5):
     """Vectorized Rachford-Rice flash over cells; returns ``(V, x, y)``.
 
@@ -515,6 +552,66 @@ def flash_direct(
     return V, x_co2, y_co2
 
 
+def flash_direct_volumes(
+    pressure: float | np.ndarray,
+    z_co2: float | np.ndarray,
+    T: float = 393.0,
+    tol: float = 1.0e-5,
+) -> tuple[np.ndarray, ...]:
+    """Dead-oil two-component flash + EOS phase molar volumes.
+
+    Returns ``(V, x_co2, y_co2, v_l, v_g)``. Unlike :func:`flash_direct` (which
+    flashes on the native 0.03-CO2 ``_Z_OIL``), this flashes on the CO2-free
+    ``_Z_OIL_DEAD`` base so ``z_co2`` is the true total CO2 mole fraction, and it
+    also returns the EOS (Peneloux-shifted) phase molar volumes ``v_l``/``v_g`` for
+    the reservoir volume balance and buoyancy (see :func:`phase_molar_volumes`).
+    """
+    global _AB_DIRECT
+    if _AB_DIRECT is None or _AB_DIRECT[1] != T:
+        _AB_DIRECT = (_ab(T), T)
+    aij, b = _AB_DIRECT[0]
+    scalar = np.ndim(pressure) == 0 and np.ndim(z_co2) == 0
+    p_arr = np.atleast_1d(np.asarray(pressure, dtype=float))
+    z_arr = np.atleast_1d(np.asarray(z_co2, dtype=float))
+    n = max(p_arr.size, z_arr.size)
+    pp = np.broadcast_to(p_arr if p_arr.size == n else p_arr[0], (n,)).astype(float)
+    zz = np.broadcast_to(z_arr if z_arr.size == n else z_arr[0], (n,)).astype(float)
+    z_cells = np.outer(1.0 - zz, _Z_OIL_DEAD)
+    z_cells[:, _CO2_IDX] += zz
+    # Phase classification from the cached table (same scheme as flash_direct), then
+    # the exact iterative flash only on the two-phase cells.
+    P, Z, Vtab, _, _ = _load_flash_table()
+    ip = np.clip(np.searchsorted(P, pp, side="right") - 1, 0, len(P) - 2)
+    iz = np.clip(np.searchsorted(Z, zz, side="right") - 1, 0, len(Z) - 2)
+    tp = (pp - P[ip]) / (P[ip + 1] - P[ip])
+    tz = (zz - Z[iz]) / (Z[iz + 1] - Z[iz])
+    w00 = (1.0 - tp) * (1.0 - tz)
+    w10 = tp * (1.0 - tz)
+    w01 = (1.0 - tp) * tz
+    w11 = tp * tz
+    Vclass = (Vtab[ip, iz] * w00 + Vtab[ip + 1, iz] * w10
+              + Vtab[ip, iz + 1] * w01 + Vtab[ip + 1, iz + 1] * w11)
+    liquid = Vclass <= 1.0e-8
+    vapor = Vclass >= 1.0 - 1.0e-8
+    two_phase = ~(liquid | vapor)
+    V = np.zeros(n)
+    x = np.zeros((n, _Z_OIL.size))
+    y = np.zeros((n, _Z_OIL.size))
+    V[vapor] = 1.0
+    x[liquid] = z_cells[liquid]
+    y[vapor] = z_cells[vapor]
+    if two_phase.any():
+        V[two_phase], x[two_phase], y[two_phase] = _flash_vec(
+            z_cells[two_phase], pp[two_phase], T, aij, b, tol=tol)
+    x_co2 = np.where(V > 1.0e-6, x[:, _CO2_IDX], zz)
+    y_co2 = np.where(V < 1.0 - 1.0e-6, y[:, _CO2_IDX], zz)
+    v_l, v_g = phase_molar_volumes(x, y, pp, T)
+    if scalar:
+        return (float(V[0]), float(x_co2[0]), float(y_co2[0]),
+                float(v_l[0]), float(v_g[0]))
+    return V, x_co2, y_co2, v_l, v_g
+
+
 def flash_direct_3comp(
     pressure: float | np.ndarray,
     z_co2: float | np.ndarray,
@@ -558,6 +655,49 @@ def flash_direct_3comp(
         return (float(V[0]), float(x_co2[0]), float(x_light[0]),
                 float(y_co2[0]), float(y_light[0]))
     return V, x_co2, x_light, y_co2, y_light
+
+
+def flash_direct_3comp_volumes(
+    pressure: float | np.ndarray,
+    z_co2: float | np.ndarray,
+    z_light: float | np.ndarray,
+    T: float = 393.0,
+    tol: float = 1.0e-5,
+) -> tuple[np.ndarray, ...]:
+    """3-component lumped flash + EOS phase molar volumes.
+
+    Same as :func:`flash_direct_3comp` but also returns the EOS (Peneloux-shifted)
+    reservoir phase molar volumes ``(v_l, v_g)`` for the volume balance / buoyancy
+    (see :func:`phase_molar_volumes`). Returns
+    ``(V, x_co2, x_light, y_co2, y_light, v_l, v_g)``.
+    """
+    global _AB_DIRECT
+    if _AB_DIRECT is None or _AB_DIRECT[1] != T:
+        _AB_DIRECT = (_ab(T), T)
+    aij, b = _AB_DIRECT[0]
+    scalar = (np.ndim(pressure) == 0 and np.ndim(z_co2) == 0 and np.ndim(z_light) == 0)
+    p_arr = np.atleast_1d(np.asarray(pressure, dtype=float))
+    zc_arr = np.atleast_1d(np.asarray(z_co2, dtype=float))
+    zl_arr = np.atleast_1d(np.asarray(z_light, dtype=float))
+    n = max(p_arr.size, zc_arr.size, zl_arr.size)
+    pp = np.broadcast_to(p_arr if p_arr.size == n else p_arr[0], (n,)).astype(float)
+    zc = np.broadcast_to(zc_arr if zc_arr.size == n else zc_arr[0], (n,)).astype(float)
+    zl = np.broadcast_to(zl_arr if zl_arr.size == n else zl_arr[0], (n,)).astype(float)
+    zh = 1.0 - zc - zl
+    z14 = np.zeros((n, 14))
+    z14[:, _CO2_IDX] = zc
+    z14[:, _LIGHT_IDX] = np.outer(zl, _Z_LIGHT_NORM)
+    z14[:, _HEAVY_IDX] = np.outer(zh, _Z_HEAVY_NORM)
+    V, x, y = _flash_vec(z14, pp, T, aij, b, tol=tol)
+    x_co2 = x[:, _CO2_IDX]
+    x_light = x[:, _LIGHT_IDX].sum(axis=1)
+    y_co2 = y[:, _CO2_IDX]
+    y_light = y[:, _LIGHT_IDX].sum(axis=1)
+    v_l, v_g = phase_molar_volumes(x, y, pp, T)
+    if scalar:
+        return (float(V[0]), float(x_co2[0]), float(x_light[0]),
+                float(y_co2[0]), float(y_light[0]), float(v_l[0]), float(v_g[0]))
+    return V, x_co2, x_light, y_co2, y_light, v_l, v_g
 
 
 def flash_direct_full(

@@ -374,6 +374,7 @@ def lab_case_from_mapping(
         skin=float(well_raw.get("skin", 0.0)),
         kv_kh=float(well_raw.get("kv_kh", 1.0)),
         rho_g=float(well_raw.get("rho_g", 0.0)),
+        geofac=float(well_raw.get("geofac", 1.0)),
     )
     field_length_m = float(sim_raw.get("field_length_m", 0.30))
     field_width_m = float(sim_raw.get("field_width_m", 0.30))
@@ -452,6 +453,7 @@ def summarize_lab_case(case: LabCase) -> dict[str, Any]:
             "skin": case.well.skin,
             "kv_kh": case.well.kv_kh,
             "rho_g": case.well.rho_g,
+            "geofac": case.well.geofac,
         },
         "injectors": [w.id for w in case.wells if w.kind == "injector"],
         "producers": [w.id for w in case.wells if w.kind == "producer"],
