@@ -273,7 +273,10 @@ def tabular_phase_mobilities(
     else:
         krg = np.interp(sg_a, table.sg, table.krg)
     if params.krg_floor > 0.0:
-        krg = np.maximum(krg, params.krg_floor)
+        # Additive (not hard-max) floor: keeps krg' continuous through the sgc
+        # kink (krg=0 for sg<=sgc), so the fully-implicit Newton does not stall at
+        # the gas-mobility onset. A hard max() would move the kink instead.
+        krg = krg + params.krg_floor
     kro = krog * krow  # Stone I (connate-water oil relperm is ~1)
     return krw / params.mu_w, kro / params.mu_o, krg / params.mu_g
 

@@ -36,6 +36,15 @@ _Z_OIL = np.array([0.35, 0.01, 0.08, 0.06, 0.03, 0.02, 0.04, 0.02, 0.02, 0.04,
                    0.12, 0.10, 0.07, 0.04])
 _CO2_IDX = 4
 
+# 3-component lumping: CO2 (idx 4) / light C1-NC6 (volatile, goes to the gas) /
+# heavy C7+ (the oil). The light components are the ones that co-evaporate into
+# the CO2-rich gas phase, which is exactly what the 2-component model (pure-CO2
+# gas) misses.
+_LIGHT_IDX = np.array([0, 1, 2, 3, 5, 6, 7, 8, 9])
+_HEAVY_IDX = np.array([10, 11, 12, 13])
+_Z_LIGHT_NORM = _Z_OIL[_LIGHT_IDX] / _Z_OIL[_LIGHT_IDX].sum()
+_Z_HEAVY_NORM = _Z_OIL[_HEAVY_IDX] / _Z_OIL[_HEAVY_IDX].sum()
+
 # *BIN: CO2 (idx 4) with the C7+ pseudo-components (idx >= 10) = 0.15.
 _BIN = np.zeros((14, 14))
 for _i in range(14):
@@ -504,3 +513,48 @@ def flash_direct(
     if scalar:
         return float(V[0]), float(x_co2[0]), float(y_co2[0])
     return V, x_co2, y_co2
+
+
+def flash_direct_3comp(
+    pressure: float | np.ndarray,
+    z_co2: float | np.ndarray,
+    z_light: float | np.ndarray,
+    T: float = 393.0,
+    tol: float = 1.0e-5,
+) -> tuple[np.ndarray, ...]:
+    """3-component lumped flash (CO2 / light C1-NC6 / heavy C7+) → phase split.
+
+    ``z_co2`` and ``z_light`` are the CO2 and light-component *overall* mole
+    fractions (``z_heavy = 1 − z_co2 − z_light``); they are distributed over the
+    14 GEM components (light/heavy proportional to ``_Z_OIL``) and the full PR
+    flash is run, then lumped back. Returns ``(V, x_co2, x_light, y_co2, y_light)``
+    — the vapor mole fraction and the CO2/light mole fractions in the liquid (x)
+    and gas (y). The heavy fraction is ``1 − x_co2 − x_light`` / ``1 − y_co2 −
+    y_light``.
+    """
+    global _AB_DIRECT
+    if _AB_DIRECT is None or _AB_DIRECT[1] != T:
+        _AB_DIRECT = (_ab(T), T)
+    aij, b = _AB_DIRECT[0]
+    scalar = (np.ndim(pressure) == 0 and np.ndim(z_co2) == 0 and np.ndim(z_light) == 0)
+    p_arr = np.atleast_1d(np.asarray(pressure, dtype=float))
+    zc_arr = np.atleast_1d(np.asarray(z_co2, dtype=float))
+    zl_arr = np.atleast_1d(np.asarray(z_light, dtype=float))
+    n = max(p_arr.size, zc_arr.size, zl_arr.size)
+    pp = np.broadcast_to(p_arr if p_arr.size == n else p_arr[0], (n,)).astype(float)
+    zc = np.broadcast_to(zc_arr if zc_arr.size == n else zc_arr[0], (n,)).astype(float)
+    zl = np.broadcast_to(zl_arr if zl_arr.size == n else zl_arr[0], (n,)).astype(float)
+    zh = 1.0 - zc - zl
+    z14 = np.zeros((n, 14))
+    z14[:, _CO2_IDX] = zc
+    z14[:, _LIGHT_IDX] = np.outer(zl, _Z_LIGHT_NORM)
+    z14[:, _HEAVY_IDX] = np.outer(zh, _Z_HEAVY_NORM)
+    V, x, y = _flash_vec(z14, pp, T, aij, b, tol=tol)
+    x_co2 = x[:, _CO2_IDX]
+    x_light = x[:, _LIGHT_IDX].sum(axis=1)
+    y_co2 = y[:, _CO2_IDX]
+    y_light = y[:, _LIGHT_IDX].sum(axis=1)
+    if scalar:
+        return (float(V[0]), float(x_co2[0]), float(x_light[0]),
+                float(y_co2[0]), float(y_light[0]))
+    return V, x_co2, x_light, y_co2, y_light
