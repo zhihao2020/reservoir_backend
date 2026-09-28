@@ -1421,6 +1421,7 @@ def _implicit_compositional_two_kinetic_step(
     well_qg_fixed: NDArray[np.float64] | None = None,
     max_iter: int = 30,
     tol: float = 1.0e-3,
+    sg_max0: NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.float64], ...]:
     """One fully-implicit kinetic-dissolution two-component step (Newton).
 
@@ -1468,7 +1469,7 @@ def _implicit_compositional_two_kinetic_step(
 
     def state(p_, sw_, z_, Cd_):
         sw_r, sl_, sg_, C_, Cd_eq_, Rs_ = _split_compositional_two_kinetic(sw_, z_, Cd_, p_, params)
-        lam_w_, lam_l_, lam_g_ = phase_mobilities(sw_r, sl_, sg_, params)
+        lam_w_, lam_l_, lam_g_ = phase_mobilities(sw_r, sl_, sg_, params, sg_max0)
         return sl_, sg_, C_, Cd_eq_, Rs_, lam_w_, lam_l_, lam_g_
 
     def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_):

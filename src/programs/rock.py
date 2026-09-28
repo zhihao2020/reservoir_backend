@@ -249,14 +249,29 @@ def tabular_phase_mobilities(
     sg: NDArray[np.float64] | float,
     table: RelpermTable,
     params: FluidParams,
+    sg_max: NDArray[np.float64] | float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Per-phase mobilities from tabular rel-perm (Stone I for the oil)."""
+    """Per-phase mobilities from tabular rel-perm (Stone I for the oil).
+
+    ``sg_max`` (optional) is the maximum historical gas saturation per cell; when
+    given, residual trapping hysteresis (Carlson's model, MRST co2lab-style) is
+    applied: on imbibition (``sg < sg_max``) the trapped gas ``sgt = sg_max − sg``
+    is immobile, so ``krg`` is evaluated at the free gas ``sg_free = sg − sgt =
+    2·sg − sg_max`` instead of ``sg``. This makes a high-gas branch stable — once
+    the gas has been at ``sg_max`` it cannot drain below it as fast (the trapped
+    portion keeps ``krg=0``).
+    """
     sw_a = np.asarray(sw, dtype=float)
     sg_a = np.asarray(sg, dtype=float)
     krw = np.interp(sw_a, table.sw, table.krw)
     krow = np.interp(sw_a, table.sw, table.krow)
     krog = np.interp(sg_a, table.sg, table.krog)
-    krg = np.interp(sg_a, table.sg, table.krg)
+    if sg_max is not None:
+        sg_max_a = np.asarray(sg_max, dtype=float)
+        sg_free = np.maximum(0.0, 2.0 * sg_a - sg_max_a)
+        krg = np.interp(sg_free, table.sg, table.krg)
+    else:
+        krg = np.interp(sg_a, table.sg, table.krg)
     if params.krg_floor > 0.0:
         krg = np.maximum(krg, params.krg_floor)
     kro = krog * krow  # Stone I (connate-water oil relperm is ~1)
@@ -268,10 +283,11 @@ def phase_mobilities(
     so: NDArray[np.float64] | float,
     sg: NDArray[np.float64] | float,
     params: FluidParams,
+    sg_max: NDArray[np.float64] | float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Per-phase mobilities: tabular when ``params.relperm_table`` is set, else Corey."""
     if params.relperm_table is not None:
-        return tabular_phase_mobilities(sw, so, sg, params.relperm_table, params)
+        return tabular_phase_mobilities(sw, so, sg, params.relperm_table, params, sg_max)
     return corey_phase_mobilities(sw, so, sg, params)
 
 
