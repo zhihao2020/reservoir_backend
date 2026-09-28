@@ -48,10 +48,12 @@ black_oil:
   # CO2 气体体积系数 Bg = 储层气体积 / 地面气体积。20 MPa 超临界 CO2 约 0.003。
   # 相劈分要求 1/Bg > Rs_max（≈140），即 Bg < 0.0071，否则自由气被剪成 0。
   bg: 0.003
-  # 自由气重力头 rho_g = (rho_g - rho_o)*g，Pa/m；>0 表示 CO2 富相比油重、下沉到底层。
-  # GEM 重跑确认：CO2 气相 369.8 < 油相 512.6 kg/m3（CO2 轻），rho_g 为负（CO2 上浮）。
-  # 底部羽流是井压差 + 溶解-析出驱动，rho_g 是次要修正项。
-  rho_g: -1421.0
+  # 自由气重力头 rho_g = (rho_CO2 - rho_oil)*g，Pa/m；>0 表示 CO2 富相比油重、下沉到底层。
+  # 更正(2026-09-28)：20 MPa、120℃ 超临界 CO2 实际密度 ~590 kg/m3(NIST，Z≈0.45)，
+  # 比油 512.6 kg/m3 重 → rho_g 应为正(+759)。此前 -1421 用的 CO2 密度 369.8 是
+  # PR EOS 未加 Peneloux 体积平移的低估值(本代码 PR EOS 给 Z=0.69→390 kg/m3)。
+  # 底部羽流是 CO2 重→下沉 + 井压差共同驱动，重力项应是主驱动之一。
+  rho_g: 759.0
   # 表格相渗（GEM deck *SGT / *SWT），替代 Corey 幂律 relperm。
   relperm_table:
     sgt:   # [Sg, Krg, Krog]
