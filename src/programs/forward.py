@@ -1774,8 +1774,10 @@ def _implicit_compositional_three_step(
         D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
         A_g_ = A_ - params.rho_g * A_grav
-        q_vol_ = qw_ + qo_ + qg_ * Bg
-        r_p_ = A_ @ lam_t_ - q_vol_ + accum * params.ct * (p_ - p0) - params.rho_g * (A_grav @ lam_g_)
+        q_N_ = qg_ / _V_CO2_STD + qo_ / np.maximum(v_l_, 1.0e-30)
+        r_p_ = (accum * (N_ - N0) - q_N_
+                + A_g_ @ (lam_g_ / np.maximum(v_g_, 1.0e-30))
+                + A_ @ (lam_l_ / np.maximum(v_l_, 1.0e-30)))
         r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
         # component sources (injector: pure CO2; producer: gas + dissolved liquid)
         r_co2_ = _V_CO2_STD / np.maximum(v_l_, 1.0e-30)  # per-cell reservoir-liquid ratio
@@ -1787,6 +1789,7 @@ def _implicit_compositional_three_step(
         r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
         return np.concatenate([r_p_, r_sw_, r_c_, r_l_, np.array([r_rate_])])
 
+    N0 = _split_compositional_three(sw, zc, zl, p, params)[8]
     Cc0, Cl0 = _split_compositional_three(sw, zc, zl, p, params)[9], \
                _split_compositional_three(sw, zc, zl, p, params)[10]
     r0_norm = float(np.linalg.norm(residual(p, sw, zc, zl, bhp_inj)))
@@ -1794,6 +1797,7 @@ def _implicit_compositional_three_step(
     for _ in range(max_iter):
         (sl, sg, V, xc, xl, yc, yl, N, Cc, Cl,
          lam_w, lam_l, lam_g, v_l, v_g) = state(p, sw, zc, zl)
+        m_N = lam_g / np.maximum(v_g, 1.0e-30) + lam_l / np.maximum(v_l, 1.0e-30)  # molar mobility
         r_co2 = _V_CO2_STD / np.maximum(v_l, 1.0e-30)  # per-cell reservoir-liquid ratio
         lam_t = lam_w + lam_l + lam_g
         D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
@@ -1802,17 +1806,21 @@ def _implicit_compositional_three_step(
         A_g = A - params.rho_g * A_grav
         r = residual(p, sw, zc, zl, bhp_inj)
         # numerical derivatives through the flash split + relperm
-        (_, _, _, _, _, _, _, _, Cc_p, Cl_p, lw_p, ll_p, lg_p, _, _) = state(p + h, sw, zc, zl)
+        (_, _, _, _, _, _, _, N_p, Cc_p, Cl_p, lw_p, ll_p, lg_p, _, _) = state(p + h, sw, zc, zl)
+        dN_dp = (N_p - N) / h
         dCc_dp = (Cc_p - Cc) / h
         dCl_dp = (Cl_p - Cl) / h
-        (_, _, _, _, _, _, _, _, Cc_s, Cl_s, lw_s, ll_s, lg_s, _, _) = state(p, sw + h, zc, zl)
+        (_, _, _, _, _, _, _, N_s, Cc_s, Cl_s, lw_s, ll_s, lg_s, _, _) = state(p, sw + h, zc, zl)
+        dN_dsw = (N_s - N) / h
         dCc_dsw = (Cc_s - Cc) / h
         dCl_dsw = (Cl_s - Cl) / h
         dlw_dsw = (lw_s - lam_w) / h
-        (_, _, _, _, _, _, _, _, Cc_zc, Cl_zc, lw_zc, ll_zc, lg_zc, _, _) = state(p, sw, zc + h, zl)
+        (_, _, _, _, _, _, _, N_zc, Cc_zc, Cl_zc, lw_zc, ll_zc, lg_zc, _, _) = state(p, sw, zc + h, zl)
+        dN_dzc = (N_zc - N) / h
         dCc_dzc = (Cc_zc - Cc) / h
         dCl_dzc = (Cl_zc - Cl) / h
-        (_, _, _, _, _, _, _, _, Cc_zl, Cl_zl, lw_zl, ll_zl, lg_zl, _, _) = state(p, sw, zc, zl + h)
+        (_, _, _, _, _, _, _, N_zl, Cc_zl, Cl_zl, lw_zl, ll_zl, lg_zl, _, _) = state(p, sw, zc, zl + h)
+        dN_dzl = (N_zl - N) / h
         dCc_dzl = (Cc_zl - Cc) / h
         dCl_dzl = (Cl_zl - Cl) / h
         # Well source derivatives (q_c = qg + yc·qg + xc·r_co2·qo, etc.)
@@ -1837,13 +1845,16 @@ def _implicit_compositional_three_step(
         dq_vol_dsw = (qvs - qv0) / h
         dq_vol_dzc = (qvz - qv0) / h
         dq_vol_dzl = (qvl - qv0) / h
-        # Jacobian blocks (volume balance pressure + water + CO2 + light)
-        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h
-        J_pp = (A @ diags(dlam_t_dp) + _upwind_tpfa_matrix_vec(grid, permeability, lam_t, p)
-                + diags(D) + diags(accum * params.ct)).tocsr()
-        J_pw = A @ diags((lw_s + ll_s + lg_s - lam_t) / h) - diags(dq_vol_dsw)
-        J_pzc = A @ diags((lw_zc + ll_zc + lg_zc - lam_t) / h) - diags(dq_vol_dzc)
-        J_pzl = A @ diags((lw_zl + ll_zl + lg_zl - lam_t) / h) - diags(dq_vol_dzl)
+        # Jacobian blocks (molar-balance pressure + water + CO2 + light)
+        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h  # approx for the flux p-derivative (secondary)
+        D_molar = np.where(inj_cell, D / (Bg * _V_CO2_STD),
+                           D * (lam_l / np.maximum(lam_t, 1.0e-12)) / np.maximum(v_l, 1.0e-30))
+        J_pp = (diags(dN_dp * accum) + A @ diags(dlam_t_dp)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_N, p)
+                + diags(D_molar)).tocsr()
+        J_pw = diags(dN_dsw * accum)
+        J_pzc = diags(dN_dzc * accum)
+        J_pzl = diags(dN_dzl * accum)
         J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, 1.0e-12))))
                 + _upwind_tpfa_matrix_vec(grid, permeability, lam_w, p)).tocsr()
         J_ww = I + A @ diags(dlw_dsw)
@@ -2010,8 +2021,10 @@ def _implicit_compositional_full_step(
         D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
         A_g_ = A_ - params.rho_g * A_grav
-        q_vol_ = qw_ + qo_ + qg_ * Bg
-        r_p_ = A_ @ lam_t_ - q_vol_ + accum * params.ct * (p_ - p0) - params.rho_g * (A_grav @ lam_g_)
+        q_N_ = qg_ / _V_CO2_STD + qo_ / np.maximum(v_l_, 1.0e-30)
+        r_p_ = (accum * (N_ - N0) - q_N_
+                + A_g_ @ (lam_g_ / np.maximum(v_g_, 1.0e-30))
+                + A_ @ (lam_l_ / np.maximum(v_l_, 1.0e-30)))
         r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
         # molar component sources (injector pure CO2; producer gas+liquid split)
         qg_mol_ = qg_ / _V_CO2_STD   # gas moles (surface ideal-gas molar volume)
@@ -2034,6 +2047,7 @@ def _implicit_compositional_full_step(
     converged = False
     for _ in range(max_iter):
         sl, sg, V, x, y, N, lam_w, lam_l, lam_g, v_l, v_g = state(p, sw, z)
+        m_N = lam_g / np.maximum(v_g, 1.0e-30) + lam_l / np.maximum(v_l, 1.0e-30)  # molar mobility
         lam_t = lam_w + lam_l + lam_g
         D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
         D_inj = inj_diag(lam_t)
@@ -2054,10 +2068,13 @@ def _implicit_compositional_full_step(
             _, _, _, x_c, y_c, N_c, lw_c, ll_c, lg_c, _, _ = state(p, sw, zc)
             dz[c] = (x_c, y_c, N_c, lw_c, ll_c, lg_c)
         # pressure / water blocks
-        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h
-        J_pp = (A @ diags(dlam_t_dp) + _upwind_tpfa_matrix_vec(grid, permeability, lam_t, p)
-                + diags(D) + diags(accum * params.ct)).tocsr()
-        J_pw = A @ diags((lw_s + ll_s + lg_s - lam_t) / h)
+        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h  # approx for the flux p-derivative (secondary)
+        D_molar = np.where(inj_cell, D / (Bg * _V_CO2_STD),
+                           D * (lam_l / np.maximum(lam_t, 1.0e-12)) / np.maximum(v_l, 1.0e-30))
+        J_pp = (diags(dN_dp * accum) + A @ diags(dlam_t_dp)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_N, p)
+                + diags(D_molar)).tocsr()
+        J_pw = diags(dN_dsw * accum)
         J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, 1.0e-12))))
                 + _upwind_tpfa_matrix_vec(grid, permeability, lam_w, p)).tocsr()
         J_ww = I + A @ diags(dlw_dsw)
