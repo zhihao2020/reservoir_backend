@@ -1396,13 +1396,13 @@ def _split_compositional_two_kinetic(
     Returns ``(sw, sl, sg, C, Cd_eq, Rs_act)`` where ``C = z·N·V_CO2_STD`` is the
     total CO2 surface volume, ``Rs_act = Cd/oil_surf`` the actual dissolved ratio.
     """
-    from ..core.pr_eos import flash_direct_volumes, _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+    from ..core.pr_eos import flash_direct_volumes, _V_CO2_STD, _MW_OIL_DEAD, _RHO_OIL_STD
 
     sw_p = np.clip(np.asarray(sw, dtype=float), 0.0, 1.0)
     z_p = np.clip(np.asarray(z, dtype=float), 0.0, 1.0)
     Cd_p = np.clip(np.asarray(Cd, dtype=float), 0.0, None)
     p_a = np.asarray(p, dtype=float)
-    v_oil_std = _MW_OIL / 1000.0 / _RHO_OIL_STD  # surface oil molar volume (for Rs_act)
+    v_oil_std = _MW_OIL_DEAD / 1000.0 / _RHO_OIL_STD  # surface oil molar volume (for Rs_act)
     V, x, y, v_l, v_g = flash_direct_volumes(p_a, z_p)
     denom = V * v_g + (1.0 - V) * v_l
     N = (1.0 - sw_p) / np.maximum(denom, 1.0e-30)
@@ -2935,12 +2935,12 @@ def _split_compositional_two(
     ``O`` the oil surface volume, and ``v_l``/``v_g`` the EOS reservoir molar
     volumes (m3/mol) used by the component fluxes.
     """
-    from ..core.pr_eos import flash_direct_volumes, _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+    from ..core.pr_eos import flash_direct_volumes, _V_CO2_STD, _MW_OIL_DEAD, _RHO_OIL_STD
 
     sw_p = np.clip(np.asarray(sw, dtype=float), 0.0, 1.0)
     z_p = np.clip(np.asarray(z, dtype=float), 0.0, 1.0)
     p_a = np.asarray(p, dtype=float)
-    v_oil_std = _MW_OIL / 1000.0 / _RHO_OIL_STD  # m3/mol *surface* oil (for O only)
+    v_oil_std = _MW_OIL_DEAD / 1000.0 / _RHO_OIL_STD  # m3/mol *surface* oil (for O only)
     V, x_co2, y_co2, v_l, v_g = flash_direct_volumes(p_a, z_p)
     denom = V * v_g + (1.0 - V) * v_l
     N = (1.0 - sw_p) / np.maximum(denom, 1.0e-30)
@@ -2966,9 +2966,9 @@ def _component_mobilities(
     liquid, converted to surface CO2 volume); ``m_oil`` the oil surface flux
     mobility. ``V_CO2_STD/V_oil = 223``.
     """
-    from ..core.pr_eos import _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+    from ..core.pr_eos import _V_CO2_STD, _MW_OIL_DEAD, _RHO_OIL_STD
 
-    v_l = _MW_OIL / 1000.0 / _RHO_OIL_STD  # liquid (oil) molar volume
+    v_l = _MW_OIL_DEAD / 1000.0 / _RHO_OIL_STD  # liquid (oil) molar volume
     r_co2 = _V_CO2_STD / v_l  # CO2 surface / oil surface ratio (≈223)
     inv_Bg = 1.0 / max(float(params.bg), 1.0e-12)
     m_co2 = y_co2 * inv_Bg * lam_g + x_co2 * r_co2 * lam_l

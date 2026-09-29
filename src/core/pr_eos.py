@@ -65,7 +65,13 @@ for _i in range(14):
 # rho_oil_std ~ 800 kg/m3 for a light oil. Rs = (molCO2/molOil) * V_CO2 / V_oil.
 _V_CO2_STD = 0.0237
 _RHO_OIL_STD = 800.0  # kg/m3
-_MW_OIL = float(np.sum(_Z_OIL * _MW))  # ~85 g/mol
+_MW_OIL = float(np.sum(_Z_OIL * _MW))  # native oil MW (~85 g/mol, incl. 0.03 CO2)
+_MW_OIL_DEAD = float(np.sum(_Z_OIL_DEAD * _MW))  # dead-oil MW (~86.6 g/mol, no CO2)
+
+# The *surface* oil molar volume uses the dead-oil MW: the compositional models
+# flash on the CO2-free dead-oil base, so "oil surface volume" = dead oil. The
+# native _MW_OIL is kept for rs_sat (the solution-gas model flashes on the native
+# _Z_OIL), whose ~1.5% difference is a separate base-consistency question.
 
 # Peneloux volume-shift parameters (m3/mol). The PR EOS without a volume
 # translation over-predicts the supercritical CO2 molar volume: pure CO2 at
