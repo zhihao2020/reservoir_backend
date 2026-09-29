@@ -37,16 +37,26 @@ black_oil:
   ct_1pa: 1.2e-9
   # rs_slope: 输出用溶解气比（吞吐量指标，Rs=rs_slope·p≈187）
   rs_slope: 9.84e-6
-  # rs_eq_slope: 前向模型相劈分用的平衡溶解度（热力学量，x_d≈0.66，待标定）
-  rs_eq_slope: 1.0e-7
-  # FCM 混相模型参数（P4 待标定）
-  rho_s: 2000.0
-  rho_o: 0.0
-  c_sat: 0.85
-  # rho_g: 自由气相对油相的浮力 (rho_g-rho_o)*g，>0 表示 CO2 富相更密、下沉到底层
-  rho_g: 2000.0
-  # bg: 气体 FVF（储层气体积/地面气体积），20 MPa 下 CO2 压缩约 200 倍
-  bg: 0.005
+  # 自由气重力头 rho_g = (rho_CO2 - rho_oil)*g，Pa/m；>0 表示 CO2 富相比油重、下沉到底层。
+  # 20 MPa、120℃ 超临界 CO2 密度 ~590 kg/m3（NIST）比油 512.6 kg/m3 重 → +759。
+  rho_g: 759.0
+  # 组分摩尔步气头：scalar = 固定 rho_g；eos = 逐面 g*(ρ_g−ρ_l)（EOS 相密度）。
+  gravity: scalar
+  # CO2 气体体积系数 Bg = 储层气体积 / 地面气体积。20 MPa 超临界 CO2 约 0.003。
+  bg: 0.003
+  # 表格相渗（GEM deck *SGT / *SWT），替代 Corey 幂律 relperm。
+  relperm_table:
+    sgt:   # [Sg, Krg, Krog]
+      - [0.00, 0.000, 1.000]
+      - [0.05, 0.000, 1.000]
+      - [0.20, 0.046, 0.618]
+      - [0.40, 0.250, 0.250]
+      - [0.55, 0.510, 0.082]
+      - [0.75, 1.000, 0.000]
+      - [1.00, 1.000, 0.000]
+    swt:   # [Sw, Krw, Krow]
+      - [0.0, 0.0, 1.0]
+      - [1.0, 1.0, 0.0]
 
 well:
   rw: 0.003

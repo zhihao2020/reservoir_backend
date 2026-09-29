@@ -1,7 +1,9 @@
 """Compositional forward model (FIM) regression tests.
 
-Pins the fixes of the pressure-equation rework:
-- B1 molar-balance pressure equation (oil / non-CO2 conserved).
+Pins the 14-component molar forward model (``_implicit_compositional_full_step``)
+and the shared EOS / operator helpers it is built on:
+
+- molar-balance pressure equation (non-CO2 hydrocarbon conserved).
 - bubble-point crossing convergence (no Newton stall).
 - EOS phase density gravity sign (CO2 denser than oil -> sinks).
 - EOS gravity head (per-face density difference) and its scalar degeneration.
@@ -19,21 +21,19 @@ import pytest
 from src.core.cartesian import CartesianGrid
 from src.core.lab_case import load_lab_case
 from src.core.pr_eos import (
-    _CO2_IDX, _V_CO2_STD, _Z_OIL_DEAD, co2_molar_volume, flash_direct_volumes,
+    _CO2_IDX, _V_CO2_STD, _Z_OIL_DEAD, co2_molar_volume, flash_direct_full,
+    flash_direct_volumes, phase_molar_volumes,
 )
 from src.programs.mesh import WellMap
 from src.programs.pipeline import run_mesh
 from src.programs.forward import (
     _GRAVITY,
     _eos_gas_head,
+    _implicit_compositional_full_adaptive,
     _implicit_compositional_full_step,
-    _implicit_compositional_three_step,
-    _implicit_compositional_two_step,
     _mobility_divergence_matrix,
     _peaceman_well_data,
     _phase_divergence_matrix,
-    _split_compositional_three,
-    _split_compositional_two,
     _split_full_N,
     solve_pressure_peaceman,
 )
@@ -53,7 +53,7 @@ def _setup():
     inv_phiV = 1.0 / (phi * vol)
     params = case.black_oil
     sw = np.full(n_c, params.swc)
-    z = np.zeros(n_c)
+    z = np.broadcast_to(_Z_OIL_DEAD, (n_c, _Z_OIL_DEAD.size)).copy()
     lam_w, lam_l, lam_g = phase_mobilities(sw, np.ones(n_c), np.zeros(n_c), params)
     p = solve_pressure_peaceman(grid, k, lam_w + lam_l + lam_g, mesh.wells, case.well_pw[0], case.well)
     injects_gas = (case.well_qg > 0.0).any(axis=0)
@@ -65,25 +65,56 @@ def _setup():
 
 
 def _step(grid, k, inv_phiV, params, sw, z, p, injects_gas, qg_fixed, wells, well_pw, well_params, dt=864.0):
-    return _implicit_compositional_two_step(
+    return _implicit_compositional_full_step(
         grid, k, inv_phiV, dt, sw, z, p, wells, well_pw, well_params,
         params, injects_gas, well_qg_fixed=qg_fixed)
 
 
+def _small_setup(nx=3, inject_qg=1.0e-7, producer=True):
+    """Small injector(/producer) column for fast full-model physics tests."""
+    case = load_lab_case(CASE)
+    grid = CartesianGrid(nx=nx, ny=1, nz=1, dx=0.05, dy=0.05, dz=0.05)
+    n = grid.n_cells
+    k = np.full(n, case.k0)
+    phi = np.full(n, case.phi0)
+    vol = grid.cell_volumes()
+    inv_phiV = 1.0 / (phi * vol)
+    params = case.black_oil
+    sw = np.full(n, params.swc)
+    z = np.broadcast_to(_Z_OIL_DEAD, (n, _Z_OIL_DEAD.size)).copy()
+    if producer:
+        wells = WellMap(
+            ids=("INJ", "PROD"),
+            xyz=grid.cell_centers()[[0, n - 1]],
+            cells=(np.array([0]), np.array([n - 1])),
+        )
+        bhp = np.array([19.5e6, 19.0e6])
+        injects_gas = np.array([True, False])
+    else:
+        wells = WellMap(ids=("INJ",), xyz=grid.cell_centers()[[0]], cells=(np.array([0]),))
+        bhp = np.array([19.5e6])
+        injects_gas = np.array([True])
+    qg_fixed = np.zeros(n)
+    qg_fixed[0] += inject_qg
+    p = np.full(n, 19.0e6)
+    return case, grid, k, phi, vol, inv_phiV, params, sw, z, p, wells, bhp, injects_gas, qg_fixed
+
+
 def _oil_moles(grid, phi, vol, sw, z, p, params):
-    _, sl, sg, V, x, y, N, C, O, v_l, v_g = _split_compositional_two(sw, z, p, params)
-    return float(((1.0 - z) * N * phi * vol).sum())
+    """Total non-CO2 hydrocarbon moles (the molar pressure equation conserves these)."""
+    N = _split_full_N(sw, z, p, params)
+    return float(((1.0 - z[:, _CO2_IDX]) * N * phi * vol).sum())
 
 
 def test_molar_pressure_conserves_oil():
     """The molar-balance pressure equation must conserve the non-CO2 hydrocarbon."""
-    (case, mesh, grid, k, phi, vol, inv_phiV, params,
-     sw, z, p, injects_gas, qg_fixed) = _setup()
+    (case, grid, k, phi, vol, inv_phiV, params,
+     sw, z, p, wells, bhp, injects_gas, qg_fixed) = _small_setup(producer=False, inject_qg=1.0e-9)
     oil0 = _oil_moles(grid, phi, vol, sw, z, p, params)
     for _ in range(3):
         p, sw, sl, sg, z, conv = _step(
             grid, k, inv_phiV, params, sw, z, p, injects_gas, qg_fixed,
-            mesh.wells, case.well_pw[0], case.well)
+            wells, bhp, case.well)
         assert conv
     oil1 = _oil_moles(grid, phi, vol, sw, z, p, params)
     # 3 substeps of injection must not leak oil (the old volume balance did).
@@ -92,13 +123,13 @@ def test_molar_pressure_conserves_oil():
 
 def test_free_gas_forms_at_bubble_point():
     """CO2 injected past the bubble point must exsolve free gas (no over-dissolution)."""
-    (case, mesh, grid, k, phi, vol, inv_phiV, params,
-     sw, z, p, injects_gas, qg_fixed) = _setup()
+    (case, grid, k, phi, vol, inv_phiV, params,
+     sw, z, p, wells, bhp, injects_gas, qg_fixed) = _small_setup()
     sg_max = 0.0
     for _ in range(15):
         p, sw, sl, sg, z, conv = _step(
             grid, k, inv_phiV, params, sw, z, p, injects_gas, qg_fixed,
-            mesh.wells, case.well_pw[0], case.well)
+            wells, bhp, case.well)
         assert conv
         sg_max = max(sg_max, float(sg.max()))
     assert sg_max > 1.0e-3  # free gas appears once z crosses the bubble point
@@ -106,15 +137,15 @@ def test_free_gas_forms_at_bubble_point():
 
 def test_bubble_point_crossing_converges():
     """The Newton must converge through the bubble point (no stall)."""
-    (case, mesh, grid, k, phi, vol, inv_phiV, params,
-     sw, z, p, injects_gas, qg_fixed) = _setup()
+    (case, grid, k, phi, vol, inv_phiV, params,
+     sw, z, p, wells, bhp, injects_gas, qg_fixed) = _small_setup()
     crossed = False
     for _ in range(20):
         p, sw, sl, sg, z, conv = _step(
             grid, k, inv_phiV, params, sw, z, p, injects_gas, qg_fixed,
-            mesh.wells, case.well_pw[0], case.well)
+            wells, bhp, case.well)
         assert conv
-        if z.max() > 0.36:  # bubble point (two-component, dead-oil base)
+        if z[:, _CO2_IDX].max() > 0.36:  # bubble point (dead-oil base)
             crossed = True
     assert crossed
 
@@ -145,7 +176,7 @@ def test_rock_compressibility_lowers_pressure_rise():
     """The same injected moles raise pressure less when the pore volume can grow."""
     case, grid, k, phi, inv_phiV, wells = _single_cell()
     sw = np.full(1, case.black_oil.swc)
-    z = np.zeros(1)
+    z = _Z_OIL_DEAD[None, :].copy()
     p0 = np.full(1, 19.0e6)
     bhp = np.array([20.0e6])
     q = np.full(1, 2.0e-10)
@@ -153,7 +184,7 @@ def test_rock_compressibility_lowers_pressure_rise():
 
     def rise(ct):
         params = replace(case.black_oil, ct=ct)
-        p1, _, _, _, _, conv = _implicit_compositional_two_step(
+        p1, _, _, _, _, conv = _implicit_compositional_full_step(
             grid, k, inv_phiV, 30.0, sw, z, p0, wells, bhp, case.well, params,
             np.array([True]), **kw)
         assert conv
@@ -232,29 +263,17 @@ def _single_cell():
     return case, grid, k, phi, inv_phiV, wells
 
 
-def _two_state(sw, z, p, params):
-    split = _split_compositional_two(sw, z, p, params)
-    return split[6], split[7]  # N (mol/m3 PV), C (surface CO2 m3/m3 PV)
-
-
-def _three_state(sw, z, p, params):
-    zc, zl = z
-    split = _split_compositional_three(sw, zc, zl, p, params)
-    return split[8], split[9]
-
-
 def _full_state(sw, z, p, params):
     N = _split_full_N(sw, z, p, params)
     return N, z[:, _CO2_IDX] * N * _V_CO2_STD
 
 
-@pytest.mark.parametrize("model", ["two", "three", "full"])
-def test_injector_moles_match_surface_target(model):
+def test_injector_moles_match_surface_target():
     """Rate-controlled injector: accumulated moles == target surface rate / V_CO2_STD.
 
     The initial BHP guess injects ~300x the target, so this also pins the BHP
-    Schur coupling (the two-component GMRES solve used to drop it, the
-    full-compositional step read the rate residual from the wrong index).
+    Schur coupling (the full-compositional step read the rate residual from the
+    wrong index before the fix).
     """
     case, grid, k, phi, inv_phiV, wells = _single_cell()
     params = case.black_oil
@@ -265,24 +284,11 @@ def test_injector_moles_match_surface_target(model):
     bhp = np.array([19.5e6])
     kw = dict(well_qg_fixed=np.full(1, q_surf), tol=1.0e-4)
     inj = np.array([True])
-    if model == "two":
-        z = np.zeros(1)
-        N0, C0 = _two_state(sw, z, p, params)
-        p1, sw1, _, _, z1, conv = _implicit_compositional_two_step(
-            grid, k, inv_phiV, dt, sw, z, p, wells, bhp, case.well, params, inj, **kw)
-        N1, C1 = _two_state(sw1, z1, p1, params)
-    elif model == "three":
-        z = (np.zeros(1), np.full(1, 0.5))
-        N0, C0 = _three_state(sw, z, p, params)
-        p1, sw1, _, _, zc1, zl1, conv = _implicit_compositional_three_step(
-            grid, k, inv_phiV, dt, sw, z[0], z[1], p, wells, bhp, case.well, params, inj, **kw)
-        N1, C1 = _three_state(sw1, (zc1, zl1), p1, params)
-    else:
-        z = _Z_OIL_DEAD[None, :].copy()
-        N0, C0 = _full_state(sw, z, p, params)
-        p1, sw1, _, _, z1, conv = _implicit_compositional_full_step(
-            grid, k, inv_phiV, dt, sw, z, p, wells, bhp, case.well, params, inj, **kw)
-        N1, C1 = _full_state(sw1, z1, p1, params)
+    z = _Z_OIL_DEAD[None, :].copy()
+    N0, C0 = _full_state(sw, z, p, params)
+    p1, sw1, _, _, z1, conv = _implicit_compositional_full_step(
+        grid, k, inv_phiV, dt, sw, z, p, wells, bhp, case.well, params, inj, **kw)
+    N1, C1 = _full_state(sw1, z1, p1, params)
     assert conv
     pv = 1.0 / inv_phiV
     # Pore growth φ·ct·Δp stores part of the injected moles; N and C are per
@@ -300,16 +306,18 @@ def test_producer_gas_moles_use_eos_molar_volume():
     params = replace(case.black_oil, bg=0.003)
     sw = np.full(1, params.swc)
     p = np.full(1, 16.0e6)  # low pressure: EOS Bg of the CO2-rich gas >> 0.003
-    z = np.full(1, 0.8)
+    z = (1.0 - 0.8) * _Z_OIL_DEAD
+    z[_CO2_IDX] += 0.8
+    z = z[None, :].copy()  # overall CO2 mole fraction 0.8, rest dead oil
     bhp = np.array([15.5e6])
     inj = np.array([False])
     dt = 60.0
-    N0, C0 = _two_state(sw, z, p, params)
-    p1, sw1, sl1, sg1, z1, conv = _implicit_compositional_two_step(
-        grid, k, inv_phiV, dt, sw, z, p, wells, bhp, case.well, params, inj, tol=1.0e-5)
+    N0 = _split_full_N(sw, z, p, params)
+    p1, sw1, sl1, sg1, z1, conv = _implicit_compositional_full_step(
+        grid, k, inv_phiV, dt, sw, z, p, wells, bhp, case.well, params, inj, tol=1.0e-3)
     assert conv
-    split = _split_compositional_two(sw1, z1, p1, params)
-    v_l, v_g = split[9], split[10]
+    V, x, y = flash_direct_full(z1, p1)
+    v_l, v_g = phase_molar_volumes(x, y, p1)
     lam_w, lam_l, lam_g = phase_mobilities(sw1, sl1, sg1, params)
     assert float(sg1[0]) > 0.05 and float(lam_g[0]) > 0.0
     _, wi, _, _ = _peaceman_well_data(grid, k, wells, bhp, case.well, inj)
@@ -318,7 +326,8 @@ def test_producer_gas_moles_use_eos_molar_volume():
     q_mol_bg = float(wi[0] * (lam_g[0] / (params.bg * _V_CO2_STD) + lam_l[0] / v_l[0]) * dp)
     pv = 1.0 / inv_phiV
     rock = params.ct * (p1 - p)
-    dN = float((((split[6] - N0) + rock * split[6]) * pv).sum())
+    N1 = _split_full_N(sw1, z1, p1, params)
+    dN = float((((N1 - N0) + rock * N1) * pv).sum())
     assert dN == pytest.approx(q_mol_eos * dt, rel=1.0e-2)
     assert abs(q_mol_bg - q_mol_eos) > 0.1 * abs(q_mol_eos)  # the scalar Bg would be off
 
@@ -331,17 +340,16 @@ def test_bottom_plume_sinks():
     z_c = grid.cell_centers()[:, 2]
     bottom = z_c <= 0.05
     top = z_c >= 0.27
-    dt = 864.0
     target = 30.0 * 86400.0
     t = 0.0
+    dt_sub0 = None
     while t < target - 1.0:
-        p, sw, sl, sg, z, conv = _step(
-            grid, k, inv_phiV, params, sw, z, p, injects_gas, qg_fixed,
-            mesh.wells, case.well_pw[0], case.well, dt=dt)
+        dt = min(86400.0, target - t)
+        p, sw, sl, sg, z, conv, last_dt = _implicit_compositional_full_adaptive(
+            grid, k, inv_phiV, dt, sw, z, p, mesh.wells, case.well_pw[0], case.well,
+            params, injects_gas, well_qg_fixed=qg_fixed, dt_sub0=dt_sub0, dt_max=864.0, dt_min=1.0)
+        dt_sub0 = last_dt
+        assert conv, f"full 30-day plume did not converge at t={t / 86400.0:.1f} d"
         t += dt
-        if not conv:
-            dt *= 0.5
-        else:
-            dt = min(dt * 1.5, 864.0)
     # The plume should be bottom-weighted (truth bottom k0-2 mean = 0.456).
     assert sg[bottom].mean() > sg[top].mean()

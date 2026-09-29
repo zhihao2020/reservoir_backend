@@ -28,6 +28,26 @@ class WellMap:
     xyz: NDArray[np.float64]  # heel coordinates (n_wells, 3)
     cells: tuple[NDArray[np.int64], ...]  # completion cells per well
     directions: tuple[NDArray[np.float64], ...] = ()  # unit heel->toe vector per well
+    geofac: tuple[float | None, ...] = ()  # per-well GEM GEOMETRY factor (None = fall back)
+    rw: tuple[float | None, ...] = ()  # per-well wellbore radius (m)
+    skin: tuple[float | None, ...] = ()  # per-well skin factor
+    kv_kh: tuple[float | None, ...] = ()  # per-well vertical/horizontal permeability ratio
+
+    def geofac_of(self, i: int, default: float = 1.0) -> float:
+        v = self.geofac
+        return v[i] if v and v[i] is not None else default
+
+    def rw_of(self, i: int, default: float = 0.005) -> float:
+        v = self.rw
+        return v[i] if v and v[i] is not None else default
+
+    def skin_of(self, i: int, default: float = 0.0) -> float:
+        v = self.skin
+        return v[i] if v and v[i] is not None else default
+
+    def kv_kh_of(self, i: int, default: float = 1.0) -> float:
+        v = self.kv_kh
+        return v[i] if v and v[i] is not None else default
 
 
 @dataclass(frozen=True)
@@ -181,6 +201,10 @@ def build_mesh(
     well_ids: list[str] | tuple[str, ...],
     well_xyz: NDArray[np.float64],
     well_trajectories: list[tuple[tuple[float, float, float], ...]] | None = None,
+    well_geofac: list[float] | tuple[float, ...] | None = None,
+    well_rw: list[float] | tuple[float, ...] | None = None,
+    well_skin: list[float] | tuple[float, ...] | None = None,
+    well_kv_kh: list[float] | tuple[float, ...] | None = None,
 ) -> MeshResult:
     nx, ny, nz = int(nx), int(ny), int(nz)
     if min_probe_chebyshev(probe_xyz) <= 1.0e-12 and np.asarray(probe_xyz).shape[0] >= 2:
@@ -196,7 +220,8 @@ def build_mesh(
     return MeshResult(
         grid=grid,
         probes=probes,
-        wells=_map_wells(grid, well_ids, well_xyz, well_trajectories),
+        wells=_map_wells(grid, well_ids, well_xyz, well_trajectories,
+                         well_geofac, well_rw, well_skin, well_kv_kh),
     )
 
 
@@ -205,6 +230,10 @@ def _map_wells(
     ids: list[str] | tuple[str, ...],
     well_xyz: NDArray[np.float64],
     trajectories: list[tuple[tuple[float, float, float], ...]] | None = None,
+    geofac: list[float] | tuple[float, ...] | None = None,
+    rw: list[float] | tuple[float, ...] | None = None,
+    skin: list[float] | tuple[float, ...] | None = None,
+    kv_kh: list[float] | tuple[float, ...] | None = None,
 ) -> WellMap:
     names = tuple(str(name) for name in ids)
     xyz = np.asarray(well_xyz, dtype=float)
@@ -220,7 +249,13 @@ def _map_wells(
             directions.append(d / norm if norm > 1.0e-12 else np.zeros(3, dtype=float))
         else:
             directions.append(np.zeros(3, dtype=float))
-    return WellMap(ids=names, xyz=xyz, cells=tuple(cells), directions=tuple(directions))
+    return WellMap(
+        ids=names, xyz=xyz, cells=tuple(cells), directions=tuple(directions),
+        geofac=tuple(geofac) if geofac else (),
+        rw=tuple(rw) if rw else (),
+        skin=tuple(skin) if skin else (),
+        kv_kh=tuple(kv_kh) if kv_kh else (),
+    )
 
 
 def _trajectory_cells(

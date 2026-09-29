@@ -78,3 +78,24 @@ def test_require_series_false_skips_present_files(tmp_path: Path):
     assert case.times.size == 0
     assert case.pressure.shape == (0, len(case.probes))
     assert case.well_pw.shape == (0, len(case.wells))
+
+
+def test_well_geofac_loads_per_well():
+    # GEM `GEOMETRY` is per-well: the injector 0.34, the producers 1.0. The
+    # optional `geofac` column in wells.csv must be read per well (not the
+    # single global default), and fall back to the case-level default when absent.
+    from src.programs.pipeline import run_mesh
+
+    case = load_lab_case(
+        Path(__file__).resolve().parents[1] / "examples" / "shale_oil" / "case.yaml"
+    )
+    assert [w.geofac for w in case.wells] == [0.34, 1.0, 1.0, 1.0, 1.0]
+    mesh = run_mesh(case)
+    assert [mesh.wells.geofac_of(i, 9.9) for i in range(5)] == [0.34, 1.0, 1.0, 1.0, 1.0]
+    # a wells.csv without the column leaves geofac None → the case-level default wins
+    small = load_lab_case(
+        Path(__file__).resolve().parents[1] / "examples" / "small" / "case.yaml"
+    )
+    assert all(w.geofac is None for w in small.wells)
+    small_mesh = run_mesh(small)
+    assert all(small_mesh.wells.geofac_of(i, 1.0) == 1.0 for i in range(len(small.wells)))

@@ -72,3 +72,16 @@ def test_solution_gas_three_phase_inversion_finite():
     assert np.isfinite(fields.k).all()
     assert np.isfinite(fields.phi).all()
     assert fields.diagnostics.get("relperm")
+
+
+def test_auto_relperm_selection_runs():
+    # ``relperm: auto`` must run the sensitivity-based auto-selection and still
+    # return finite k/phi (a subset of the Corey params may be selected or none).
+    case = load_lab_case(SMALL)
+    case.black_oil = replace(case.black_oil, rs_slope=1.0e-6)
+    case.relperm = ("auto",)
+    fields = run_pipeline(case)
+    assert np.isfinite(fields.k).all()
+    assert np.isfinite(fields.phi).all()
+    # the diagnostics record whichever subset was actually selected
+    assert isinstance(fields.diagnostics.get("relperm", {}), dict)

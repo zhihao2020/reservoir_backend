@@ -70,6 +70,10 @@ def run_mesh(case: LabCase) -> MeshResult:
         case.well_ids,
         case.well_xyz,
         case.well_trajectories,
+        well_geofac=[w.geofac for w in case.wells],
+        well_rw=[w.rw for w in case.wells],
+        well_skin=[w.skin for w in case.wells],
+        well_kv_kh=[w.kv_kh for w in case.wells],
     )
 
 

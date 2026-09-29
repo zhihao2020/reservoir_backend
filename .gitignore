@@ -12,6 +12,8 @@ __pycache__/
 
 # Local caches (regenerated on demand)
 *.rs_sat_cache.npz
+*.flash_table_cache.npz
+*.flash_table_dead_cache.npz
 
 # Nuitka / pack
 build/

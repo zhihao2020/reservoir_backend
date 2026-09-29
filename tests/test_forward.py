@@ -7,6 +7,7 @@ outputs, phase conservation (sw+so+sg=1), and the compositional phase split.
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from src.core.lab_case import load_lab_case
 from src.programs.forward import forward_saturations
@@ -98,3 +99,21 @@ def test_tabular_relperm():
     assert np.allclose(lam_w, 0.0)
     assert np.allclose(lam_o, 0.25 / 2.0e-3)  # Krog(0.4)=0.25 * Krow(0)=1
     assert np.allclose(lam_g, 0.25 / 2.0e-5)  # Krg(0.4)=0.25
+
+
+def test_land_free_gas_trapping():
+    # Land's residual trapping: all gas free at the reversal (sg = sg_max), all
+    # trapped at the Land residual (sg = sgr), monotonic in between, and C=0
+    # disables trapping entirely (unlike the old linear Carlson model).
+    from src.programs.rock import land_free_gas
+
+    C = 1.0
+    sg_max = 0.5
+    sgr = sg_max / (1.0 + C * sg_max)  # 1/3
+    assert land_free_gas(np.array([sg_max]), np.array([sg_max]), C)[0] == pytest.approx(sg_max)
+    assert land_free_gas(np.array([sgr]), np.array([sg_max]), C)[0] == pytest.approx(0.0, abs=1.0e-9)
+    sgs = np.linspace(sgr, sg_max, 25)
+    sgf = land_free_gas(sgs, np.full_like(sgs, sg_max), C)
+    assert np.all(np.diff(sgf) >= 0.0)  # monotonic free gas
+    # C = 0 -> no trapping (sgf = sg)
+    assert np.allclose(land_free_gas(sgs, np.full_like(sgs, sg_max), 0.0), sgs)

@@ -107,66 +107,36 @@ class FluidParams:
     sor: float = 0.15
     sgc: float = 0.02
     ct: float = 1.0e-9
-    # Solution-gas (CO2-in-oil) extension. ``rs_slope`` is the Henry's-law slope
-    # ``Rs = rs_slope * p`` (m3 dissolved gas / m3 oil / Pa) used for the *output*
-    # dissolved-gas metric (a throughput measure). ``rs_eq_slope`` is the
-    # *equilibrium* solubility slope for the forward model's phase split (a
-    # thermodynamic bound); 0.0 falls back to ``rs_slope`` for backward
-    # compatibility. ``bo_slope`` is the linear oil-swelling factor (reserved).
+    # Solution-gas (CO2-in-oil) output metric. ``rs_slope`` is the Henry's-law
+    # slope ``Rs = rs_slope * p`` (m3 dissolved gas / m3 oil / Pa) used for the
+    # *offline* ``rs`` / ``co2`` output fields (a throughput measure, not a
+    # thermodynamic bound — the 14-component forward model gets the true CO2
+    # solubility from the PR EOS flash).
     rs_slope: float = 0.0
-    rs_eq_slope: float = 0.0
-    bo_slope: float = 0.0
-    # When True, the equilibrium Rs comes from the Peng-Robinson EOS bubble-point
-    # solubility ``Rs_sat(p)`` (``core.pr_eos.rs_sat_interp``), the thermodynamic
-    # bound GEM actually uses, instead of the Henry's-law ``rs_slope``/``rs_quad``.
-    # This reproduces the correct free-gas fraction (the injected CO2 beyond the
-    # solubility stays free gas), which the fitted Rs=187 throughput metric gets
-    # wrong (it dissolves everything).
-    rs_eos: bool = False
-    # Quadratic solubility coefficient (1/Pa^2) so the equilibrium Rs can be a
-    # *nonlinear* ``Rs(p) = rs_slope*p + rs_quad*p^2``. The GEM Peng-Robinson EOS
-    # gives a solubility that is more pressure-sensitive than Henry's law near
-    # the phase boundary (~3.6x the linear slope at 20 MPa / 120 C), so a PVT
-    # table (or this quadratic) is a more faithful equilibrium bound. 0.0 keeps
-    # the backward-compatible Henry's law.
-    rs_quad: float = 0.0
-    # Phase gravity heads ``rho*g`` (Pa/m) for the forward model's buoyancy
-    # (denser phases sink). 0.0 = no gravity (backward compatible). At high
-    # pressure the CO2-rich phase can be *denser* than the oil (density
-    # inversion), so ``rho_g > rho_o`` makes the free gas segregate to the bottom.
-    rho_w: float = 0.0
-    rho_o: float = 0.0
+    # Free-gas gravity head ``rho_g = (rho_CO2 - rho_oil)*g`` (Pa/m) for the
+    # forward model's buoyancy (denser gas sinks). 0.0 = no gravity. At 20 MPa /
+    # 120 C supercritical CO2 (~590 kg/m3) is denser than the oil (~513 kg/m3), so
+    # ``rho_g > 0`` makes the free gas segregate to the bottom.
     rho_g: float = 0.0
-    # Gas head source for the EOS compositional models (two/three/full):
-    # "scalar" uses ``rho_g`` everywhere; "eos" uses the per-face EOS density
-    # difference ``g*(rho_gas - rho_liq)``, with ``rho_g`` only where no gas flows.
+    # Gas head source for the 14-component molar model: "scalar" uses ``rho_g``
+    # everywhere; "eos" uses the per-face EOS density difference
+    # ``g*(rho_gas - rho_liq)``, with ``rho_g`` only where no gas flows.
     gravity: str = "scalar"
-    # Solvent (CO2) density head ``rho_s*g`` (Pa/m) for the FCM miscible model.
-    # The CO2-rich phase can be denser than the oil (density inversion), in which
-    # case ``rho_s > rho_o`` makes the mixture sink.
-    rho_s: float = 0.0
-    # Solubility threshold ``c_sat`` (solvent volume fraction) for the FCM phase
-    # split: below it all CO2 is dissolved (sg=0), above it the excess is free gas.
-    c_sat: float = 0.66
     # Gas formation-volume factor ``Bg`` (reservoir gas volume / surface gas
-    # volume). At high pressure the gas is compressed (Bg << 1). The conserved
-    # CO2 component ``C = sg/Bg + Rs*so`` is in *surface* volume; ``Bg`` maps the
-    # reservoir free-gas volume ``sg`` to that surface measure (and ``1/Bg`` maps
-    # the reservoir gas *flux* back to surface). The well gas rate ``qg`` is
-    # already surface volume (GEM ``*BHF``), so it enters the C source as-is.
+    # volume). In the molar model it only scales the rate-constraint row (reservoir
+    # volume units); the fluxes and well terms use the EOS molar volumes.
     bg: float = 1.0
     # Optional tabular rel-perm (CMG *SGT / *SWT). When set, the forward model
     # interpolates these curves instead of the Corey power-law above.
     relperm_table: RelpermTable | None = None
-    # Kinetic dissolution rate (1/s) of CO2 into the oil:
-    # ``d(Cd)/dt = k_diss * (Rs*No - Cd)``. 0.0 = instantaneous equilibrium
-    # (backward compatible); >0 makes the free gas dissolve over ~1/k_diss.
-    k_diss: float = 0.0
     # Floor on the gas relative permeability ``krg`` (diagnostic). 0.0 keeps the
     # table/Corey curves as-is (krg = 0 below the residual gas saturation). A small
-    # non-zero value lets the free gas flow even below ``sgc``, which is needed to
-    # drain the excess injected CO2 and avoid the unbounded-C Newton stall.
+    # non-zero value lets the free gas flow even below ``sgc``.
     krg_floor: float = 0.0
+    # Land trapping coefficient (dimensionless) for residual gas trapping. 0.0
+    # disables trapping (backward compatible); a positive value applies Land's
+    # model when ``sg_max`` (the historical max gas saturation) is tracked.
+    land_coefficient: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -249,6 +219,32 @@ def corey_phase_mobilities(
     return krw / params.mu_w, kro / params.mu_o, krg / params.mu_g
 
 
+def land_free_gas(
+    sg: NDArray[np.float64] | float,
+    sg_max: NDArray[np.float64] | float,
+    C: float,
+) -> NDArray[np.float64]:
+    """Land's free-gas saturation under residual trapping (imbibition).
+
+    Land's model gives the residual (trapped) gas ``sgr = sg_max / (1 + C*sg_max)``
+    after a full imbibition from ``sg_max``; the mobile (free) gas at the current
+    ``sg`` follows Land's nonlinear curve (Spiteri-Juanes 2008):
+
+        ``sgf = 1/2 * ((sg - sgr) + sqrt((sg - sgr)^2 + (4/C)*(sg - sgr)))``
+
+    clipped to ``[0, sg_max]``. ``C = 0`` disables trapping (``sgf = sg``), which
+    is also what the linear Carlson approximation degenerates to at its endpoints.
+    """
+    sg_a = np.asarray(sg, dtype=float)
+    sg_max_a = np.asarray(sg_max, dtype=float)
+    if float(C) <= 0.0:
+        return sg_a
+    sgr = sg_max_a / (1.0 + C * sg_max_a)
+    d = sg_a - sgr
+    sgf = np.where(d > 0.0, 0.5 * (d + np.sqrt(d ** 2 + (4.0 / C) * d)), 0.0)
+    return np.clip(sgf, 0.0, sg_max_a)
+
+
 def tabular_phase_mobilities(
     sw: NDArray[np.float64] | float,
     so: NDArray[np.float64] | float,
@@ -260,21 +256,20 @@ def tabular_phase_mobilities(
     """Per-phase mobilities from tabular rel-perm (Stone I for the oil).
 
     ``sg_max`` (optional) is the maximum historical gas saturation per cell; when
-    given, residual trapping hysteresis (Carlson's model, MRST co2lab-style) is
-    applied: on imbibition (``sg < sg_max``) the trapped gas ``sgt = sg_max − sg``
-    is immobile, so ``krg`` is evaluated at the free gas ``sg_free = sg − sgt =
-    2·sg − sg_max`` instead of ``sg``. This makes a high-gas branch stable — once
-    the gas has been at ``sg_max`` it cannot drain below it as fast (the trapped
-    portion keeps ``krg=0``).
+    given *and* ``params.land_coefficient > 0``, residual trapping hysteresis is
+    applied: on imbibition (``sg < sg_max``) the trapped gas is immobile, so
+    ``krg`` is evaluated at the free gas ``sg_free`` from Land's model
+    (:func:`land_free_gas`) instead of ``sg``. This makes a high-gas branch stable
+    — once the gas has been at ``sg_max`` it cannot drain below it as fast (the
+    trapped portion keeps ``krg=0``).
     """
     sw_a = np.asarray(sw, dtype=float)
     sg_a = np.asarray(sg, dtype=float)
     krw = np.interp(sw_a, table.sw, table.krw)
     krow = np.interp(sw_a, table.sw, table.krow)
     krog = np.interp(sg_a, table.sg, table.krog)
-    if sg_max is not None:
-        sg_max_a = np.asarray(sg_max, dtype=float)
-        sg_free = np.maximum(0.0, 2.0 * sg_a - sg_max_a)
+    if sg_max is not None and params.land_coefficient > 0.0:
+        sg_free = land_free_gas(sg_a, np.asarray(sg_max, dtype=float), params.land_coefficient)
         krg = np.interp(sg_free, table.sg, table.krg)
     else:
         krg = np.interp(sg_a, table.sg, table.krg)
@@ -446,7 +441,9 @@ def well_cell_rates_weighted(
         if i >= rates.size or not np.isfinite(rates[i]) or cells.size == 0:
             continue
         direction = directions[i] if i < len(directions) else np.zeros(3)
-        wi = peaceman_wi(grid, k, cells, direction, rw=rw, skin=skin, kv_kh=kv_kh, geofac=geofac)
+        wi = peaceman_wi(grid, k, cells, direction,
+                         rw=wells.rw_of(i, rw), skin=wells.skin_of(i, skin),
+                         kv_kh=wells.kv_kh_of(i, kv_kh), geofac=wells.geofac_of(i, geofac))
         # wellbore head: BHP_ref + rho_g * (z_ref - z_cell)
         z_ref = float(wells.xyz[i, 2])
         bhp_eff = float(bhp[i]) + float(rho_g) * (z_ref - centers[cells, 2])
@@ -774,6 +771,35 @@ def _logit_phi(phi: float) -> float:
 
 _RELPERM_NAMES = ("nw", "no", "ng", "krw_end", "kro_end", "krg_end")
 
+# Relative sensitivity threshold for the ``relperm: auto`` selection: a Corey
+# parameter whose finite-difference residual response is below this fraction of
+# the largest response is judged unidentifiable and dropped.
+_AUTO_RELPERM_TOL = 0.1
+
+
+def _select_auto_relperm(residuals, theta0, n_probe, relperm) -> tuple[str, ...]:
+    """Select identifiable Corey rel-perm parameters by residual sensitivity.
+
+    Perturbs each candidate's log-parameter (the ``relperm_log`` block of
+    ``theta0``) and keeps the ones whose residual response is at least
+    ``_AUTO_RELPERM_TOL`` of the largest — i.e. the parameters the observations
+    are actually sensitive to. Returns ``()`` when none are identifiable.
+    """
+    sens = []
+    for j in range(len(relperm)):
+        col = 2 * n_probe + j
+        h = 1.0e-6 * max(1.0, abs(float(theta0[col])))
+        tp = np.asarray(theta0, dtype=float).copy()
+        tm = np.asarray(theta0, dtype=float).copy()
+        tp[col] += h
+        tm[col] -= h
+        sens.append(float(np.linalg.norm(residuals(tp) - residuals(tm)) / (2.0 * h)))
+    sens = np.asarray(sens, dtype=float)
+    smax = float(sens.max()) if sens.size else 0.0
+    if smax <= 0.0:
+        return ()
+    return tuple(c for c, s in zip(relperm, sens) if s >= _AUTO_RELPERM_TOL * smax)
+
 
 def transient_weights(
     times: NDArray[np.float64],
@@ -847,7 +873,9 @@ def invert_rock(
     emphasise the pressure transient for porosity identifiability.
     """
     oil = params or FluidParams()
-    relperm = tuple(p for p in relperm if p in _RELPERM_NAMES)
+    relperm = tuple(relperm)
+    auto = "auto" in relperm
+    relperm = tuple(_RELPERM_NAMES) if auto else tuple(p for p in relperm if p in _RELPERM_NAMES)
     n_rel = len(relperm)
     if time_weights is not None:
         time_weights = np.asarray(time_weights, dtype=float).ravel()
@@ -945,7 +973,7 @@ def invert_rock(
             if well_bhp is not None:
                 src = well_cell_rates_weighted(
                     grid, wells, rates[t], well_bhp[t], k_field, mobility_t[t], p[t],
-                    rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g,
+                    rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g, geofac=wp.geofac,
                 )
             r = divs[t] - src
             if t > 0 and dt[t - 1] > 0.0:
@@ -1027,6 +1055,15 @@ def invert_rock(
             theta0 = np.concatenate([theta0, [np.log(float(getattr(oil, pname))) for pname in relperm]])
     else:
         theta0 = np.asarray(theta0, dtype=float).copy()
+    if auto:
+        keep = _select_auto_relperm(residuals, theta0, n_probe, relperm)
+        if keep != relperm:
+            return invert_rock(
+                grid, pressure, sw, so, sg, times, probes, wells, well_rate,
+                phi0=phi0, k0=k0, params=params, relperm=keep,
+                time_weights=time_weights, max_nfev=max_nfev,
+                well_bhp=well_bhp, well_params=well_params, smoothness=smoothness,
+            )
     fit = None
     try:
         from scipy.optimize import least_squares
@@ -1067,7 +1104,7 @@ def invert_rock(
             # honour the Peaceman-weighted allocation when BHP controls the well.
             src = well_cell_rates_weighted(
                 grid, wells, rates[t], well_bhp[t], k_field, mobility_f[t], p[t],
-                rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g,
+                rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g, geofac=wp.geofac,
             )
         r = divs_f[t] - src
         if t > 0 and n_t > 1 and dt[t - 1] > 0.0:
@@ -1126,7 +1163,9 @@ def invert_rock_three_phase(
     disambiguates the Corey parameters from k.
     """
     oil = params or FluidParams()
-    relperm = tuple(p for p in relperm if p in _RELPERM_NAMES)
+    relperm = tuple(relperm)
+    auto = "auto" in relperm
+    relperm = tuple(_RELPERM_NAMES) if auto else tuple(p for p in relperm if p in _RELPERM_NAMES)
     n_rel = len(relperm)
     if time_weights is not None:
         time_weights = np.asarray(time_weights, dtype=float).ravel()
@@ -1229,15 +1268,15 @@ def invert_rock_three_phase(
             if well_bhp is not None:
                 src_w = well_cell_rates_weighted(
                     grid, wells, qw[t], well_bhp[t], k_field, lam_w, p[t],
-                    rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g,
+                    rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g, geofac=wp.geofac,
                 )
                 src_o = well_cell_rates_weighted(
                     grid, wells, qo[t], well_bhp[t], k_field, lam_o, p[t],
-                    rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g,
+                    rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g, geofac=wp.geofac,
                 )
                 src_g = well_cell_rates_weighted(
                     grid, wells, qg[t], well_bhp[t], k_field, lam_g, p[t],
-                    rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g,
+                    rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g, geofac=wp.geofac,
                 )
             else:
                 src_w, src_o, src_g = sources_w[t], sources_o[t], sources_g[t]
@@ -1356,6 +1395,17 @@ def invert_rock_three_phase(
             theta0 = np.concatenate([theta0, [np.log(float(getattr(oil, pname))) for pname in relperm]])
     else:
         theta0 = np.asarray(theta0, dtype=float).copy()
+    if auto:
+        keep = _select_auto_relperm(residuals, theta0, n_probe, relperm)
+        if keep != relperm:
+            return invert_rock_three_phase(
+                grid, pressure, sw, so, sg, times, probes, wells,
+                well_qw, well_qo, well_qg,
+                phi0=phi0, k0=k0, params=params, relperm=keep,
+                time_weights=time_weights, fractional_weight=fractional_weight,
+                max_nfev=max_nfev, well_bhp=well_bhp, well_params=well_params,
+                smoothness=smoothness,
+            )
     fit = None
     try:
         from scipy.optimize import least_squares
@@ -1396,15 +1446,15 @@ def invert_rock_three_phase(
             # Consistent with the fitted residual: Peaceman-weighted allocation.
             src_w = well_cell_rates_weighted(
                 grid, wells, qw[t], well_bhp[t], k_field, lam_w, p[t],
-                rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g,
+                rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g, geofac=wp.geofac,
             )
             src_o = well_cell_rates_weighted(
                 grid, wells, qo[t], well_bhp[t], k_field, lam_o, p[t],
-                rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g,
+                rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g, geofac=wp.geofac,
             )
             src_g = well_cell_rates_weighted(
                 grid, wells, qg[t], well_bhp[t], k_field, lam_g, p[t],
-                rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g,
+                rw=wp.rw, skin=wp.skin, kv_kh=wp.kv_kh, rho_g=wp.rho_g, geofac=wp.geofac,
             )
         else:
             src_w, src_o, src_g = sources_w[t], sources_o[t], sources_g[t]

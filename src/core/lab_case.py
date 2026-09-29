@@ -51,6 +51,16 @@ def _parse_gravity(raw: Any) -> str:
     return mode
 
 
+def _parse_relperm(raw: Any) -> tuple[str, ...]:
+    """``inversion.relperm``: a list of Corey parameter names, or the string
+    ``"auto"`` to auto-select the identifiable subset by residual sensitivity."""
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        raw = [raw]
+    return tuple(str(x).strip().lower() for x in raw)
+
+
 def _vec3(raw: Any, name: str) -> tuple[float, float, float]:
     if not isinstance(raw, (list, tuple)) or len(raw) != 3:
         raise CaseSchemaError([f"{name} must be a length-3 list"])
@@ -75,6 +85,10 @@ class WellSpec:
     x2: float | None = None
     y2: float | None = None
     z2: float | None = None
+    geofac: float | None = None
+    rw: float | None = None
+    skin: float | None = None
+    kv_kh: float | None = None
 
     @property
     def trajectory(self) -> tuple[tuple[float, float, float], ...]:
@@ -364,19 +378,11 @@ def lab_case_from_mapping(
         sgc=float(oil_raw.get("Sgc", oil_raw.get("sgc", 0.02))),
         ct=float(oil_raw.get("ct_1pa", 1.0e-9)),
         rs_slope=float(oil_raw.get("rs_slope", 0.0)),
-        rs_eq_slope=float(oil_raw.get("rs_eq_slope", 0.0)),
-        rs_quad=float(oil_raw.get("rs_quad", 0.0)),
-        rs_eos=bool(oil_raw.get("rs_eos", False)),
-        bo_slope=float(oil_raw.get("bo_slope", 0.0)),
-        rho_w=float(oil_raw.get("rho_w", 0.0)),
-        rho_o=float(oil_raw.get("rho_o", 0.0)),
         rho_g=float(oil_raw.get("rho_g", 0.0)),
         gravity=_parse_gravity(oil_raw.get("gravity", "scalar")),
-        rho_s=float(oil_raw.get("rho_s", 0.0)),
-        c_sat=float(oil_raw.get("c_sat", 0.66)),
         bg=float(oil_raw.get("bg", 1.0)),
         relperm_table=_parse_relperm_table(oil_raw.get("relperm_table")),
-        k_diss=float(oil_raw.get("k_diss", 0.0)),
+        land_coefficient=float(oil_raw.get("land_coefficient", 0.0)),
     )
     well = WellModelParams(
         rw=float(well_raw.get("rw", 0.005)),
@@ -415,7 +421,7 @@ def lab_case_from_mapping(
         method=str(interp.get("method", "kriging")),
         rock_model=str(inv.get("model", "total_mobility")),
         forward_model=str(fwd.get("model", "none")),
-        relperm=tuple(str(x) for x in (inv.get("relperm") or [])),
+        relperm=_parse_relperm(inv.get("relperm")),
         k_smoothness=float(inv.get("k_smoothness", 2.0)),
         k_homogeneous=bool(inv.get("k_homogeneous", False)),
         transient=bool(inv.get("transient", False)),
@@ -528,6 +534,10 @@ def _load_wells(raw: dict[str, Any], base: Path) -> list[WellSpec]:
                 x2=_coord_optional(row, "x2"),
                 y2=_coord_optional(row, "y2"),
                 z2=_coord_optional(row, "z2"),
+                geofac=_opt_float(row, "geofac"),
+                rw=_opt_float(row, "rw"),
+                skin=_opt_float(row, "skin"),
+                kv_kh=_opt_float(row, "kv_kh"),
             )
         )
     return wells
@@ -551,6 +561,16 @@ def _coord_optional(row: dict[str, Any], axis: str) -> float | None:
         unit = str(row.get("unit") or row.get(f"{axis}_unit") or "m")
         return to_metres(float(row[axis]), unit)
     return None
+
+
+def _opt_float(row: dict[str, Any], key: str) -> float | None:
+    """Optional CSV column → float, or ``None`` when the column is absent/empty.
+
+    Per-well well parameters (geofac/rw/skin/kv_kh) are ``None`` when unset so the
+    case-level ``well:`` defaults win at the ``WellMap`` layer.
+    """
+    v = row.get(key)
+    return float(v) if v not in ("", None) else None
 
 
 def _empty_probe_series(n_probes: int) -> tuple[
