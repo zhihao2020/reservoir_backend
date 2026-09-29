@@ -1150,16 +1150,14 @@ def _implicit_compositional_two_step(
         D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
         A_g_ = A_ - params.rho_g * A_grav
-        # Hydrocarbon *moles* balance (the compressible-gas pressure equation):
-        # the oil is conserved by this + the CO2 equation (see the split above).
-        # The divergence uses the tpfa Laplacian in the moles mobility m_N (its
-        # p-dependence is the pressure gradient, not the weak flash V(p,z)).
-        # Total-volume balance (the pressure equation): the incompressible rock
-        # conserves volume exactly (sw+sl+sg=1), so the pressure is fixed by
-        # div(λt·∇p) = total reservoir-volume source (qw + qo + qg·Bg). This is the
-        # OPM/CMG compositional pressure equation — not a hydrocarbon-moles balance.
-        q_vol_ = qw_ + qo_ + qg_ * Bg  # total reservoir-volume source
-        r_p_ = A_ @ lam_t_ - q_vol_ + accum * params.ct * (p_ - p0) - params.rho_g * (A_grav @ lam_g_)
+        # Total hydrocarbon MOLAR balance (the OPM/MRST compositional pressure
+        # equation): the oil (non-CO2) is conserved as (total moles − CO2 moles).
+        # Uses the molar mobility λg/v_g + λl/v_l (EOS molar volumes) and the molar
+        # well source q_N = qg/V_CO2_STD + qo/v_l.
+        q_N_ = qg_ / _V_CO2_STD + qo_ / np.maximum(v_l_, 1.0e-30)
+        r_p_ = (accum * (N_ - N0) - q_N_
+                + A_g_ @ (lam_g_ / np.maximum(v_g_, 1.0e-30))
+                + A_ @ (lam_l_ / np.maximum(v_l_, 1.0e-30)))
         D_inj_ = inj_diag(lam_t_)
         r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
         r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
@@ -1235,12 +1233,17 @@ def _implicit_compositional_two_step(
                 + diags(np.where(inj_cell, D / Bg,
                                  D * ((y * lam_g / Bg + x * r_co2 * lam_l) / np.maximum(lam_t, eps))))
                 + _upwind_tpfa_matrix_vec(grid, permeability, m_co2_gas + m_co2_liq, p)).tocsr()
-        # Pressure block (volume balance): r_p = A@λt − q_vol with q_vol = qw+qo+qg·Bg.
-        # ∂(A@λt)/∂p = L_up(λt) + A@diag(dλt/dp); ∂q_vol/∂p = −D (well conductivity).
-        J_pp = (A @ diags(dlam_t_dp) + _upwind_tpfa_matrix_vec(grid, permeability, lam_t, p)
-                + diags(D) + diags(accum * params.ct)).tocsr()
-        J_pw = A @ diags(dlam_t_dsw) - diags(dq_vol_dsw)
-        J_pz = A @ diags(dlam_t_dz) - diags(dq_vol_dz)
+        # Pressure block (molar balance): r_p = accum·(N−N0) − q_N + A_g@(λg/v_g) + A@(λl/v_l).
+        # ∂/∂p: accum·dN/dp + A@diag(dm_N/dp) + upwind-TPFA(m_N) + molar well conductivity.
+        # The molar well source q_N = qg/V_CO2_STD + qo/v_l; its p-derivative is
+        # −D/(Bg·V_CO2_STD) for the injector, −D·(λl/λt)/v_l for the producers.
+        D_molar = np.where(inj_cell, D / (Bg * _V_CO2_STD),
+                           D * (lam_l / np.maximum(lam_t, eps)) / np.maximum(v_l, 1.0e-30))
+        J_pp = (diags(dN_dp * accum) + A @ diags(dm_N_dp)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_N, p)
+                + diags(D_molar)).tocsr()
+        J_pw = diags(dN_dsw * accum) + A @ diags(dm_N_dsw)
+        J_pz = diags(dN_dz * accum) + A @ diags(dm_N_dz)
         J_ww = I + A @ diags(dlw_dsw)
         J_wz = A @ diags(dlw_dz)
         # CO2 flux splits gas (gravity) / liquid (no gravity), so the Jacobian does too.
