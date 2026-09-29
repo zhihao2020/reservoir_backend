@@ -22,9 +22,7 @@ python -m src path/to/case.yaml --tcp-port 9000 --ip 127.0.0.1 --lab-port 9001 -
 `--tcp-port` 是测点/注采的入站 TCP（无默认值）；`--lab-port` / `--field-port` 是反演
 结果的两路 UDP 出站（实验 / 矿场尺度）；`--control-port` 是可选的控制端口（应答
 RESEND 重发请求）。`--model {none,black_oil,compositional}` 选前向饱和度模型（覆盖
-YAML 里的 `forward.model`），默认 `none`（克里金，联调默认）。`compositional` 是溶液气
-（solution-gas）组分模型：CO₂ 溶解进油（`Rs = rs_slope·p`，亨利定律），组分
-`C = sg/Bg + Rs·so`（自由气 + 溶解气），过饱和时析出自由气。不写 `-o` 不落盘。
+YAML 里的 `forward.model`），默认 `none`（克里金）。不写 `-o` 不落盘。
 
 在线时 `case.yaml` 只做 init（网格、测点坐标、井轨迹、初值、相似比）；`observations` /
 `series` 可以没有（即使写了也会被忽略，观测一律走 TCP）。采集端连上 `--tcp-port` 后这条
@@ -36,12 +34,20 @@ YAML 里的 `forward.model`），默认 `none`（克里金，联调默认）。`
 
 ## 文档
 
+原理学习（无油藏数模背景从这里开始）：[docs/原理学习/00-导读与学习路线.md](docs/原理学习/00-导读与学习路线.md)。
+
 | 文档 | 内容 |
 |---|---|
+| [docs/原理学习/](docs/原理学习/00-导读与学习路线.md) | 渗流、网格、克里金、相渗与井、反演、EOS、前向、管线、验证（00–09） |
+| [docs/技术原理与架构.md](docs/技术原理与架构.md) | 模块树、数据流、路线图 |
 | [docs/接口协议.md](docs/接口协议.md) | 协议 v2 逐字节规范（TCP/UDP 帧、枚举、manifest/results schema、单元排序、离线格式） |
 | [docs/联调指南.md](docs/联调指南.md) | 三角色三端口拓扑、启动顺序、分步走查、故障排查 |
 | [docs/案例库.md](docs/案例库.md) | 各案例用途/网格/模型/耗时 + `case.yaml` 字段参考 |
 | [docs/相似换算.md](docs/相似换算.md) | 几何-运动相似准则与跨尺度换算 |
+| [docs/压力方程逐项对照.md](docs/压力方程逐项对照.md) | 组分压力方程 vs OPM/MRST |
+| [docs/前向模型差距分析与计划.md](docs/前向模型差距分析与计划.md) | 前向 7 阶段差距与计划 |
+| [docs/组分前向模型实施与测试.md](docs/组分前向模型实施与测试.md) | 压力方程修复步骤与测试名 |
+| [docs/非润湿气相驱替设计.md](docs/非润湿气相驱替设计.md) | 动力学溶解 + Carlson 捕集 |
 
 ## 案例库
 

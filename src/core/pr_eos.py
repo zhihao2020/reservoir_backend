@@ -65,13 +65,12 @@ for _i in range(14):
 # rho_oil_std ~ 800 kg/m3 for a light oil. Rs = (molCO2/molOil) * V_CO2 / V_oil.
 _V_CO2_STD = 0.0237
 _RHO_OIL_STD = 800.0  # kg/m3
-_MW_OIL = float(np.sum(_Z_OIL * _MW))  # native oil MW (~85 g/mol, incl. 0.03 CO2)
 _MW_OIL_DEAD = float(np.sum(_Z_OIL_DEAD * _MW))  # dead-oil MW (~86.6 g/mol, no CO2)
 
-# The *surface* oil molar volume uses the dead-oil MW: the compositional models
-# flash on the CO2-free dead-oil base, so "oil surface volume" = dead oil. The
-# native _MW_OIL is kept for rs_sat (the solution-gas model flashes on the native
-# _Z_OIL), whose ~1.5% difference is a separate base-consistency question.
+# The *surface* oil molar volume uses the dead-oil MW everywhere: the non-CO2
+# moles of any liquid built from _Z_OIL or _Z_OIL_DEAD are dead oil (rs_sat counts
+# the native 0.03 CO2 as dissolved CO2 in x). Reservoir phase molar masses and
+# densities come from the flashed compositions (see phase_mass_densities).
 
 # Peneloux volume-shift parameters (m3/mol). The PR EOS without a volume
 # translation over-predicts the supercritical CO2 molar volume: pure CO2 at
@@ -208,7 +207,9 @@ def rs_sat(P: float | np.ndarray, T: float = 393.0) -> float | np.ndarray:
     out = np.empty_like(P_arr)
     cache: dict[float, float] = {}
     aij, b = _ab(T)  # PR EOS parameters depend on T only — compute once.
-    v_oil = _MW_OIL / 1000.0 / _RHO_OIL_STD  # m3/mol oil at surface
+    # At the bubble point the liquid is (1-zc)*_Z_OIL + zc CO2, so its non-CO2
+    # moles (1-x) are exactly dead oil.
+    v_oil = _MW_OIL_DEAD / 1000.0 / _RHO_OIL_STD  # m3/mol dead oil at surface
     for i, p in enumerate(P_arr):
         p = float(p)
         if p not in cache:
@@ -227,6 +228,8 @@ def rs_sat_table(pmin: float = 15.0e6, pmax: float = 22.0e6, n: int = 36, T: flo
 
 _TABLE_CACHE: tuple[np.ndarray, np.ndarray] | None = None
 _CACHE_FILE = Path(__file__).parent / ".rs_sat_cache.npz"
+# Bumped when the Rs_sat formula changes without any EOS input changing.
+_RS_SAT_CACHE_TAG = ":rs-dead-oil"
 
 
 def _eos_fingerprint() -> str:
@@ -251,17 +254,18 @@ def _load_table() -> tuple[np.ndarray, np.ndarray]:
     global _TABLE_CACHE
     if _TABLE_CACHE is not None:
         return _TABLE_CACHE
+    fingerprint = _eos_fingerprint() + _RS_SAT_CACHE_TAG
     if _CACHE_FILE.is_file():
         try:
             z = np.load(_CACHE_FILE)
-            if str(z["fingerprint"]) == _eos_fingerprint():
+            if str(z["fingerprint"]) == fingerprint:
                 _TABLE_CACHE = (np.asarray(z["P"], dtype=float), np.asarray(z["Rs"], dtype=float))
                 return _TABLE_CACHE
         except Exception:
             pass  # corrupt / incompatible cache: rebuild below
     P, Rs = rs_sat_table()
     try:
-        np.savez(_CACHE_FILE, P=P, Rs=Rs, fingerprint=np.array(_eos_fingerprint()))
+        np.savez(_CACHE_FILE, P=P, Rs=Rs, fingerprint=np.array(fingerprint))
     except Exception:
         pass  # read-only install: keep the in-memory cache only
     _TABLE_CACHE = (P, Rs)
@@ -290,8 +294,9 @@ def rs_sat_interp(pressure: float | np.ndarray, T: float = 393.0) -> float | np.
 # it. The flash is per-cell and expensive, so it is tabulated over (p, z) and
 # interpolated. ``x_CO2`` is the liquid (oil) phase CO2 mole fraction, ``y_CO2``
 # the gas (vapor) phase CO2 mole fraction.
-_FLASH_CACHE: tuple[np.ndarray, ...] | None = None
+_FLASH_CACHE: dict[bool, tuple[np.ndarray, ...]] = {}
 _FLASH_CACHE_FILE = Path(__file__).parent / ".flash_table_cache.npz"
+_FLASH_DEAD_CACHE_FILE = Path(__file__).parent / ".flash_table_dead_cache.npz"
 
 
 def flash_table(
@@ -302,6 +307,8 @@ def flash_table(
     zmax: float = 0.999,
     nz: int = 50,
     T: float = 393.0,
+    *,
+    dead_oil: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Precompute the two-phase flash over a ``(pressure, CO2 mole fraction)`` grid.
 
@@ -310,7 +317,12 @@ def flash_table(
     CO2 mole fraction at ``(P[i], Z[j])``. ``X``/``Y`` are the *overall* CO2 mole
     fraction ``Z`` in the single-phase regions (X = Z for V = 0, Y = Z for V = 1)
     so the composition fields stay continuous across the phase boundary.
+
+    ``dead_oil`` flashes ``Z`` CO2 on the CO2-free ``_Z_OIL_DEAD`` base (the base of
+    :func:`flash_direct_volumes`) instead of the native ``_Z_OIL`` (0.03 CO2); the
+    two bases put the bubble point at different ``Z``.
     """
+    base = _Z_OIL_DEAD if dead_oil else _Z_OIL
     P = np.linspace(pmin, pmax, np_)
     Z = np.linspace(zmin, zmax, nz)
     aij, b = _ab(T)
@@ -319,7 +331,7 @@ def flash_table(
     Y = np.zeros((np_, nz))
     for i, p in enumerate(P):
         for j, zc in enumerate(Z):
-            z = (1.0 - zc) * _Z_OIL
+            z = (1.0 - zc) * base
             z[_CO2_IDX] += zc
             v, x, y = _flash(z, float(p), T, aij, b)
             V[i, j] = v
@@ -328,26 +340,27 @@ def flash_table(
     return P, Z, V, X, Y
 
 
-def _load_flash_table() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    global _FLASH_CACHE
-    if _FLASH_CACHE is not None:
-        return _FLASH_CACHE
-    if _FLASH_CACHE_FILE.is_file():
+def _load_flash_table(dead_oil: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Cached :func:`flash_table` (native or dead-oil base), persisted next to this module."""
+    if dead_oil in _FLASH_CACHE:
+        return _FLASH_CACHE[dead_oil]
+    path = _FLASH_DEAD_CACHE_FILE if dead_oil else _FLASH_CACHE_FILE
+    fingerprint = _eos_fingerprint() + (":dead" if dead_oil else "")
+    if path.is_file():
         try:
-            z = np.load(_FLASH_CACHE_FILE)
-            if str(z["fingerprint"]) == _eos_fingerprint():
-                _FLASH_CACHE = (z["P"], z["Z"], z["V"], z["X"], z["Y"])
-                return _FLASH_CACHE
+            z = np.load(path)
+            if str(z["fingerprint"]) == fingerprint:
+                _FLASH_CACHE[dead_oil] = (z["P"], z["Z"], z["V"], z["X"], z["Y"])
+                return _FLASH_CACHE[dead_oil]
         except Exception:
             pass
-    P, Z, V, X, Y = flash_table()
+    P, Z, V, X, Y = flash_table(dead_oil=dead_oil)
     try:
-        np.savez(_FLASH_CACHE_FILE, P=P, Z=Z, V=V, X=X, Y=Y,
-                 fingerprint=np.array(_eos_fingerprint()))
+        np.savez(path, P=P, Z=Z, V=V, X=X, Y=Y, fingerprint=np.array(fingerprint))
     except Exception:
         pass
-    _FLASH_CACHE = (P, Z, V, X, Y)
-    return _FLASH_CACHE
+    _FLASH_CACHE[dead_oil] = (P, Z, V, X, Y)
+    return _FLASH_CACHE[dead_oil]
 
 
 def flash_interp(pressure: float | np.ndarray, z_co2: float | np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -451,6 +464,34 @@ def phase_molar_volumes(x, y, P, T=393.0):
     return v_l, v_g
 
 
+def phase_mass_densities(x, y, v_l, v_g):
+    """EOS phase mass densities ``(rho_l, rho_g)`` (kg/m3): ``(x·MW)/v`` per phase.
+
+    ``x``/``y`` are the (n,14) flashed phase compositions and ``v_l``/``v_g`` their
+    :func:`phase_molar_volumes`. An absent phase (zero composition row, ``v = 0``)
+    gets density 0; callers weight densities by saturation.
+    """
+    m_l = np.atleast_2d(x) @ _MW / 1000.0  # kg/mol
+    m_g = np.atleast_2d(y) @ _MW / 1000.0
+    v_l = np.atleast_1d(np.asarray(v_l, dtype=float))
+    v_g = np.atleast_1d(np.asarray(v_g, dtype=float))
+    rho_l = np.divide(m_l, v_l, out=np.zeros_like(v_l), where=v_l > 1.0e-30)
+    rho_g = np.divide(m_g, v_g, out=np.zeros_like(v_g), where=v_g > 1.0e-30)
+    return rho_l, rho_g
+
+
+def co2_molar_volume(P, T=393.0):
+    """Pure-CO2 EOS molar volume (m3/mol, Peneloux-shifted) at pressure ``P`` (Pa).
+
+    The reservoir molar volume of the injected CO2, i.e. the EOS counterpart of
+    ``Bg * _V_CO2_STD``.
+    """
+    P_arr = np.atleast_1d(np.asarray(P, dtype=float))
+    pure = np.zeros((P_arr.size, _MW.size))
+    pure[:, _CO2_IDX] = 1.0
+    return phase_molar_volumes(pure, pure, P_arr, T)[1]
+
+
 def _flash_vec(z_cells, P_cells, T, aij, b, tol=1.0e-5):
     """Vectorized Rachford-Rice flash over cells; returns ``(V, x, y)``.
 
@@ -488,6 +529,44 @@ def _flash_vec(z_cells, P_cells, T, aij, b, tol=1.0e-5):
         if np.max(np.abs(Knew - K)) < tol:
             break
         K = Knew
+    return _collapse_trivial_flash(V, x, y, z_cells, P_cells, T, aij, b)
+
+
+def _collapse_trivial_flash(V, x, y, z_cells, P_cells, T, aij, b, gap: float = 1.0e-4):
+    """Replace the ``x = y = z`` trivial root with the stable single phase.
+
+    Near-pure CO2 (and any other mixture the successive-substitution flash does
+    not split) converges to ``x = y`` with an arbitrary vapor fraction. The two
+    phases then have the same composition, so the lower Gibbs energy
+    ``sum z_i ln phi_i`` picks liquid (``V = 0``) or vapor (``V = 1``). A real
+    two-phase split has ``max|y-x|`` well above ``gap`` and is left alone.
+    """
+    diff = np.max(np.abs(y - x), axis=1)
+    triv = (diff < gap) & (V > 1.0e-8) & (V < 1.0 - 1.0e-8)
+    if not np.any(triv):
+        return V, x, y
+    z_t = z_cells[triv]
+    p_t = P_cells[triv]
+    g_liq = np.sum(z_t * _fugacity_vec(z_t, aij, b, p_t, T, "liq"), axis=1)
+    g_vap = np.sum(z_t * _fugacity_vec(z_t, aij, b, p_t, T, "vap"), axis=1)
+    # An invalid compressibility root (Z <= B) makes ln(phi) non-finite; keep
+    # the phase that still has a Gibbs energy, and the vapor when it is lower
+    # (supercritical CO2).
+    both = np.isfinite(g_liq) & np.isfinite(g_vap)
+    vapor = np.where(both, g_vap <= g_liq, np.isfinite(g_vap) & ~np.isfinite(g_liq))
+    vapor = np.where(np.isfinite(g_liq) | np.isfinite(g_vap), vapor, True)
+    idx = np.flatnonzero(triv)
+    iv = idx[vapor]
+    il = idx[~vapor]
+    V = np.array(V, dtype=float, copy=True)
+    x = np.array(x, dtype=float, copy=True)
+    y = np.array(y, dtype=float, copy=True)
+    V[iv] = 1.0
+    y[iv] = z_cells[iv]
+    x[iv] = 0.0
+    V[il] = 0.0
+    x[il] = z_cells[il]
+    y[il] = 0.0
     return V, x, y
 
 
@@ -563,6 +642,8 @@ def flash_direct_volumes(
     z_co2: float | np.ndarray,
     T: float = 393.0,
     tol: float = 1.0e-5,
+    *,
+    with_density: bool = False,
 ) -> tuple[np.ndarray, ...]:
     """Dead-oil two-component flash + EOS phase molar volumes.
 
@@ -571,6 +652,8 @@ def flash_direct_volumes(
     ``_Z_OIL_DEAD`` base so ``z_co2`` is the true total CO2 mole fraction, and it
     also returns the EOS (Peneloux-shifted) phase molar volumes ``v_l``/``v_g`` for
     the reservoir volume balance and buoyancy (see :func:`phase_molar_volumes`).
+    ``with_density`` appends the phase mass densities ``(rho_l, rho_g)`` (kg/m3)
+    of the full 14-component phase compositions (:func:`phase_mass_densities`).
     """
     global _AB_DIRECT
     if _AB_DIRECT is None or _AB_DIRECT[1] != T:
@@ -584,9 +667,10 @@ def flash_direct_volumes(
     zz = np.broadcast_to(z_arr if z_arr.size == n else z_arr[0], (n,)).astype(float)
     z_cells = np.outer(1.0 - zz, _Z_OIL_DEAD)
     z_cells[:, _CO2_IDX] += zz
-    # Phase classification from the cached table (same scheme as flash_direct), then
-    # the exact iterative flash only on the two-phase cells.
-    P, Z, Vtab, _, _ = _load_flash_table()
+    # Phase classification from the cached *dead-oil* table (the native-oil table
+    # puts the bubble point at a different z), then the exact iterative flash only
+    # on the two-phase cells.
+    P, Z, Vtab, _, _ = _load_flash_table(dead_oil=True)
     ip = np.clip(np.searchsorted(P, pp, side="right") - 1, 0, len(P) - 2)
     iz = np.clip(np.searchsorted(Z, zz, side="right") - 1, 0, len(Z) - 2)
     tp = (pp - P[ip]) / (P[ip + 1] - P[ip])
@@ -612,10 +696,12 @@ def flash_direct_volumes(
     x_co2 = np.where(V > 1.0e-6, x[:, _CO2_IDX], zz)
     y_co2 = np.where(V < 1.0 - 1.0e-6, y[:, _CO2_IDX], zz)
     v_l, v_g = phase_molar_volumes(x, y, pp, T)
+    out = (V, x_co2, y_co2, v_l, v_g)
+    if with_density:
+        out = out + phase_mass_densities(x, y, v_l, v_g)
     if scalar:
-        return (float(V[0]), float(x_co2[0]), float(y_co2[0]),
-                float(v_l[0]), float(v_g[0]))
-    return V, x_co2, y_co2, v_l, v_g
+        return tuple(float(a[0]) for a in out)
+    return out
 
 
 def flash_direct_3comp(
@@ -669,13 +755,16 @@ def flash_direct_3comp_volumes(
     z_light: float | np.ndarray,
     T: float = 393.0,
     tol: float = 1.0e-5,
+    *,
+    with_density: bool = False,
 ) -> tuple[np.ndarray, ...]:
     """3-component lumped flash + EOS phase molar volumes.
 
     Same as :func:`flash_direct_3comp` but also returns the EOS (Peneloux-shifted)
     reservoir phase molar volumes ``(v_l, v_g)`` for the volume balance / buoyancy
     (see :func:`phase_molar_volumes`). Returns
-    ``(V, x_co2, x_light, y_co2, y_light, v_l, v_g)``.
+    ``(V, x_co2, x_light, y_co2, y_light, v_l, v_g)``; ``with_density`` appends the
+    phase mass densities ``(rho_l, rho_g)`` (kg/m3, :func:`phase_mass_densities`).
     """
     global _AB_DIRECT
     if _AB_DIRECT is None or _AB_DIRECT[1] != T:
@@ -700,10 +789,12 @@ def flash_direct_3comp_volumes(
     y_co2 = y[:, _CO2_IDX]
     y_light = y[:, _LIGHT_IDX].sum(axis=1)
     v_l, v_g = phase_molar_volumes(x, y, pp, T)
+    out = (V, x_co2, x_light, y_co2, y_light, v_l, v_g)
+    if with_density:
+        out = out + phase_mass_densities(x, y, v_l, v_g)
     if scalar:
-        return (float(V[0]), float(x_co2[0]), float(x_light[0]),
-                float(y_co2[0]), float(y_light[0]), float(v_l[0]), float(v_g[0]))
-    return V, x_co2, x_light, y_co2, y_light, v_l, v_g
+        return tuple(float(a[0]) for a in out)
+    return out
 
 
 def flash_direct_full(

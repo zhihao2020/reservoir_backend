@@ -27,8 +27,7 @@ inversion:
   k_homogeneous: true
 
 forward:
-  # none = 跳过前向模型（克里金饱和度，快、稳定，联调默认）。
-  # 可选 black_oil（IMEX 式非混相三相）/ compositional（GEM 式组分：混相单相 + c_sat 析出）。
+  # none = 克里金插值。black_oil = 黑油。compositional = 14 组分摩尔前向。
   model: none
 
 black_oil:
@@ -54,6 +53,8 @@ black_oil:
   # PR EOS 未加 Peneloux 体积平移的低估值(本代码 PR EOS 给 Z=0.69→390 kg/m3)。
   # 底部羽流是 CO2 重→下沉 + 井压差共同驱动，重力项应是主驱动之一。
   rho_g: 759.0
+  # 组分摩尔步气头：scalar = 上面的固定 rho_g；eos = 逐面 g*(ρ_g−ρ_l)（EOS 相密度）。
+  gravity: scalar
   # 表格相渗（GEM deck *SGT / *SWT），替代 Corey 幂律 relperm。
   relperm_table:
     sgt:   # [Sg, Krg, Krog]

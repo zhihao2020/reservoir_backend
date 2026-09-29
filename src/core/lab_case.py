@@ -43,6 +43,14 @@ def _parse_relperm_table(raw: Any) -> RelpermTable | None:
     return RelpermTable.from_rows(list(sgt), list(swt))
 
 
+def _parse_gravity(raw: Any) -> str:
+    """``black_oil.gravity``: ``scalar`` (fixed ``rho_g``) or ``eos`` (per-face EOS head)."""
+    mode = str(raw).strip().lower()
+    if mode not in ("scalar", "eos"):
+        raise CaseSchemaError([f"black_oil.gravity must be 'scalar' or 'eos', got {raw!r}"])
+    return mode
+
+
 def _vec3(raw: Any, name: str) -> tuple[float, float, float]:
     if not isinstance(raw, (list, tuple)) or len(raw) != 3:
         raise CaseSchemaError([f"{name} must be a length-3 list"])
@@ -363,6 +371,7 @@ def lab_case_from_mapping(
         rho_w=float(oil_raw.get("rho_w", 0.0)),
         rho_o=float(oil_raw.get("rho_o", 0.0)),
         rho_g=float(oil_raw.get("rho_g", 0.0)),
+        gravity=_parse_gravity(oil_raw.get("gravity", "scalar")),
         rho_s=float(oil_raw.get("rho_s", 0.0)),
         c_sat=float(oil_raw.get("c_sat", 0.66)),
         bg=float(oil_raw.get("bg", 1.0)),

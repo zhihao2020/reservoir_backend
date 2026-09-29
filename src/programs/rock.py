@@ -137,6 +137,10 @@ class FluidParams:
     rho_w: float = 0.0
     rho_o: float = 0.0
     rho_g: float = 0.0
+    # Gas head source for the EOS compositional models (two/three/full):
+    # "scalar" uses ``rho_g`` everywhere; "eos" uses the per-face EOS density
+    # difference ``g*(rho_gas - rho_liq)``, with ``rho_g`` only where no gas flows.
+    gravity: str = "scalar"
     # Solvent (CO2) density head ``rho_s*g`` (Pa/m) for the FCM miscible model.
     # The CO2-rich phase can be denser than the oil (density inversion), in which
     # case ``rho_s > rho_o`` makes the mixture sink.
@@ -485,6 +489,7 @@ def _face_coefficients(
 def _face_geometry(
     grid: CartesianGrid,
     pressure: NDArray[np.float64],
+    z_head: float | NDArray[np.float64] | None = None,
 ) -> tuple:
     """Parameter-independent face-flux geometry.
 
@@ -492,6 +497,10 @@ def _face_geometry(
     ``-area*dp/dist`` term and ``up`` is the upwind mask (``True`` = the low
     side is upstream). Only the upwind *mobility* then changes with the unknown
     parameters, so this can be precomputed once per time slice.
+
+    ``z_head`` (Pa/m; a scalar or one value per z-face, shape ``(nz-1, ny, nx)``)
+    turns ``dp`` on the z-faces into the phase-potential drop ``dp + z_head*dz``
+    (z up). Layers are horizontal, so x/y faces carry no gravity.
     """
     nx, ny, nz = grid.nx, grid.ny, grid.nz
     p = np.asarray(pressure, dtype=float).reshape((nz, ny, nx))
@@ -512,6 +521,8 @@ def _face_geometry(
         dist = grid.center_distance_z().reshape((nz - 1, 1, 1))
         area = grid.face_area_z()[1:-1, :, :]
         dp = p[1:, :, :] - p[:-1, :, :]
+        if z_head is not None:
+            dp = dp + np.asarray(z_head, dtype=float) * dist
         coef_z = -area * dp / np.maximum(dist, 1.0e-18)
         up_z = dp < 0.0
     return coef_x, up_x, coef_y, up_y, coef_z, up_z

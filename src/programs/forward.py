@@ -456,12 +456,11 @@ def forward_saturations(
     """Forward-simulate the saturation history.
 
     Returns ``(sw, so, sg)`` histories, each of shape ``(n_times, n_cells)``.
-    ``model`` is ``"black_oil"`` or ``"compositional"`` (alias ``solution_gas`` /
-    ``co2``). By default the pressure ``pressure`` is used as the given flow field
-    and the well rates are the fixed ``well_qw/qo/qg``. When ``well_bhp`` and
-    ``well_params`` are supplied, the pressure is instead *solved* with the
-    Peaceman well model (BHP-driven wells) and the well rates are derived from the
-    solved pressure — the compressible-injection-correct path.
+    ``model`` is ``"black_oil"`` or ``"compositional"``. By default the pressure
+    ``pressure`` is used as the given flow field and the well rates are the fixed
+    ``well_qw/qo/qg``. When ``well_bhp`` and ``well_params`` are supplied, the
+    pressure is instead *solved* with the Peaceman well model (BHP-driven wells)
+    and the well rates are derived from the solved pressure.
     """
     name = str(model).strip().lower()
     if name == "black_oil":
@@ -469,22 +468,8 @@ def forward_saturations(
             grid, pressure, permeability, phi, params, wells,
             well_qw, well_qo, well_qg, times, sw0, so0, sg0, max_ds=max_ds,
         )
-    # ``fcm`` is an alias kept for backward compatibility: it is the miscible
-    # (single-phase) limit of the unified compositional model.
-    if name in ("compositional", "solution_gas", "co2", "fcm"):
-        return _forward_compositional_saturations(
-            grid, pressure, permeability, phi, params, wells,
-            well_qw, well_qo, well_qg, times, sw0, so0, sg0, max_ds=max_ds,
-            well_bhp=well_bhp, well_params=well_params,
-        )
-    if name in ("compositional_two", "two_component"):
-        return _forward_compositional_two_saturations(
-            grid, pressure, permeability, phi, params, wells,
-            well_qw, well_qo, well_qg, times, sw0, so0, sg0, max_ds=max_ds,
-            well_bhp=well_bhp, well_params=well_params,
-        )
-    if name in ("compositional_two_kinetic", "nonwetting", "co2_trapping"):
-        return _forward_compositional_two_kinetic_saturations(
+    if name == "compositional":
+        return _forward_compositional_full_saturations(
             grid, pressure, permeability, phi, params, wells,
             well_qw, well_qo, well_qg, times, sw0, so0, sg0, max_ds=max_ds,
             well_bhp=well_bhp, well_params=well_params,
@@ -496,6 +481,7 @@ def _mobility_divergence_matrix(
     grid: CartesianGrid,
     permeability: NDArray[np.float64],
     pressure: NDArray[np.float64],
+    z_head: float | NDArray[np.float64] | None = None,
 ):
     """Sparse matrix ``A`` such that ``A @ lam == div(-k lam grad p)`` (upwind).
 
@@ -503,12 +489,14 @@ def _mobility_divergence_matrix(
     face mobility enters linearly), so ``A`` is a fixed sparse operator for a
     given permeability and pressure. This lets the fully-implicit Newton Jacobian
     be assembled as ``I + (dt/phiV) A diag(dlam/ds)`` without a numerical loop.
+    ``z_head`` adds a gravity head to the z-face potential drop (see
+    :func:`_face_geometry`).
     """
     from scipy.sparse import coo_matrix
 
     n = grid.n_cells
     k3 = np.asarray(permeability, dtype=float).reshape((grid.nz, grid.ny, grid.nx))
-    coef_x, up_x, coef_y, up_y, coef_z, up_z = _face_geometry(grid, pressure)
+    coef_x, up_x, coef_y, up_y, coef_z, up_z = _face_geometry(grid, pressure, z_head)
     (c1x, c2x), (c1y, c2y), (c1z, c2z) = _face_cell_pairs(grid.nx, grid.ny, grid.nz)
     rows: list[NDArray[np.int64]] = []
     cols: list[NDArray[np.int64]] = []
@@ -539,6 +527,8 @@ def _mobility_divergence_matrix(
     if coef_z is not None:
         kh = _harmonic_mean(k3[:-1, :, :], k3[1:, :, :]).ravel()
         add(c1z, c2z, up_z.ravel(), kh * coef_z.ravel())
+    if not rows:  # single cell: no interior faces
+        return coo_matrix((n, n)).tocsr()
     rows = np.concatenate(rows)
     cols = np.concatenate(cols)
     vals = np.concatenate(vals)
@@ -603,16 +593,76 @@ def _corey_mobilities_derivs(
     return lam_w, lam_o, lam_g, (lw_p - lam_w) / h, (lo_p - lam_o) / h, (lg_p - lam_g) / h
 
 
-def _gravity_divergence_matrix(grid, permeability):
-    """Sparse matrix ``G`` such that ``G @ lam = div(k lam ∇(-z))``.
+def _phase_divergence_matrix(grid, permeability, pressure, rho_g):
+    """Sparse ``A_g`` such that ``A_g @ lam == div(-k lam^up grad(p + rho_g z))``.
 
-    This is the z-divergence operator (unit *downward* potential gradient) used
-    to add buoyancy: ``div_grav = -rho_g * (G @ lam)``. Using ``pressure = -z``
-    in the ordinary divergence operator gives exactly this, so the gravity
-    correction is just ``-rho_g * (_mobility_divergence_matrix(grid, k, -z) @ lam)``.
+    The face mobility is taken upstream of the *phase potential*, not of ``p`` and
+    ``z`` separately: subtracting a ``-z``-upwinded gravity operator from the
+    pressure operator picks the lower cell's mobility for a sinking phase
+    (``rho_g > 0``), i.e. the downstream one, so gas above a gas-free cell could
+    never sink into it. ``rho_g`` is the gas head relative to the liquid (Pa/m):
+    a scalar, or one value per z-face from :func:`_eos_gas_head`.
     """
-    z = np.asarray(grid.cell_centers()[:, 2], dtype=float)
-    return _mobility_divergence_matrix(grid, permeability, -z)
+    return _mobility_divergence_matrix(grid, permeability, pressure, rho_g)
+
+
+_GRAVITY = 9.80665  # m/s2
+# Pressure finite-difference step (Pa) for the EOS Jacobians: the 1e-6 step used
+# for saturations / mole fractions is below double-precision round-off relative to
+# ~2e7 Pa, so dN/dp would be noise.
+_FD_STEP_P = 1.0
+# Default Newton convergence of the EOS steps: residual norm < _EOS_NEWTON_RTOL·|r0|.
+# Tighter values (e.g. 1e-3) conserve CO2 to ~0.3% per step but do not converge
+# when a single 864 s step crosses the bubble point.
+_EOS_NEWTON_RTOL = 0.1
+
+
+def _eos_gas_head(grid, sl, sg, rho_l, rho_g, fallback):
+    """Per-z-face gas head ``g*(rho_g - rho_l)`` (Pa/m) from EOS phase densities.
+
+    Each face density is the saturation-weighted mean of its two cells (the
+    OPM/MRST face density), so a phase present on one side only takes that side's
+    density. A face with no liquid on either side uses the domain liquid density
+    (saturation-weighted mean); a face with no gas on either side carries no gas
+    flux and keeps the scalar ``fallback`` head. Returns shape ``(nz-1, ny, nx)``.
+    """
+    shape = (grid.nz, grid.ny, grid.nx)
+    if grid.nz < 2:
+        return np.zeros((0, grid.ny, grid.nx))
+    sl3 = np.clip(np.asarray(sl, dtype=float), 0.0, None).reshape(shape)
+    sg3 = np.clip(np.asarray(sg, dtype=float), 0.0, None).reshape(shape)
+    rl3 = np.asarray(rho_l, dtype=float).reshape(shape)
+    rg3 = np.asarray(rho_g, dtype=float).reshape(shape)
+    sl_tot = float(sl3.sum())
+    rho_l_ref = float((sl3 * rl3).sum() / sl_tot) if sl_tot > 0.0 else 0.0
+    wl = sl3[:-1] + sl3[1:]
+    wg = sg3[:-1] + sg3[1:]
+    rl_f = np.divide(sl3[:-1] * rl3[:-1] + sl3[1:] * rl3[1:], wl,
+                     out=np.full(wl.shape, rho_l_ref), where=wl > 1.0e-12)
+    rg_f = np.divide(sg3[:-1] * rg3[:-1] + sg3[1:] * rg3[1:], wg,
+                     out=np.zeros(wg.shape), where=wg > 1.0e-12)
+    return np.where(wg > 1.0e-12, _GRAVITY * (rg_f - rl_f), float(fallback))
+
+
+def _injector_inv_molar_volume(n_cells, inj_cells, pressure):
+    """``(1/v_CO2, d(1/v_CO2)/dp)`` of the injected pure CO2 at ``inj_cells`` (0 elsewhere).
+
+    ``v_CO2`` is the EOS reservoir molar volume at the cell pressure, so the
+    injector's reservoir rate ``WI·λt·(bhp−p)`` converts to moles consistently with
+    the inter-cell fluxes (the scalar ``Bg·V_CO2_STD`` it replaces is exact only at
+    one pressure).
+    """
+    from ..core.pr_eos import co2_molar_volume
+
+    inv = np.zeros(n_cells)
+    dinv = np.zeros(n_cells)
+    if inj_cells.size:
+        pc = np.asarray(pressure, dtype=float)[inj_cells]
+        dp = 1.0e-7 * np.maximum(np.abs(pc), 1.0)
+        inv_c = 1.0 / co2_molar_volume(pc)
+        inv[inj_cells] = inv_c
+        dinv[inj_cells] = (1.0 / co2_molar_volume(pc + dp) - inv_c) / dp
+    return inv, dinv
 
 
 def _solve_linear(A, b):
@@ -686,7 +736,7 @@ def _implicit_black_oil_step(
 
 def _implicit_compositional_step(
     A,
-    A_grav,
+    A_g,
     inv_phiV: NDArray[np.float64],
     dt: float,
     sw0: NDArray[np.float64],
@@ -706,14 +756,13 @@ def _implicit_compositional_step(
     per-cell maximum, so injected CO2 beyond the cell's free-gas capacity is
     carried in ``C`` and drained by the free-gas flux on the next substep). The
     phase split is recomputed inside the Newton from ``Rs`` and ``Bg``.
+    ``A_g`` is the gas operator from :func:`_phase_divergence_matrix` (gas Darcy
+    velocity ``-k lam (grad p + rho_g grad z)``; ``rho_g > 0`` sinks).
     """
     from scipy.sparse import diags
 
     Bg = float(params.bg)
     inv_Bg = 1.0 / max(Bg, 1.0e-12)
-    # Gas Darcy velocity v = -k lam (grad p + rho_g grad z); its divergence is
-    # A@lam - rho_g*A_grav@lam (A_grav@lam = div(k lam grad z)). rho_g > 0 sinks.
-    A_g = A - params.rho_g * A_grav
     n = int(sw0.size)
     sw = np.asarray(sw0, dtype=float).copy()
     C = np.asarray(C0, dtype=float).copy()
@@ -894,7 +943,6 @@ def _implicit_compositional_pressure_step(
     h = 1.0e-6
     accum = 1.0 / (dt * inv_phiV)  # phi*vol/dt (flux form)
     I = diags(accum)
-    A_grav = _gravity_divergence_matrix(grid, permeability)
     cells, wi, bhp_w, is_inj = _peaceman_well_data(
         grid, permeability, wells, well_bhp, well_params, injects_gas,
     )
@@ -962,7 +1010,7 @@ def _implicit_compositional_pressure_step(
         D_inj_ = inj_diag(lam_t_)
         r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
-        A_g_ = A_ - params.rho_g * A_grav
+        A_g_ = _phase_divergence_matrix(grid, permeability, p_, params.rho_g)
         r_sw_ = accum * (sw_ - sw0) - (qw_ - A_ @ lam_w_)
         q_c_ = qg_ + Rs_act_ * qo_
         r_c_ = accum * (C_ - C0) - (q_c_ - (inv_Bg * A_g_ @ lam_g_ + A_ @ (Rs_act_ * lam_o_)))
@@ -977,7 +1025,7 @@ def _implicit_compositional_pressure_step(
         D, qw, qo, qg = well_diag_rates(p, lam_w, lam_o, lam_g, bhp_inj)
         D_inj = inj_diag(lam_t)
         A = _mobility_divergence_matrix(grid, permeability, p)
-        A_g = A - params.rho_g * A_grav
+        A_g = _phase_divergence_matrix(grid, permeability, p, params.rho_g)
         r = residual(p, sw, C, bhp_inj)
         # numerical derivatives wrt sw and C (through the phase split + relperm).
         _, so_p, sg_p, Rs_sw, lw_p, lo_p, lg_p = state(p, sw + h, C)
@@ -1060,7 +1108,7 @@ def _implicit_compositional_two_step(
     *,
     well_qg_fixed: NDArray[np.float64] | None = None,
     max_iter: int = 30,
-    tol: float = 1.0e-3,
+    tol: float = _EOS_NEWTON_RTOL,
 ) -> tuple[NDArray[np.float64], ...]:
     """One fully-implicit two-component (CO2 + oil) compositional step (Newton).
 
@@ -1069,24 +1117,29 @@ def _implicit_compositional_two_step(
     fraction ``V`` and the phase compositions ``x_CO2``/``y_CO2``; the total moles
     are fixed by the volume balance ``sw + sg + sl = 1`` and the CO2 surface volume
     ``C = z*N*V_CO2_STD`` is the conserved quantity. The CO2 flux is the
-    compositional flux ``y_CO2/Bg*λg + x_CO2*223*λl`` (gas carries ``y_CO2``, the
-    *swollen* liquid carries ``x_CO2``), which is what lets the gas displace the
-    liquid to residual at high ``z``. Returns ``(p, sw, sl, sg, z, converged)``.
+    compositional flux ``V_CO2_STD*(y_CO2*λg/v_g + x_CO2*λl/v_l)`` (gas carries
+    ``y_CO2``, the *swollen* liquid carries ``x_CO2``), which is what lets the gas
+    displace the liquid to residual at high ``z``. The well terms use the same EOS
+    molar volumes (the injector's pure CO2 at the cell pressure), and with
+    ``params.gravity == "eos"`` the gas head is the per-face EOS density difference.
+    ``tol`` is the relative residual reduction that counts as converged (see
+    :data:`_EOS_NEWTON_RTOL`). Returns ``(p, sw, sl, sg, z, converged)``.
     """
     from scipy.sparse import diags
 
-    from ..core.pr_eos import _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+    from ..core.pr_eos import _V_CO2_STD
 
-    Bg = float(params.bg)  # scalar gas FVF for the well model / rate constraint only;
-    # the component fluxes below use the EOS (per-cell) reservoir molar volumes.
+    # Only scales the rate-constraint row (reservoir-volume units); fluxes and
+    # well terms use the EOS (per-cell) molar volumes.
+    Bg = float(params.bg)
     n = grid.n_cells
     sw = np.asarray(sw0, dtype=float).copy()
     z = np.asarray(z0, dtype=float).copy()
     p = np.asarray(p0, dtype=float).copy()
     h = 1.0e-6
+    hp = _FD_STEP_P
     accum = 1.0 / (dt * inv_phiV)  # phi*vol/dt (flux form)
     I = diags(accum)
-    A_grav = _gravity_divergence_matrix(grid, permeability)
     cells, wi, bhp_w, is_inj = _peaceman_well_data(
         grid, permeability, wells, well_bhp, well_params, injects_gas,
     )
@@ -1102,9 +1155,12 @@ def _implicit_compositional_two_step(
     for idx in range(cells.size):
         inj_cell[cells[idx]] = is_inj[idx]
     bhp_inj = float(np.mean(bhp_w[is_inj])) if is_inj.any() else 0.0
+    inj_cells = cells[is_inj]
+    eos_gravity = params.gravity == "eos"
 
     def state(p_, sw_, z_):
-        sw_r, sl_, sg_, V_, x_, y_, N_, C_, O_, v_l_, v_g_ = _split_compositional_two(sw_, z_, p_, params)
+        split = _split_compositional_two(sw_, z_, p_, params, with_density=eos_gravity)
+        sw_r, sl_, sg_, V_, x_, y_, N_, C_, O_, v_l_, v_g_ = split[:11]
         lam_w_, lam_l_, lam_g_ = phase_mobilities(sw_r, sl_, sg_, params)
         # EOS (per-cell) reservoir molar volumes → surface/molar conversion factors.
         # The dissolved-CO2 flux is x_CO2 * V_CO2_STD/v_l_res * lam_l (~146, not the
@@ -1116,12 +1172,22 @@ def _implicit_compositional_two_step(
         m_co2_liq_ = x_ * r_co2_ * lam_l_  # dissolved liquid part
         m_N_ = lam_g_ * inv_v_g_ + lam_l_ * inv_v_l_  # hydrocarbon moles mobility
         Rs_ = x_ * r_co2_ / np.maximum(1.0 - x_, 1.0e-12)  # dissolved ratio (surface)
-        return sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_gas_, m_co2_liq_, lam_w_, lam_l_, lam_g_, Rs_, v_l_, v_g_
+        head_ = (_eos_gas_head(grid, sl_, sg_, split[11], split[12], params.rho_g)
+                 if eos_gravity else params.rho_g)
+        return (sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_gas_, m_co2_liq_,
+                lam_w_, lam_l_, lam_g_, Rs_, v_l_, v_g_, head_)
 
-    def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_):
+    def inj_inv_v(p_):
+        return _injector_inv_molar_volume(n, inj_cells, p_)[0]
+
+    def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, v_l_, v_g_, bhp_inj_):
+        """Well diagonal ``D`` and rates: water (reservoir m3/s), liquid / gas (mol/s)."""
         D_ = np.zeros(n)
         qw_ = np.zeros(n); qo_ = np.zeros(n); qg_ = np.zeros(n)
         lam_t_ = lam_w_ + lam_l_ + lam_g_
+        inv_v_l_ = 1.0 / np.maximum(v_l_, 1.0e-30)
+        inv_v_g_ = 1.0 / np.maximum(v_g_, 1.0e-30)
+        inv_v_inj_ = inj_inv_v(p_)
         for idx in range(cells.size):
             c = cells[idx]
             w = wi[idx]
@@ -1129,11 +1195,11 @@ def _implicit_compositional_two_step(
             dp = bhp_eff - p_[c]
             D_[c] += w * lam_t_[c]
             if is_inj[idx]:
-                qg_[c] += w * lam_t_[c] * dp / Bg
+                qg_[c] += w * lam_t_[c] * dp * inv_v_inj_[c]
             else:
                 qw_[c] += w * lam_w_[c] * dp
-                qo_[c] += w * lam_l_[c] * dp
-                qg_[c] += w * lam_g_[c] * dp / Bg
+                qo_[c] += w * lam_l_[c] * dp * inv_v_l_[c]
+                qg_[c] += w * lam_g_[c] * dp * inv_v_g_[c]
         return D_, qw_, qo_, qg_
 
     def inj_diag(lam_t_):
@@ -1143,29 +1209,39 @@ def _implicit_compositional_two_step(
                 D_inj_[cells[idx]] += wi[idx] * lam_t_[cells[idx]]
         return D_inj_
 
+    def rate_residual(p_, D_inj_, bhp_inj_):
+        """Injector surface-rate constraint, scaled by ``Bg`` to reservoir-volume units."""
+        if not rate_controlled:
+            return 0.0
+        q_surf = _V_CO2_STD * float(D_inj_ @ ((bhp_inj_ - p_) * inj_inv_v(p_)))
+        return Bg * (q_surf - qg_target)
+
     def residual(p_, sw_, z_, bhp_inj_):
         (sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_co2_gas_, m_co2_liq_,
-         lam_w_, lam_l_, lam_g_, Rs_, v_l_, v_g_) = state(p_, sw_, z_)
+         lam_w_, lam_l_, lam_g_, Rs_, v_l_, v_g_, head_) = state(p_, sw_, z_)
         lam_t_ = lam_w_ + lam_l_ + lam_g_
-        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
+        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, v_l_, v_g_, bhp_inj_)
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
-        A_g_ = A_ - params.rho_g * A_grav
+        A_g_ = _phase_divergence_matrix(grid, permeability, p_, head_)
         # Total hydrocarbon MOLAR balance (the OPM/MRST compositional pressure
         # equation): the oil (non-CO2) is conserved as (total moles − CO2 moles).
         # Uses the molar mobility λg/v_g + λl/v_l (EOS molar volumes) and the molar
-        # well source q_N = qg/V_CO2_STD + qo/v_l.
-        q_N_ = qg_ / _V_CO2_STD + qo_ / np.maximum(v_l_, 1.0e-30)
-        r_p_ = (accum * (N_ - N0) - q_N_
+        # well source q_N = qg + qo (mol/s, same EOS molar volumes as the fluxes).
+        # Rock compressibility: d(φ N)/dt adds φ·ct·N·∂p/∂t (mol/s) on top of
+        # the fluid compressibility already inside N(p).
+        r_p_ = (accum * ((N_ - N0) + params.ct * N_ * (p_ - p0)) - (qg_ + qo_)
                 + A_g_ @ (lam_g_ / np.maximum(v_g_, 1.0e-30))
                 + A_ @ (lam_l_ / np.maximum(v_l_, 1.0e-30)))
         D_inj_ = inj_diag(lam_t_)
-        r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
-        r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
-        r_co2_ = _V_CO2_STD / np.maximum(v_l_, 1.0e-30)  # per-cell reservoir-liquid ratio
-        q_c_ = np.where(inj_cell, qg_, y_ * qg_ + x_ * r_co2_ * qo_)
+        r_rate_ = rate_residual(p_, D_inj_, bhp_inj_)
+        # Same pore expansion on water and CO2, so oil = total − CO2 stays closed.
+        rock_p_ = params.ct * (p_ - p0)
+        r_sw_ = accum * ((sw_ - sw0) + rock_p_ * sw_) - qw_ + A_ @ lam_w_
+        q_c_ = _V_CO2_STD * np.where(inj_cell, qg_, y_ * qg_ + x_ * qo_)
         # CO2 flux: gravity acts only on the *free gas* part (buoyant), not the
-        # dissolved CO2 carried by the liquid.
-        r_c_ = accum * (C_ - C0) - q_c_ + A_g_ @ m_co2_gas_ + A_g_ @ m_co2_liq_
+        # dissolved CO2 carried by the liquid (the liquid is the reference potential,
+        # consistent with the A@(λl/v_l) term of r_p).
+        r_c_ = accum * ((C_ - C0) + rock_p_ * C_) - q_c_ + A_g_ @ m_co2_gas_ + A_ @ m_co2_liq_
         return np.concatenate([r_p_, r_sw_, r_c_, np.array([r_rate_])])
 
     N0 = _split_compositional_two(sw0, z0, p0, params)[6]  # hydrocarbon moles at t0
@@ -1174,86 +1250,103 @@ def _implicit_compositional_two_step(
     converged = False
     for _ in range(max_iter):
         (sl, sg, V, x, y, N, C, m_N, m_co2_gas, m_co2_liq,
-         lam_w, lam_l, lam_g, Rs, v_l, v_g) = state(p, sw, z)
+         lam_w, lam_l, lam_g, Rs, v_l, v_g, head) = state(p, sw, z)
         lam_t = lam_w + lam_l + lam_g
-        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
+        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, v_l, v_g, bhp_inj)
         D_inj = inj_diag(lam_t)
+        inv_vi, dinv_vi = _injector_inv_molar_volume(n, inj_cells, p)
+        dp_inj = np.where(inj_cell, (bhp_inj if rate_controlled else bhp_full) - p, 0.0)
+        g_inj_p = D * (inv_vi - dp_inj * dinv_vi)  # −∂(injector mol/s)/∂p
         A = _mobility_divergence_matrix(grid, permeability, p)
-        A_g = A - params.rho_g * A_grav
+        A_g = _phase_divergence_matrix(grid, permeability, p, head)
         r = residual(p, sw, z, bhp_inj)
+        # Gas part of the molar mobility (flows on the gas potential, A_g); the
+        # liquid part m_N − m_Ng flows on p (A).
+        m_Ng = lam_g / np.maximum(v_g, 1.0e-30)
+        m_Nl = m_N - m_Ng
         # numerical derivatives wrt p / sw / z (through the flash split + relperm).
         (_, _, _, _, _, N_p, C_p, m_N_p, m_cg_p, m_cl_p,
-         lw_p, ll_p, lg_p, _, _, _) = state(p + h, sw, z)
-        dN_dp = (N_p - N) / h
-        dm_N_dp = (m_N_p - m_N) / h
-        dC_dp = (C_p - C) / h
-        dm_cg_dp = (m_cg_p - m_co2_gas) / h
-        dm_cl_dp = (m_cl_p - m_co2_liq) / h
-        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h
+         lw_p, ll_p, lg_p, _, _, vg_p, _) = state(p + hp, sw, z)
+        dN_dp = (N_p - N) / hp
+        dm_Ng_dp = (lg_p / np.maximum(vg_p, 1.0e-30) - m_Ng) / hp
+        dm_Nl_dp = (m_N_p - m_N) / hp - dm_Ng_dp
+        dC_dp = (C_p - C) / hp
+        dm_cg_dp = (m_cg_p - m_co2_gas) / hp
+        dm_cl_dp = (m_cl_p - m_co2_liq) / hp
+        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / hp
         (_, _, _, _, _, N_s, C_s, m_N_s, m_cg_s, m_cl_s,
-         lw_s, ll_s, lg_s, _, _, _) = state(p, sw + h, z)
+         lw_s, ll_s, lg_s, _, _, vg_s, _) = state(p, sw + h, z)
         dN_dsw = (N_s - N) / h
-        dm_N_dsw = (m_N_s - m_N) / h
+        dm_Ng_dsw = (lg_s / np.maximum(vg_s, 1.0e-30) - m_Ng) / h
+        dm_Nl_dsw = (m_N_s - m_N) / h - dm_Ng_dsw
         dC_dsw = (C_s - C) / h
         dm_cg_dsw = (m_cg_s - m_co2_gas) / h
         dm_cl_dsw = (m_cl_s - m_co2_liq) / h
         dlw_dsw = (lw_s - lam_w) / h
         dlam_t_dsw = (lw_s + ll_s + lg_s - lam_t) / h
         (_, _, _, _, _, N_z, C_z, m_N_z, m_cg_z, m_cl_z,
-         lw_z, ll_z, lg_z, _, _, _) = state(p, sw, z + h)
+         lw_z, ll_z, lg_z, _, _, vg_z, _) = state(p, sw, z + h)
         dN_dz = (N_z - N) / h
-        dm_N_dz = (m_N_z - m_N) / h
+        dm_Ng_dz = (lg_z / np.maximum(vg_z, 1.0e-30) - m_Ng) / h
+        dm_Nl_dz = (m_N_z - m_N) / h - dm_Ng_dz
         dC_dz = (C_z - C) / h
         dm_cg_dz = (m_cg_z - m_co2_gas) / h
         dm_cl_dz = (m_cl_z - m_co2_liq) / h
         dlw_dz = (lw_z - lam_w) / h
         dlam_t_dz = (lw_z + ll_z + lg_z - lam_t) / h
-        # well source's sw/z derivatives (the injector rate qg=WI·λt·(bhp-p)/Bg
-        # depends on sw/z through λt; these are diagonal and were missing).
+        # well source's sw/z derivatives (the injector rate WI·λt·(bhp-p)/v_CO2
+        # depends on sw/z through λt; these are diagonal).
         def _q_srcs(sw_, z_):
-            sl_, sg_, V_, x_, y_, N_, C_, m_N_, m_cg_, m_cl_, lw_, ll_, lg_, Rs_, v_l_, _ = state(p, sw_, z_)
-            D_, qw_, qo_, qg_ = well_diag_rates(p, lw_, ll_, lg_, bhp_inj)
-            r_co2_ = _V_CO2_STD / np.maximum(v_l_, 1.0e-30)
-            q_c_ = np.where(inj_cell, qg_, y_ * qg_ + x_ * r_co2_ * qo_)
-            q_vol_ = qw_ + qo_ + qg_ * Bg
-            return q_c_, q_vol_
-        q_c0, q_vol0 = _q_srcs(sw, z)
-        q_cs, q_vols = _q_srcs(sw + h, z)
-        q_cz, q_volz = _q_srcs(sw, z + h)
+            (_, _, _, x_, y_, _, _, _, _, _, lw_, ll_, lg_, _, v_l_, v_g_, _) = state(p, sw_, z_)
+            _, _, qo_, qg_ = well_diag_rates(p, lw_, ll_, lg_, v_l_, v_g_, bhp_inj)
+            q_c_ = _V_CO2_STD * np.where(inj_cell, qg_, y_ * qg_ + x_ * qo_)
+            return q_c_, qg_ + qo_
+        q_c0, q_N0 = _q_srcs(sw, z)
+        q_cs, q_Ns = _q_srcs(sw + h, z)
+        q_cz, q_Nz = _q_srcs(sw, z + h)
         dq_c_dsw = (q_cs - q_c0) / h
         dq_c_dz = (q_cz - q_c0) / h
-        dq_vol_dsw = (q_vols - q_vol0) / h
-        dq_vol_dz = (q_volz - q_vol0) / h
+        dq_N_dsw = (q_Ns - q_N0) / h
+        dq_N_dz = (q_Nz - q_N0) / h
         # well p-derivatives (diagonal): injector is pure-CO2 gas, producers split.
         eps = 1.0e-12
-        J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, eps))))
+        inv_vl = 1.0 / np.maximum(v_l, 1.0e-30)
+        inv_vg = 1.0 / np.maximum(v_g, 1.0e-30)
+        frac_t = D / np.maximum(lam_t, eps)
+        rock_p = params.ct * (p - p0)
+        J_wp = (diags(np.where(inj_cell, 0.0, frac_t * lam_w) + accum * params.ct * sw)
                 + _upwind_tpfa_matrix_vec(grid, permeability, lam_w, p)).tocsr()
-        r_co2 = _V_CO2_STD / np.maximum(v_l, 1.0e-30)  # per-cell reservoir-liquid ratio
-        J_cp = (diags(dC_dp * accum) + A_g @ diags(dm_cg_dp) + A @ diags(dm_cl_dp)
-                + diags(np.where(inj_cell, D / Bg,
-                                 D * ((y * lam_g / Bg + x * r_co2 * lam_l) / np.maximum(lam_t, eps))))
-                + _upwind_tpfa_matrix_vec(grid, permeability, m_co2_gas + m_co2_liq, p)).tocsr()
+        J_cp = (diags(dC_dp * accum * (1.0 + rock_p) + accum * params.ct * C)
+                + A_g @ diags(dm_cg_dp) + A @ diags(dm_cl_dp)
+                + diags(_V_CO2_STD * np.where(inj_cell, g_inj_p,
+                                              frac_t * (y * lam_g * inv_vg + x * lam_l * inv_vl)))
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_co2_gas, p, head)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_co2_liq, p)).tocsr()
         # Pressure block (molar balance): r_p = accum·(N−N0) − q_N + A_g@(λg/v_g) + A@(λl/v_l).
-        # ∂/∂p: accum·dN/dp + A@diag(dm_N/dp) + upwind-TPFA(m_N) + molar well conductivity.
-        # The molar well source q_N = qg/V_CO2_STD + qo/v_l; its p-derivative is
-        # −D/(Bg·V_CO2_STD) for the injector, −D·(λl/λt)/v_l for the producers.
-        D_molar = np.where(inj_cell, D / (Bg * _V_CO2_STD),
-                           D * (lam_l / np.maximum(lam_t, eps)) / np.maximum(v_l, 1.0e-30))
-        J_pp = (diags(dN_dp * accum) + A @ diags(dm_N_dp)
-                + _upwind_tpfa_matrix_vec(grid, permeability, m_N, p)
+        # ∂/∂p: accum·dN/dp + A_g/A@diag(dm/dp) + upwind-TPFA per phase potential
+        # + molar well conductivity: D·(1/v_CO2 − (bhp−p)·d(1/v_CO2)/dp) at the
+        # injector, D·(λl/v_l + λg/v_g)/λt at the producers.
+        D_molar = np.where(inj_cell, g_inj_p, frac_t * (lam_l * inv_vl + lam_g * inv_vg))
+        rock_ct = accum * params.ct * (N + (p - p0) * dN_dp)
+        J_pp = (diags(dN_dp * accum + rock_ct) + A_g @ diags(dm_Ng_dp) + A @ diags(dm_Nl_dp)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_Ng, p, head)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_Nl, p)
                 + diags(D_molar)).tocsr()
-        J_pw = diags(dN_dsw * accum) + A @ diags(dm_N_dsw)
-        J_pz = diags(dN_dz * accum) + A @ diags(dm_N_dz)
-        J_ww = I + A @ diags(dlw_dsw)
+        J_pw = (diags(dN_dsw * accum) + A_g @ diags(dm_Ng_dsw) + A @ diags(dm_Nl_dsw)
+                - diags(dq_N_dsw))
+        J_pz = (diags(dN_dz * accum) + A_g @ diags(dm_Ng_dz) + A @ diags(dm_Nl_dz)
+                - diags(dq_N_dz))
+        J_ww = I + diags(accum * rock_p) + A @ diags(dlw_dsw)
         J_wz = A @ diags(dlw_dz)
         # CO2 flux splits gas (gravity) / liquid (no gravity), so the Jacobian does too.
-        J_cw = diags(dC_dsw * accum) + A_g @ diags(dm_cg_dsw) + A_g @ diags(dm_cl_dsw) - diags(dq_c_dsw)
-        J_cc = diags(dC_dz * accum) + A_g @ diags(dm_cg_dz) + A_g @ diags(dm_cl_dz) - diags(dq_c_dz)
+        J_cw = diags(dC_dsw * accum * (1.0 + rock_p)) + A_g @ diags(dm_cg_dsw) + A @ diags(dm_cl_dsw) - diags(dq_c_dsw)
+        J_cc = diags(dC_dz * accum * (1.0 + rock_p)) + A_g @ diags(dm_cg_dz) + A @ diags(dm_cl_dz) - diags(dq_c_dz)
         r = -r
         # Fully-coupled solve: assemble the complete 3x3 block Jacobian and solve
         # it with the direct sparse LU (the block forward substitution drops J_pw/J_pz
         # and converges only linearly, which is what stalls the Newton).
         from scipy.sparse import bmat as _bmat
+        from scipy.sparse.linalg import splu as _splu
         from scipy.sparse.linalg import spsolve as _spsolve
         J_blk = _bmat([[J_pp, J_pw, J_pz],
                        [J_wp, J_ww, J_wz],
@@ -1263,16 +1356,19 @@ def _implicit_compositional_two_step(
         if rate_controlled:
             # Schur complement for the rate-controlled injector BHP variable. The
             # augmented system is [J_blk, B_c; C_b, d] [dx; dbhp] = [rhs; r[3n]]
-            # with (positive-residual derivatives)
-            #   B_c = d[r_p,r_sw,r_c]/d(bhp_inj) = [-D_inj/(Bg*V_co2), 0, -D_inj/Bg]
-            #         (the injector rate qg=WI·λt·(bhp−p)/Bg enters r_p as moles
-            #          qg/V_co2 and r_c as surface qg)
-            #   C_b = d(r_rate)/dx = [-D_inj, 0, 0],   d = d(r_rate)/d(bhp_inj)=D_inj.sum()
-            B_c = np.concatenate([-D_inj / (Bg * _V_CO2_STD), np.zeros(n), -D_inj / Bg])
-            C_b = np.concatenate([-D_inj, np.zeros(n), np.zeros(n)])
-            d_rr = float(D_inj.sum())
-            u = _solve_linear(J_blk, B_c)
-            delta_x0 = _solve_linear(J_blk, rhs)
+            # with (positive-residual derivatives; injector moles WI·λt·(bhp−p)/v_CO2)
+            #   B_c = d[r_p,r_sw,r_c]/d(bhp_inj) = [-D_inj/v_CO2, 0, -V_co2·D_inj/v_CO2]
+            #   C_b = d(r_rate)/dp = -Bg·V_co2·g_inj_p,   d = Bg·V_co2·Σ D_inj/v_CO2
+            g_inj = D_inj * inv_vi
+            B_c = np.concatenate([-g_inj, np.zeros(n), -_V_CO2_STD * g_inj])
+            C_b = np.concatenate([-Bg * _V_CO2_STD * np.where(inj_cell, g_inj_p, 0.0),
+                                  np.zeros(n), np.zeros(n)])
+            d_rr = float(Bg * _V_CO2_STD * g_inj.sum())
+            # Direct LU: B_c (~1e-11) is below the GMRES atol of _solve_linear, which
+            # would return u = 0 and drop the BHP coupling of r_p / r_c.
+            lu = _splu(J_blk.tocsc())
+            u = lu.solve(B_c)
+            delta_x0 = lu.solve(rhs)
             denom = d_rr - float(C_b @ u)
             delta_bhp = ((r[3 * n] - float(C_b @ delta_x0)) / denom
                          if abs(denom) > 1.0e-30 else 0.0)
@@ -1296,12 +1392,12 @@ def _implicit_compositional_two_step(
         norm_d = float(np.linalg.norm(np.concatenate([p_new - p, sw_new - sw, z_new - z])))
         p, sw, z, bhp_inj = p_new, sw_new, z_new, bhp_new
         norm_x = float(np.linalg.norm(np.concatenate([p, sw, z])))
-        if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
+        if float(np.linalg.norm(r_new)) < tol * max(r0_norm, 1.0e-12):
             converged = True
             break
         if norm_d < 1.0e-12 * max(1.0, norm_x):
             break  # stalled
-    sl, sg, V, x, y, N, C, m_N, m_co2, m_oil, lam_w, lam_l, lam_g, Rs, _, _ = state(p, sw, z)
+    sl, sg = state(p, sw, z)[:2]
     return p, sw, sl, sg, z, converged
 
 
@@ -1321,7 +1417,7 @@ def _implicit_compositional_two_adaptive(
     *,
     well_qg_fixed: NDArray[np.float64] | None = None,
     max_iter: int = 30,
-    tol: float = 1.0e-3,
+    tol: float = _EOS_NEWTON_RTOL,
     dt_sub0: float | None = None,
     dt_min: float | None = None,
     dt_max: float | None = None,
@@ -1462,7 +1558,6 @@ def _implicit_compositional_two_kinetic_step(
     accum = 1.0 / (dt * inv_phiV)  # phi*vol/dt
     phiV = 1.0 / inv_phiV  # pore volume per cell: scales k_diss to m3/s
     I = diags(accum)
-    A_grav = _gravity_divergence_matrix(grid, permeability)
     cells, wi, bhp_w, is_inj = _peaceman_well_data(
         grid, permeability, wells, well_bhp, well_params, injects_gas,
     )
@@ -1514,9 +1609,10 @@ def _implicit_compositional_two_kinetic_step(
         lam_t_ = lam_w_ + lam_l_ + lam_g_
         D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
-        A_g_ = A_ - params.rho_g * A_grav
+        A_g_ = _phase_divergence_matrix(grid, permeability, p_, params.rho_g)
         q_vol_ = qw_ + qo_ + qg_ * Bg
-        r_p_ = A_ @ lam_t_ - q_vol_ + accum * params.ct * (p_ - p0) - params.rho_g * (A_grav @ lam_g_)
+        r_p_ = (A_ @ (lam_w_ + lam_l_) + A_g_ @ lam_g_ - q_vol_
+                + accum * params.ct * (p_ - p0))
         r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
         q_c_ = qg_ + Rs_ * qo_  # total CO2 source (injector qo=0 → pure qg)
         r_z_ = accum * (C_ - C0) - q_c_ + A_g_ @ (lam_g_ / Bg) + A_ @ (Rs_ * lam_l_)
@@ -1535,7 +1631,7 @@ def _implicit_compositional_two_kinetic_step(
         D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
         D_inj = inj_diag(lam_t)
         A = _mobility_divergence_matrix(grid, permeability, p)
-        A_g = A - params.rho_g * A_grav
+        A_g = _phase_divergence_matrix(grid, permeability, p, params.rho_g)
         r = residual(p, sw, z, Cd, bhp_inj)
         # numerical derivatives through the kinetic split + relperm + flash
         (_, _, C_p, Cd_eq_p, Rs_p, lw_p, ll_p, lg_p) = state(p + h, sw, z, Cd)
@@ -1575,20 +1671,26 @@ def _implicit_compositional_two_kinetic_step(
         dq_vol_dsw = (q_vols - q_vol0) / h
         dq_vol_dz = (q_volz - q_vol0) / h
         dq_cd_dCd = (q_cdc - q_cd0) / h
-        # Pressure block (volume balance): ∂r_p/∂p = L_up(λt) + A@diag(dλt/dp) + D
-        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h
-        J_pp = (A @ diags(dlam_t_dp) + _upwind_tpfa_matrix_vec(grid, permeability, lam_t, p)
+        # Pressure block (volume balance, liquid on p / gas on its potential):
+        # ∂r_p/∂p = L_up(λw+λl; p) + L_up(λg; Φg) + A@diag(d(λw+λl)/dp) + A_g@diag(dλg/dp) + D
+        lam_wl = lam_w + lam_l
+        J_pp = (A @ diags((lw_p + ll_p - lam_wl) / h) + A_g @ diags((lg_p - lam_g) / h)
+                + _upwind_tpfa_matrix_vec(grid, permeability, lam_wl, p)
+                + _upwind_tpfa_matrix_vec(grid, permeability, lam_g, p, params.rho_g)
                 + diags(D) + diags(accum * params.ct)).tocsr()
-        J_pw = A @ diags((lw_s + ll_s + lg_s - lam_t) / h) - diags(dq_vol_dsw)
-        J_pz = A @ diags((lw_z + ll_z + lg_z - lam_t) / h) - diags(dq_vol_dz)
-        J_pCd = A @ diags((lw_cd + ll_cd + lg_cd - lam_t) / h)
+        J_pw = (A @ diags((lw_s + ll_s - lam_wl) / h) + A_g @ diags((lg_s - lam_g) / h)
+                - diags(dq_vol_dsw))
+        J_pz = (A @ diags((lw_z + ll_z - lam_wl) / h) + A_g @ diags((lg_z - lam_g) / h)
+                - diags(dq_vol_dz))
+        J_pCd = A @ diags((lw_cd + ll_cd - lam_wl) / h) + A_g @ diags((lg_cd - lam_g) / h)
         # Water / CO2 / dissolved-CO2 blocks
         J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, 1.0e-12))))
                 + _upwind_tpfa_matrix_vec(grid, permeability, lam_w, p)).tocsr()
         J_ww = I + A @ diags(dlw_dsw)
         J_cp = (diags(dC_dp * accum) + diags(np.where(inj_cell, D / Bg,
                 D * ((lam_g / Bg + Rs * lam_l) / np.maximum(lam_t, 1.0e-12))))
-                + _upwind_tpfa_matrix_vec(grid, permeability, lam_g / Bg + Rs * lam_l, p)).tocsr()
+                + _upwind_tpfa_matrix_vec(grid, permeability, lam_g / Bg, p, params.rho_g)
+                + _upwind_tpfa_matrix_vec(grid, permeability, Rs * lam_l, p)).tocsr()
         J_cw = diags(dC_dsw * accum) + A_g @ diags((lg_s - lam_g) / h / Bg) + A @ diags(dF_dsw) - diags(dq_c_dsw)
         J_cc = diags(dC_dz * accum) + A_g @ diags((lg_z - lam_g) / h / Bg) + A @ diags(dF_dz) - diags(dq_c_dz)
         J_cCd = diags(dC_dCd * accum) + A_g @ diags((lg_cd - lam_g) / h / Bg) + A @ diags(dF_dCd)
@@ -1653,6 +1755,8 @@ def _split_compositional_three(
     z_light: NDArray[np.float64],
     p: NDArray[np.float64],
     params: FluidParams,
+    *,
+    with_density: bool = False,
 ) -> tuple[NDArray[np.float64], ...]:
     """3-component (CO2 / light C1-C6 / heavy C7+) phase split via the lumped flash.
 
@@ -1660,7 +1764,8 @@ def _split_compositional_three(
     1 − z_co2 − z_light); the flash gives the vapor fraction and the phase
     compositions. The phase molar volumes are the EOS (Peneloux-shifted) reservoir
     values. Returns ``(sw, sl, sg, V, x_co2, x_light, y_co2, y_light, N, C_co2,
-    C_light, v_l, v_g)``.
+    C_light, v_l, v_g)``; ``with_density`` appends the EOS phase mass densities
+    ``(rho_l, rho_g)`` (kg/m3).
     """
     from ..core.pr_eos import flash_direct_3comp_volumes, _V_CO2_STD
 
@@ -1668,14 +1773,16 @@ def _split_compositional_three(
     zc = np.clip(np.asarray(z_co2, dtype=float), 0.0, 0.999)
     zl = np.clip(np.asarray(z_light, dtype=float), 0.0, 0.999 - zc)
     p_a = np.asarray(p, dtype=float)
-    V, x_co2, x_light, y_co2, y_light, v_l, v_g = flash_direct_3comp_volumes(p_a, zc, zl)
+    flash = flash_direct_3comp_volumes(p_a, zc, zl, with_density=with_density)
+    V, x_co2, x_light, y_co2, y_light, v_l, v_g = flash[:7]
     denom = V * v_g + (1.0 - V) * v_l
     N = (1.0 - sw_p) / np.maximum(denom, 1.0e-30)
     sg = V * N * v_g
     sl = (1.0 - V) * N * v_l
     C_co2 = zc * N * _V_CO2_STD
     C_light = zl * N * _V_CO2_STD
-    return sw_p, sl, sg, V, x_co2, x_light, y_co2, y_light, N, C_co2, C_light, v_l, v_g
+    return ((sw_p, sl, sg, V, x_co2, x_light, y_co2, y_light, N, C_co2, C_light, v_l, v_g)
+            + tuple(flash[7:]))
 
 
 def _implicit_compositional_three_step(
@@ -1695,31 +1802,35 @@ def _implicit_compositional_three_step(
     *,
     well_qg_fixed: NDArray[np.float64] | None = None,
     max_iter: int = 30,
-    tol: float = 1.0e-3,
+    tol: float = _EOS_NEWTON_RTOL,
 ) -> tuple[NDArray[np.float64], ...]:
     """One fully-implicit 3-component (CO2/light/heavy) compositional step.
 
     Primary variables ``(p, sw, z_co2, z_light)``; the lumped flash gives the
     gas/liquid split and the light components co-evaporate into the CO2-rich gas
-    phase (unlike the 2-component model, whose gas was pure CO2). Returns
+    phase (unlike the 2-component model, whose gas was pure CO2). Component fluxes
+    and well terms use the EOS molar volumes; ``params.gravity == "eos"`` switches
+    the gas head to the per-face EOS density difference. Returns
     ``(p, sw, sl, sg, z_co2, z_light, converged)``.
     """
     from scipy.sparse import bmat as _bmat
     from scipy.sparse import diags
     from scipy.sparse.linalg import spsolve as _spsolve
 
-    from ..core.pr_eos import _V_CO2_STD, _MW_OIL, _RHO_OIL_STD
+    from ..core.pr_eos import _V_CO2_STD
 
-    Bg = float(params.bg)  # scalar gas FVF for the well model / rate constraint only
+    # Only scales the rate-constraint row (reservoir-volume units); fluxes and
+    # well terms use the EOS (per-cell) molar volumes.
+    Bg = float(params.bg)
     n = grid.n_cells
     sw = np.asarray(sw0, dtype=float).copy()
     zc = np.asarray(zc0, dtype=float).copy()
     zl = np.asarray(zl0, dtype=float).copy()
     p = np.asarray(p0, dtype=float).copy()
     h = 1.0e-6
+    hp = _FD_STEP_P
     accum = 1.0 / (dt * inv_phiV)
     I = diags(accum)
-    A_grav = _gravity_divergence_matrix(grid, permeability)
     cells, wi, bhp_w, is_inj = _peaceman_well_data(
         grid, permeability, wells, well_bhp, well_params, injects_gas,
     )
@@ -1735,17 +1846,29 @@ def _implicit_compositional_three_step(
     for idx in range(cells.size):
         inj_cell[cells[idx]] = is_inj[idx]
     bhp_inj = float(np.mean(bhp_w[is_inj])) if is_inj.any() else 0.0
+    inj_cells = cells[is_inj]
+    eos_gravity = params.gravity == "eos"
 
     def state(p_, sw_, zc_, zl_):
-        (sw_r, sl_, sg_, V_, xc_, xl_, yc_, yl_, N_, Cc_, Cl_,
-         v_l_, v_g_) = _split_compositional_three(sw_, zc_, zl_, p_, params)
+        split = _split_compositional_three(sw_, zc_, zl_, p_, params, with_density=eos_gravity)
+        (sw_r, sl_, sg_, V_, xc_, xl_, yc_, yl_, N_, Cc_, Cl_, v_l_, v_g_) = split[:13]
         lam_w_, lam_l_, lam_g_ = phase_mobilities(sw_r, sl_, sg_, params)
-        return sl_, sg_, V_, xc_, xl_, yc_, yl_, N_, Cc_, Cl_, lam_w_, lam_l_, lam_g_, v_l_, v_g_
+        head_ = (_eos_gas_head(grid, sl_, sg_, split[13], split[14], params.rho_g)
+                 if eos_gravity else params.rho_g)
+        return (sl_, sg_, V_, xc_, xl_, yc_, yl_, N_, Cc_, Cl_,
+                lam_w_, lam_l_, lam_g_, v_l_, v_g_, head_)
 
-    def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_):
+    def inj_inv_v(p_):
+        return _injector_inv_molar_volume(n, inj_cells, p_)[0]
+
+    def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, v_l_, v_g_, bhp_inj_):
+        """Well diagonal ``D`` and rates: water (reservoir m3/s), liquid / gas (mol/s)."""
         D_ = np.zeros(n)
         qw_ = np.zeros(n); qo_ = np.zeros(n); qg_ = np.zeros(n)
         lam_t_ = lam_w_ + lam_l_ + lam_g_
+        inv_v_l_ = 1.0 / np.maximum(v_l_, 1.0e-30)
+        inv_v_g_ = 1.0 / np.maximum(v_g_, 1.0e-30)
+        inv_v_inj_ = inj_inv_v(p_)
         for idx in range(cells.size):
             c = cells[idx]
             w = wi[idx]
@@ -1753,11 +1876,11 @@ def _implicit_compositional_three_step(
             dp = bhp_eff - p_[c]
             D_[c] += w * lam_t_[c]
             if is_inj[idx]:
-                qg_[c] += w * lam_t_[c] * dp / Bg
+                qg_[c] += w * lam_t_[c] * dp * inv_v_inj_[c]
             else:
                 qw_[c] += w * lam_w_[c] * dp
-                qo_[c] += w * lam_l_[c] * dp
-                qg_[c] += w * lam_g_[c] * dp / Bg
+                qo_[c] += w * lam_l_[c] * dp * inv_v_l_[c]
+                qg_[c] += w * lam_g_[c] * dp * inv_v_g_[c]
         return D_, qw_, qo_, qg_
 
     def inj_diag(lam_t_):
@@ -1767,26 +1890,35 @@ def _implicit_compositional_three_step(
                 D_inj_[cells[idx]] += wi[idx] * lam_t_[cells[idx]]
         return D_inj_
 
+    def rate_residual(p_, D_inj_, bhp_inj_):
+        """Injector surface-rate constraint, scaled by ``Bg`` to reservoir-volume units."""
+        if not rate_controlled:
+            return 0.0
+        q_surf = _V_CO2_STD * float(D_inj_ @ ((bhp_inj_ - p_) * inj_inv_v(p_)))
+        return Bg * (q_surf - qg_target)
+
     def residual(p_, sw_, zc_, zl_, bhp_inj_):
         (sl_, sg_, V_, xc_, xl_, yc_, yl_, N_, Cc_, Cl_,
-         lam_w_, lam_l_, lam_g_, v_l_, v_g_) = state(p_, sw_, zc_, zl_)
+         lam_w_, lam_l_, lam_g_, v_l_, v_g_, head_) = state(p_, sw_, zc_, zl_)
         lam_t_ = lam_w_ + lam_l_ + lam_g_
-        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
+        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, v_l_, v_g_, bhp_inj_)
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
-        A_g_ = A_ - params.rho_g * A_grav
-        q_N_ = qg_ / _V_CO2_STD + qo_ / np.maximum(v_l_, 1.0e-30)
-        r_p_ = (accum * (N_ - N0) - q_N_
+        A_g_ = _phase_divergence_matrix(grid, permeability, p_, head_)
+        r_p_ = (accum * ((N_ - N0) + params.ct * N_ * (p_ - p0)) - (qg_ + qo_)
                 + A_g_ @ (lam_g_ / np.maximum(v_g_, 1.0e-30))
                 + A_ @ (lam_l_ / np.maximum(v_l_, 1.0e-30)))
-        r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
-        # component sources (injector: pure CO2; producer: gas + dissolved liquid)
-        r_co2_ = _V_CO2_STD / np.maximum(v_l_, 1.0e-30)  # per-cell reservoir-liquid ratio
-        q_c_ = np.where(inj_cell, qg_, yc_ * qg_ + xc_ * r_co2_ * qo_)
-        q_l_ = np.where(inj_cell, 0.0, yl_ * qg_ + xl_ * r_co2_ * qo_)
-        r_c_ = accum * (Cc_ - Cc0) - q_c_ + A_g_ @ (yc_ * lam_g_ / Bg) + A_ @ (xc_ * r_co2_ * lam_l_)
-        r_l_ = accum * (Cl_ - Cl0) - q_l_ + A_g_ @ (yl_ * lam_g_ / Bg) + A_ @ (xl_ * r_co2_ * lam_l_)
+        rock_p_ = params.ct * (p_ - p0)
+        r_sw_ = accum * ((sw_ - sw0) + rock_p_ * sw_) - qw_ + A_ @ lam_w_
+        # component sources (injector: pure CO2; producer: gas + dissolved liquid),
+        # all as moles × V_CO2_STD like the conserved C_co2 / C_light.
+        rl_ = _V_CO2_STD / np.maximum(v_l_, 1.0e-30)
+        rg_ = _V_CO2_STD / np.maximum(v_g_, 1.0e-30)
+        q_c_ = _V_CO2_STD * np.where(inj_cell, qg_, yc_ * qg_ + xc_ * qo_)
+        q_l_ = _V_CO2_STD * np.where(inj_cell, 0.0, yl_ * qg_ + xl_ * qo_)
+        r_c_ = accum * ((Cc_ - Cc0) + rock_p_ * Cc_) - q_c_ + A_g_ @ (yc_ * rg_ * lam_g_) + A_ @ (xc_ * rl_ * lam_l_)
+        r_l_ = accum * ((Cl_ - Cl0) + rock_p_ * Cl_) - q_l_ + A_g_ @ (yl_ * rg_ * lam_g_) + A_ @ (xl_ * rl_ * lam_l_)
         D_inj_ = inj_diag(lam_t_)
-        r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
+        r_rate_ = rate_residual(p_, D_inj_, bhp_inj_)
         return np.concatenate([r_p_, r_sw_, r_c_, r_l_, np.array([r_rate_])])
 
     N0 = _split_compositional_three(sw, zc, zl, p, params)[8]
@@ -1796,82 +1928,91 @@ def _implicit_compositional_three_step(
     converged = False
     for _ in range(max_iter):
         (sl, sg, V, xc, xl, yc, yl, N, Cc, Cl,
-         lam_w, lam_l, lam_g, v_l, v_g) = state(p, sw, zc, zl)
-        m_N = lam_g / np.maximum(v_g, 1.0e-30) + lam_l / np.maximum(v_l, 1.0e-30)  # molar mobility
+         lam_w, lam_l, lam_g, v_l, v_g, head) = state(p, sw, zc, zl)
+        m_Ng = lam_g / np.maximum(v_g, 1.0e-30)  # gas molar mobility (gas potential)
+        m_Nl = lam_l / np.maximum(v_l, 1.0e-30)  # liquid molar mobility (p)
         r_co2 = _V_CO2_STD / np.maximum(v_l, 1.0e-30)  # per-cell reservoir-liquid ratio
+        r_gas = _V_CO2_STD / np.maximum(v_g, 1.0e-30)  # per-cell reservoir-gas ratio
         lam_t = lam_w + lam_l + lam_g
-        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
+        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, v_l, v_g, bhp_inj)
         D_inj = inj_diag(lam_t)
+        inv_vi, dinv_vi = _injector_inv_molar_volume(n, inj_cells, p)
+        dp_inj = np.where(inj_cell, (bhp_inj if rate_controlled else bhp_full) - p, 0.0)
+        g_inj_p = D * (inv_vi - dp_inj * dinv_vi)  # −∂(injector mol/s)/∂p
         A = _mobility_divergence_matrix(grid, permeability, p)
-        A_g = A - params.rho_g * A_grav
+        A_g = _phase_divergence_matrix(grid, permeability, p, head)
         r = residual(p, sw, zc, zl, bhp_inj)
         # numerical derivatives through the flash split + relperm
-        (_, _, _, _, _, _, _, N_p, Cc_p, Cl_p, lw_p, ll_p, lg_p, _, _) = state(p + h, sw, zc, zl)
-        dN_dp = (N_p - N) / h
-        dCc_dp = (Cc_p - Cc) / h
-        dCl_dp = (Cl_p - Cl) / h
-        (_, _, _, _, _, _, _, N_s, Cc_s, Cl_s, lw_s, ll_s, lg_s, _, _) = state(p, sw + h, zc, zl)
+        (_, _, _, _, _, _, _, N_p, Cc_p, Cl_p, lw_p, ll_p, lg_p, _, _, _) = state(p + hp, sw, zc, zl)
+        dN_dp = (N_p - N) / hp
+        dCc_dp = (Cc_p - Cc) / hp
+        dCl_dp = (Cl_p - Cl) / hp
+        (_, _, _, _, _, _, _, N_s, Cc_s, Cl_s, lw_s, ll_s, lg_s, _, _, _) = state(p, sw + h, zc, zl)
         dN_dsw = (N_s - N) / h
         dCc_dsw = (Cc_s - Cc) / h
         dCl_dsw = (Cl_s - Cl) / h
         dlw_dsw = (lw_s - lam_w) / h
-        (_, _, _, _, _, _, _, N_zc, Cc_zc, Cl_zc, lw_zc, ll_zc, lg_zc, _, _) = state(p, sw, zc + h, zl)
+        (_, _, _, _, _, _, _, N_zc, Cc_zc, Cl_zc, lw_zc, ll_zc, lg_zc, _, _, _) = state(p, sw, zc + h, zl)
         dN_dzc = (N_zc - N) / h
         dCc_dzc = (Cc_zc - Cc) / h
         dCl_dzc = (Cl_zc - Cl) / h
-        (_, _, _, _, _, _, _, N_zl, Cc_zl, Cl_zl, lw_zl, ll_zl, lg_zl, _, _) = state(p, sw, zc, zl + h)
+        (_, _, _, _, _, _, _, N_zl, Cc_zl, Cl_zl, lw_zl, ll_zl, lg_zl, _, _, _) = state(p, sw, zc, zl + h)
         dN_dzl = (N_zl - N) / h
         dCc_dzl = (Cc_zl - Cc) / h
         dCl_dzl = (Cl_zl - Cl) / h
-        # Well source derivatives (q_c = qg + yc·qg + xc·r_co2·qo, etc.)
+        # Well source derivatives (molar rates × V_CO2_STD per component, q_N total moles)
         def _q_srcs(sw_, zc_, zl_):
             (_, _, _, xc_, xl_, yc_, yl_, _, _, _,
-             lw_, ll_, lg_, _, _) = state(p, sw_, zc_, zl_)
-            _, qw_, qo_, qg_ = well_diag_rates(p, lw_, ll_, lg_, bhp_inj)
-            q_c_ = np.where(inj_cell, qg_, yc_ * qg_ + xc_ * r_co2 * qo_)
-            q_l_ = np.where(inj_cell, 0.0, yl_ * qg_ + xl_ * r_co2 * qo_)
-            q_vol_ = qw_ + qo_ + qg_ * Bg
-            return q_c_, q_l_, q_vol_
-        qc0, ql0, qv0 = _q_srcs(sw, zc, zl)
-        qcs, qls, qvs = _q_srcs(sw + h, zc, zl)
-        qcz, qlz, qvz = _q_srcs(sw, zc + h, zl)
-        qcl, qll, qvl = _q_srcs(sw, zc, zl + h)
+             lw_, ll_, lg_, v_l_, v_g_, _) = state(p, sw_, zc_, zl_)
+            _, _, qo_, qg_ = well_diag_rates(p, lw_, ll_, lg_, v_l_, v_g_, bhp_inj)
+            q_c_ = _V_CO2_STD * np.where(inj_cell, qg_, yc_ * qg_ + xc_ * qo_)
+            q_l_ = _V_CO2_STD * np.where(inj_cell, 0.0, yl_ * qg_ + xl_ * qo_)
+            return q_c_, q_l_, qg_ + qo_
+        qc0, ql0, qN0 = _q_srcs(sw, zc, zl)
+        qcs, qls, qNs = _q_srcs(sw + h, zc, zl)
+        qcz, qlz, qNz = _q_srcs(sw, zc + h, zl)
+        qcl, qll, qNl = _q_srcs(sw, zc, zl + h)
         dq_c_dsw = (qcs - qc0) / h
         dq_c_dzc = (qcz - qc0) / h
         dq_c_dzl = (qcl - qc0) / h
         dq_l_dsw = (qls - ql0) / h
         dq_l_dzc = (qlz - ql0) / h
         dq_l_dzl = (qll - ql0) / h
-        dq_vol_dsw = (qvs - qv0) / h
-        dq_vol_dzc = (qvz - qv0) / h
-        dq_vol_dzl = (qvl - qv0) / h
+        dq_N_dsw = (qNs - qN0) / h
+        dq_N_dzc = (qNz - qN0) / h
+        dq_N_dzl = (qNl - qN0) / h
         # Jacobian blocks (molar-balance pressure + water + CO2 + light)
-        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h  # approx for the flux p-derivative (secondary)
-        D_molar = np.where(inj_cell, D / (Bg * _V_CO2_STD),
-                           D * (lam_l / np.maximum(lam_t, 1.0e-12)) / np.maximum(v_l, 1.0e-30))
-        J_pp = (diags(dN_dp * accum) + A @ diags(dlam_t_dp)
-                + _upwind_tpfa_matrix_vec(grid, permeability, m_N, p)
+        frac_t = D / np.maximum(lam_t, 1.0e-12)
+        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / hp  # approx for the flux p-derivative (secondary)
+        D_molar = np.where(inj_cell, g_inj_p, frac_t * (m_Nl + m_Ng))
+        rock_ct = accum * params.ct * (N + (p - p0) * dN_dp)
+        J_pp = (diags(dN_dp * accum + rock_ct) + A @ diags(dlam_t_dp)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_Ng, p, head)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_Nl, p)
                 + diags(D_molar)).tocsr()
-        J_pw = diags(dN_dsw * accum)
-        J_pzc = diags(dN_dzc * accum)
-        J_pzl = diags(dN_dzl * accum)
-        J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, 1.0e-12))))
+        J_pw = diags(dN_dsw * accum) - diags(dq_N_dsw)
+        J_pzc = diags(dN_dzc * accum) - diags(dq_N_dzc)
+        J_pzl = diags(dN_dzl * accum) - diags(dq_N_dzl)
+        J_wp = (diags(np.where(inj_cell, 0.0, frac_t * lam_w))
                 + _upwind_tpfa_matrix_vec(grid, permeability, lam_w, p)).tocsr()
         J_ww = I + A @ diags(dlw_dsw)
-        # CO2 equation blocks (free gas yc·λg/Bg + dissolved xc·r_co2·λl)
-        J_cp = (diags(dCc_dp * accum) + diags(np.where(inj_cell, D / Bg,
-                D * ((yc * lam_g / Bg + xc * r_co2 * lam_l) / np.maximum(lam_t, 1.0e-12))))
-                + _upwind_tpfa_matrix_vec(grid, permeability, yc * lam_g / Bg + xc * r_co2 * lam_l, p)).tocsr()
-        J_cw = diags(dCc_dsw * accum) + A_g @ diags((lg_s - lam_g) / h * yc / Bg) + A @ diags((ll_s - lam_l) / h * xc * r_co2) - diags(dq_c_dsw)
-        J_cc = diags(dCc_dzc * accum) + A_g @ diags((lg_zc - lam_g) / h * yc / Bg) + A @ diags((ll_zc - lam_l) / h * xc * r_co2) - diags(dq_c_dzc)
-        J_czl = diags(dCc_dzl * accum) + A_g @ diags((lg_zl - lam_g) / h * yc / Bg) + A @ diags((ll_zl - lam_l) / h * xc * r_co2) - diags(dq_c_dzl)
+        # CO2 equation blocks (free gas yc·r_gas·λg + dissolved xc·r_co2·λl)
+        J_cp = (diags(dCc_dp * accum)
+                + diags(np.where(inj_cell, _V_CO2_STD * g_inj_p,
+                                 frac_t * (yc * r_gas * lam_g + xc * r_co2 * lam_l)))
+                + _upwind_tpfa_matrix_vec(grid, permeability, yc * r_gas * lam_g, p, head)
+                + _upwind_tpfa_matrix_vec(grid, permeability, xc * r_co2 * lam_l, p)).tocsr()
+        J_cw = diags(dCc_dsw * accum) + A_g @ diags((lg_s - lam_g) / h * yc * r_gas) + A @ diags((ll_s - lam_l) / h * xc * r_co2) - diags(dq_c_dsw)
+        J_cc = diags(dCc_dzc * accum) + A_g @ diags((lg_zc - lam_g) / h * yc * r_gas) + A @ diags((ll_zc - lam_l) / h * xc * r_co2) - diags(dq_c_dzc)
+        J_czl = diags(dCc_dzl * accum) + A_g @ diags((lg_zl - lam_g) / h * yc * r_gas) + A @ diags((ll_zl - lam_l) / h * xc * r_co2) - diags(dq_c_dzl)
         # light equation blocks
         J_lp = (diags(dCl_dp * accum) + diags(np.where(inj_cell, 0.0,
-                D * ((yl * lam_g / Bg + xl * r_co2 * lam_l) / np.maximum(lam_t, 1.0e-12))))
-                + _upwind_tpfa_matrix_vec(grid, permeability, yl * lam_g / Bg + xl * r_co2 * lam_l, p)).tocsr()
-        J_lw = diags(dCl_dsw * accum) + A_g @ diags((lg_s - lam_g) / h * yl / Bg) + A @ diags((ll_s - lam_l) / h * xl * r_co2) - diags(dq_l_dsw)
-        J_lc = diags(dCl_dzc * accum) + A_g @ diags((lg_zc - lam_g) / h * yl / Bg) + A @ diags((ll_zc - lam_l) / h * xl * r_co2) - diags(dq_l_dzc)
-        J_ll = diags(dCl_dzl * accum) + A_g @ diags((lg_zl - lam_g) / h * yl / Bg) + A @ diags((ll_zl - lam_l) / h * xl * r_co2) - diags(dq_l_dzl)
+                frac_t * (yl * r_gas * lam_g + xl * r_co2 * lam_l)))
+                + _upwind_tpfa_matrix_vec(grid, permeability, yl * r_gas * lam_g, p, head)
+                + _upwind_tpfa_matrix_vec(grid, permeability, xl * r_co2 * lam_l, p)).tocsr()
+        J_lw = diags(dCl_dsw * accum) + A_g @ diags((lg_s - lam_g) / h * yl * r_gas) + A @ diags((ll_s - lam_l) / h * xl * r_co2) - diags(dq_l_dsw)
+        J_lc = diags(dCl_dzc * accum) + A_g @ diags((lg_zc - lam_g) / h * yl * r_gas) + A @ diags((ll_zc - lam_l) / h * xl * r_co2) - diags(dq_l_dzc)
+        J_ll = diags(dCl_dzl * accum) + A_g @ diags((lg_zl - lam_g) / h * yl * r_gas) + A @ diags((ll_zl - lam_l) / h * xl * r_co2) - diags(dq_l_dzl)
         r = -r
         J_blk = _bmat([[J_pp, J_pw, J_pzc, J_pzl],
                        [J_wp, J_ww, None, None],
@@ -1880,9 +2021,13 @@ def _implicit_compositional_three_step(
         rhs = r[:4 * n].copy()
         delta_bhp = 0.0
         if rate_controlled:
-            B_c = np.concatenate([-D_inj, np.zeros(n), -D_inj / Bg, np.zeros(n)])
-            C_b = np.concatenate([-D_inj, np.zeros(n), np.zeros(n), np.zeros(n)])
-            d_rr = float(D_inj.sum())
+            # Schur complement for the injector BHP (injector moles WI·λt·(bhp−p)/v_CO2):
+            # B_c = d[r_p,r_sw,r_c,r_l]/d(bhp), C_b = d(r_rate)/dp, d_rr = d(r_rate)/d(bhp).
+            g_inj = D_inj * inv_vi
+            B_c = np.concatenate([-g_inj, np.zeros(n), -_V_CO2_STD * g_inj, np.zeros(n)])
+            C_b = np.concatenate([-Bg * _V_CO2_STD * np.where(inj_cell, g_inj_p, 0.0),
+                                  np.zeros(n), np.zeros(n), np.zeros(n)])
+            d_rr = float(Bg * _V_CO2_STD * g_inj.sum())
             u = _spsolve(J_blk.tocsc(), B_c)
             delta_x0 = _spsolve(J_blk.tocsc(), rhs)
             denom = d_rr - float(C_b @ u)
@@ -1910,12 +2055,12 @@ def _implicit_compositional_three_step(
         norm_d = float(np.linalg.norm(np.concatenate([p_new - p, sw_new - sw, zc_new - zc, zl_new - zl])))
         p, sw, zc, zl, bhp_inj = p_new, sw_new, zc_new, zl_new, bhp_new
         norm_x = float(np.linalg.norm(np.concatenate([p, sw, zc, zl])))
-        if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
+        if float(np.linalg.norm(r_new)) < tol * max(r0_norm, 1.0e-12):
             converged = True
             break
         if norm_d < 1.0e-12 * max(1.0, norm_x):
             break  # stalled
-    sl, sg, V, xc, xl, yc, yl, N, Cc, Cl, lam_w, lam_l, lam_g, _, _ = state(p, sw, zc, zl)
+    sl, sg = state(p, sw, zc, zl)[:2]
     return p, sw, sl, sg, zc, zl, converged
 
 
@@ -1935,33 +2080,36 @@ def _implicit_compositional_full_step(
     *,
     well_qg_fixed: NDArray[np.float64] | None = None,
     max_iter: int = 30,
-    tol: float = 1.0e-3,
+    tol: float = _EOS_NEWTON_RTOL,
 ) -> tuple[NDArray[np.float64], ...]:
     """One fully-implicit full-compositional (14-component) step (Newton).
 
     Primary variables ``(p, sw, z_1..z_13)`` (``z`` is the 14-component overall
     mole fraction, the last component implied). Each component is conserved as
     *moles* (``z_c·N``) with the molar flux ``y_c·λg/v_g + x_c·λl/v_l``; the
-    pressure is the volume balance and the gas/liquid split is the full PR flash.
+    pressure is the total molar balance and the gas/liquid split is the full PR
+    flash. Well terms use the same EOS molar volumes; ``params.gravity == "eos"``
+    switches the gas head to the per-face EOS density difference.
     Returns ``(p, sw, sl, sg, z, converged)``.
     """
     from scipy.sparse import bmat as _bmat
     from scipy.sparse import diags
     from scipy.sparse.linalg import spsolve as _spsolve
 
-    from ..core.pr_eos import (_Z_OIL, _CO2_IDX, _MW, _MW_OIL, _V_CO2_STD, _RHO_OIL_STD,
-                               flash_direct_full, phase_molar_volumes)
+    from ..core.pr_eos import (_Z_OIL, _CO2_IDX, _V_CO2_STD,
+                               flash_direct_full, phase_mass_densities, phase_molar_volumes)
 
     ncomp = _Z_OIL.size  # 14
+    # Only scales the rate-constraint row (reservoir-volume units).
     Bg = float(params.bg)
     n = grid.n_cells
     sw = np.asarray(sw0, dtype=float).copy()
     z = np.asarray(z0, dtype=float).copy()  # (n, 14)
     p = np.asarray(p0, dtype=float).copy()
     h = 1.0e-6
+    hp = _FD_STEP_P
     accum = 1.0 / (dt * inv_phiV)
     I = diags(accum)
-    A_grav = _gravity_divergence_matrix(grid, permeability)
     cells, wi, bhp_w, is_inj = _peaceman_well_data(
         grid, permeability, wells, well_bhp, well_params, injects_gas,
     )
@@ -1977,6 +2125,8 @@ def _implicit_compositional_full_step(
     for idx in range(cells.size):
         inj_cell[cells[idx]] = is_inj[idx]
     bhp_inj = float(np.mean(bhp_w[is_inj])) if is_inj.any() else 0.0
+    inj_cells = cells[is_inj]
+    eos_gravity = params.gravity == "eos"
 
     def state(p_, sw_, z_):
         V_, x_, y_ = flash_direct_full(z_, p_)
@@ -1987,12 +2137,24 @@ def _implicit_compositional_full_step(
         sg_ = V_ * N_ * v_g_
         sl_ = (1.0 - V_) * N_ * v_l_
         lam_w_, lam_l_, lam_g_ = phase_mobilities(sw_, sl_, sg_, params)
-        return sl_, sg_, V_, x_, y_, N_, lam_w_, lam_l_, lam_g_, v_l_, v_g_
+        if eos_gravity:
+            rho_l_, rho_g_ = phase_mass_densities(x_, y_, v_l_, v_g_)
+            head_ = _eos_gas_head(grid, sl_, sg_, rho_l_, rho_g_, params.rho_g)
+        else:
+            head_ = params.rho_g
+        return sl_, sg_, V_, x_, y_, N_, lam_w_, lam_l_, lam_g_, v_l_, v_g_, head_
 
-    def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_):
+    def inj_inv_v(p_):
+        return _injector_inv_molar_volume(n, inj_cells, p_)[0]
+
+    def well_diag_rates(p_, lam_w_, lam_l_, lam_g_, v_l_, v_g_, bhp_inj_):
+        """Well diagonal ``D`` and rates: water (reservoir m3/s), liquid / gas (mol/s)."""
         D_ = np.zeros(n)
         qw_ = np.zeros(n); qo_ = np.zeros(n); qg_ = np.zeros(n)
         lam_t_ = lam_w_ + lam_l_ + lam_g_
+        inv_v_l_ = 1.0 / np.maximum(v_l_, 1.0e-30)
+        inv_v_g_ = 1.0 / np.maximum(v_g_, 1.0e-30)
+        inv_v_inj_ = inj_inv_v(p_)
         for idx in range(cells.size):
             c = cells[idx]
             w = wi[idx]
@@ -2000,11 +2162,11 @@ def _implicit_compositional_full_step(
             dp = bhp_eff - p_[c]
             D_[c] += w * lam_t_[c]
             if is_inj[idx]:
-                qg_[c] += w * lam_t_[c] * dp / Bg
+                qg_[c] += w * lam_t_[c] * dp * inv_v_inj_[c]
             else:
                 qw_[c] += w * lam_w_[c] * dp
-                qo_[c] += w * lam_l_[c] * dp
-                qg_[c] += w * lam_g_[c] * dp / Bg
+                qo_[c] += w * lam_l_[c] * dp * inv_v_l_[c]
+                qg_[c] += w * lam_g_[c] * dp * inv_v_g_[c]
         return D_, qw_, qo_, qg_
 
     def inj_diag(lam_t_):
@@ -2014,50 +2176,60 @@ def _implicit_compositional_full_step(
                 D_inj_[cells[idx]] += wi[idx] * lam_t_[cells[idx]]
         return D_inj_
 
+    def rate_residual(p_, D_inj_, bhp_inj_):
+        """Injector surface-rate constraint, scaled by ``Bg`` to reservoir-volume units."""
+        if not rate_controlled:
+            return 0.0
+        q_surf = _V_CO2_STD * float(D_inj_ @ ((bhp_inj_ - p_) * inj_inv_v(p_)))
+        return Bg * (q_surf - qg_target)
+
     def residual(p_, sw_, z_, bhp_inj_):
         (sl_, sg_, V_, x_, y_, N_, lam_w_, lam_l_, lam_g_,
-         v_l_, v_g_) = state(p_, sw_, z_)
+         v_l_, v_g_, head_) = state(p_, sw_, z_)
         lam_t_ = lam_w_ + lam_l_ + lam_g_
-        D_, qw_, qo_, qg_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, bhp_inj_)
+        # molar well rates (injector pure CO2; producer gas + liquid split)
+        D_, qw_, qo_mol_, qg_mol_ = well_diag_rates(p_, lam_w_, lam_l_, lam_g_, v_l_, v_g_, bhp_inj_)
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
-        A_g_ = A_ - params.rho_g * A_grav
-        q_N_ = qg_ / _V_CO2_STD + qo_ / np.maximum(v_l_, 1.0e-30)
-        r_p_ = (accum * (N_ - N0) - q_N_
+        A_g_ = _phase_divergence_matrix(grid, permeability, p_, head_)
+        r_p_ = (accum * ((N_ - N0) + params.ct * N_ * (p_ - p0)) - (qg_mol_ + qo_mol_)
                 + A_g_ @ (lam_g_ / np.maximum(v_g_, 1.0e-30))
                 + A_ @ (lam_l_ / np.maximum(v_l_, 1.0e-30)))
-        r_sw_ = accum * (sw_ - sw0) - qw_ + A_ @ lam_w_
-        # molar component sources (injector pure CO2; producer gas+liquid split)
-        qg_mol_ = qg_ / _V_CO2_STD   # gas moles (surface ideal-gas molar volume)
-        qo_mol_ = qo_ / np.maximum(v_l_, 1.0e-30)  # liquid moles (reservoir molar volume)
+        rock_p_ = params.ct * (p_ - p0)
+        r_sw_ = accum * ((sw_ - sw0) + rock_p_ * sw_) - qw_ + A_ @ lam_w_
         # component residuals (moles)
         rc = []
         for c in range(ncomp):
             q_c_ = np.where(inj_cell, (qg_mol_ if c == _CO2_IDX else 0.0),
                             y_[:, c] * qg_mol_ + x_[:, c] * qo_mol_)
-            r_c_ = (accum * (z_[:, c] * N_ - z0[:, c] * N0)
+            held_ = z_[:, c] * N_
+            r_c_ = (accum * ((held_ - z0[:, c] * N0) + rock_p_ * held_)
                     - q_c_ + A_g_ @ (y_[:, c] * lam_g_ / v_g_)
                     + A_ @ (x_[:, c] * lam_l_ / v_l_))
             rc.append(r_c_)
         D_inj_ = inj_diag(lam_t_)
-        r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
+        r_rate_ = rate_residual(p_, D_inj_, bhp_inj_)
         return np.concatenate([r_p_, r_sw_] + rc + [np.array([r_rate_])])
 
     N0 = _split_full_N(sw0, z0, p0, params)
     r0_norm = float(np.linalg.norm(residual(p, sw, z, bhp_inj)))
     converged = False
     for _ in range(max_iter):
-        sl, sg, V, x, y, N, lam_w, lam_l, lam_g, v_l, v_g = state(p, sw, z)
-        m_N = lam_g / np.maximum(v_g, 1.0e-30) + lam_l / np.maximum(v_l, 1.0e-30)  # molar mobility
+        sl, sg, V, x, y, N, lam_w, lam_l, lam_g, v_l, v_g, head = state(p, sw, z)
+        m_Ng = lam_g / np.maximum(v_g, 1.0e-30)  # gas molar mobility (gas potential)
+        m_Nl = lam_l / np.maximum(v_l, 1.0e-30)  # liquid molar mobility (p)
         lam_t = lam_w + lam_l + lam_g
-        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, bhp_inj)
+        D, qw, qo, qg = well_diag_rates(p, lam_w, lam_l, lam_g, v_l, v_g, bhp_inj)
         D_inj = inj_diag(lam_t)
+        inv_vi, dinv_vi = _injector_inv_molar_volume(n, inj_cells, p)
+        dp_inj = np.where(inj_cell, (bhp_inj if rate_controlled else bhp_full) - p, 0.0)
+        g_inj_p = D * (inv_vi - dp_inj * dinv_vi)  # −∂(injector mol/s)/∂p
         A = _mobility_divergence_matrix(grid, permeability, p)
-        A_g = A - params.rho_g * A_grav
+        A_g = _phase_divergence_matrix(grid, permeability, p, head)
         r = residual(p, sw, z, bhp_inj)
         # numerical derivatives of the split (N, x, y, λ) wrt p/sw/z (per component)
-        _, _, _, _, _, N_p, lw_p, ll_p, lg_p, _, _ = state(p + h, sw, z)
-        dN_dp = (N_p - N) / h
-        _, _, _, _, _, N_s, lw_s, ll_s, lg_s, _, _ = state(p, sw + h, z)
+        _, _, _, _, _, N_p, lw_p, ll_p, lg_p, _, _, _ = state(p + hp, sw, z)
+        dN_dp = (N_p - N) / hp
+        _, _, _, _, _, N_s, lw_s, ll_s, lg_s, _, _, _ = state(p, sw + h, z)
         dN_dsw = (N_s - N) / h
         dlw_dsw = (lw_s - lam_w) / h
         # z-derivatives: perturb each of the first ncomp-1 mole fractions
@@ -2065,33 +2237,36 @@ def _implicit_compositional_full_step(
         for c in range(ncomp - 1):
             zc = z.copy(); zc[:, c] += h; zc[:, -1] -= h
             zc = zc / zc.sum(axis=1, keepdims=True)
-            _, _, _, x_c, y_c, N_c, lw_c, ll_c, lg_c, _, _ = state(p, sw, zc)
+            _, _, _, x_c, y_c, N_c, lw_c, ll_c, lg_c, _, _, _ = state(p, sw, zc)
             dz[c] = (x_c, y_c, N_c, lw_c, ll_c, lg_c)
         # pressure / water blocks
-        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / h  # approx for the flux p-derivative (secondary)
-        D_molar = np.where(inj_cell, D / (Bg * _V_CO2_STD),
-                           D * (lam_l / np.maximum(lam_t, 1.0e-12)) / np.maximum(v_l, 1.0e-30))
-        J_pp = (diags(dN_dp * accum) + A @ diags(dlam_t_dp)
-                + _upwind_tpfa_matrix_vec(grid, permeability, m_N, p)
+        frac_t = D / np.maximum(lam_t, 1.0e-12)
+        dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / hp  # approx for the flux p-derivative (secondary)
+        D_molar = np.where(inj_cell, g_inj_p, frac_t * (m_Nl + m_Ng))
+        rock_ct = accum * params.ct * (N + (p - p0) * dN_dp)
+        J_pp = (diags(dN_dp * accum + rock_ct) + A @ diags(dlam_t_dp)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_Ng, p, head)
+                + _upwind_tpfa_matrix_vec(grid, permeability, m_Nl, p)
                 + diags(D_molar)).tocsr()
         J_pw = diags(dN_dsw * accum)
-        J_wp = (diags(np.where(inj_cell, 0.0, D * (lam_w / np.maximum(lam_t, 1.0e-12))))
+        J_wp = (diags(np.where(inj_cell, 0.0, frac_t * lam_w))
                 + _upwind_tpfa_matrix_vec(grid, permeability, lam_w, p)).tocsr()
         J_ww = I + A @ diags(dlw_dsw)
         # component blocks (molar formulation)
-        qg_mol = qg / _V_CO2_STD
-        qo_mol = qo / np.maximum(v_l, 1.0e-30)
         row_blocks = []
         for c in range(ncomp - 1):
             # ∂r_c/∂p (well p-derivative + flux ∇p-derivative)
-            J_cp = (diags(np.where(inj_cell, (D / Bg / _V_CO2_STD if c == _CO2_IDX else 0.0),
-                            D * ((y[:, c] * lam_g / v_g + x[:, c] * lam_l / v_l) / np.maximum(lam_t, 1.0e-12))))
-                    + _upwind_tpfa_matrix_vec(grid, permeability, y[:, c] * lam_g / v_g + x[:, c] * lam_l / v_l, p)).tocsr()
+            J_cp = (diags(np.where(inj_cell, (g_inj_p if c == _CO2_IDX else 0.0),
+                            frac_t * (y[:, c] * m_Ng + x[:, c] * m_Nl)))
+                    + _upwind_tpfa_matrix_vec(grid, permeability, y[:, c] * lam_g / v_g, p, head)
+                    + _upwind_tpfa_matrix_vec(grid, permeability, x[:, c] * lam_l / v_l, p)).tocsr()
             # ∂r_c/∂sw
-            dF_dsw = (y[:, c] * (lg_s - lam_g) / h / v_g + x[:, c] * (ll_s - lam_l) / h / v_l)
+            dFg_dsw = y[:, c] * (lg_s - lam_g) / h / v_g
+            dFl_dsw = x[:, c] * (ll_s - lam_l) / h / v_l
             dq_c_dsw = np.where(inj_cell, 0.0,
                                 y[:, c] * (qg * 0.0) + x[:, c] * 0.0)  # lag well sw-deriv
-            J_cw = diags((dN_dsw * z[:, c]) * accum) + A_g @ diags(dF_dsw) - diags(dq_c_dsw)
+            J_cw = (diags((dN_dsw * z[:, c]) * accum) + A_g @ diags(dFg_dsw)
+                    + A @ diags(dFl_dsw) - diags(dq_c_dsw))
             # ∂r_c/∂z_j
             col_blocks = []
             for j in range(ncomp - 1):
@@ -2115,20 +2290,23 @@ def _implicit_compositional_full_step(
         rhs = r[: (ncomp + 1) * n].copy()
         delta_bhp = 0.0
         if rate_controlled:
-            # The injector is pure CO2 (_CO2_IDX), so the molar CO2-source derivative
-            # ∂r_c/∂bhp_inj = −D_inj/(Bg·V_CO2_STD) belongs on the CO2 component row
-            # (block 2+_CO2_IDX), not the first component (C1). r_p is the volume
-            # balance (∂r_p/∂bhp_inj = −D_inj) and r_sw has no injector dependence.
-            B_c = np.concatenate([-D_inj, np.zeros(n)]
+            # The injector is pure CO2 (_CO2_IDX) at WI·λt·(bhp−p)/v_CO2 mol/s, so
+            # ∂/∂bhp_inj = −D_inj/v_CO2 on the molar-balance r_p row and on the CO2
+            # component row (block 2+_CO2_IDX); r_sw has no injector dependence.
+            g_inj = D_inj * inv_vi
+            B_c = np.concatenate([-g_inj, np.zeros(n)]
                                  + [np.zeros(n)] * _CO2_IDX
-                                 + [-D_inj / Bg / _V_CO2_STD]
+                                 + [-g_inj]
                                  + [np.zeros(n)] * (ncomp - 2 - _CO2_IDX))
-            C_b = np.concatenate([-D_inj, np.zeros(n)] + [np.zeros(n)] * (ncomp - 1))
-            d_rr = float(D_inj.sum())
+            C_b = np.concatenate([-Bg * _V_CO2_STD * np.where(inj_cell, g_inj_p, 0.0), np.zeros(n)]
+                                 + [np.zeros(n)] * (ncomp - 1))
+            d_rr = float(Bg * _V_CO2_STD * g_inj.sum())
             u = _spsolve(J_blk.tocsc(), B_c)
             delta_x0 = _spsolve(J_blk.tocsc(), rhs)
             denom = d_rr - float(C_b @ u)
-            delta_bhp = ((r[(ncomp + 1) * n] - float(C_b @ delta_x0)) / denom
+            # r_rate is the last entry: the residual also carries the 14th (implied)
+            # component block, so it sits at (ncomp + 2) * n, not (ncomp + 1) * n.
+            delta_bhp = ((r[-1] - float(C_b @ delta_x0)) / denom
                          if abs(denom) > 1.0e-30 else 0.0)
             delta = delta_x0 - delta_bhp * u
         else:
@@ -2157,13 +2335,26 @@ def _implicit_compositional_full_step(
             [p_new - p, sw_new - sw, (z_new - z).ravel()])))
         p, sw, z, bhp_inj = p_new, sw_new, z_new, bhp_new
         norm_x = float(np.linalg.norm(np.concatenate([p, sw, z.ravel()])))
-        if float(np.linalg.norm(r_new)) < max(tol, 0.1) * max(r0_norm, 1.0e-12):
+        if float(np.linalg.norm(r_new)) < tol * max(r0_norm, 1.0e-12):
             converged = True
             break
         if norm_d < 1.0e-12 * max(1.0, norm_x):
             break  # stalled
-    sl, sg, V, x, y, N, lam_w, lam_l, lam_g, _, _ = state(p, sw, z)
+    sl, sg = state(p, sw, z)[:2]
     return p, sw, sl, sg, z, converged
+
+
+def _split_full(sw, z, p):
+    """14-component flash split → ``(sw, sl, sg)``."""
+    from ..core.pr_eos import flash_direct_full, phase_molar_volumes
+    sw_p = np.asarray(sw, dtype=float)
+    V, x, y = flash_direct_full(z, p)
+    v_l, v_g = phase_molar_volumes(x, y, p)
+    denom = V * v_g + (1.0 - V) * v_l
+    N = (1.0 - sw_p) / np.maximum(denom, 1.0e-30)
+    sg = V * N * v_g
+    sl = (1.0 - V) * N * v_l
+    return sw_p, sl, sg
 
 
 def _split_full_N(sw, z, p, params):
@@ -2172,7 +2363,61 @@ def _split_full_N(sw, z, p, params):
     V, x, y = flash_direct_full(z, p)
     v_l, v_g = phase_molar_volumes(x, y, p)
     denom = V * v_g + (1.0 - V) * v_l
-    return (1.0 - sw) / np.maximum(denom, 1.0e-30)
+    return (1.0 - np.asarray(sw, dtype=float)) / np.maximum(denom, 1.0e-30)
+
+
+def _implicit_compositional_full_adaptive(
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64],
+    inv_phiV: NDArray[np.float64],
+    dt: float,
+    sw0: NDArray[np.float64],
+    z0: NDArray[np.float64],
+    p0: NDArray[np.float64],
+    wells: WellMap,
+    well_bhp: NDArray[np.float64],
+    well_params: WellModelParams,
+    params: FluidParams,
+    injects_gas: NDArray[np.bool_],
+    *,
+    well_qg_fixed: NDArray[np.float64] | None = None,
+    max_iter: int = 30,
+    tol: float = _EOS_NEWTON_RTOL,
+    dt_sub0: float | None = None,
+    dt_min: float | None = None,
+    dt_max: float | None = None,
+    dt_growth: float = 2.0,
+    max_substeps: int = 64,
+) -> tuple[NDArray[np.float64], ...]:
+    """Adaptive sub-stepping around :func:`_implicit_compositional_full_step`."""
+    dt_min = (dt / 64.0) if dt_min is None else dt_min
+    dt_max = dt if dt_max is None else dt_max
+    p = np.asarray(p0, dtype=float).copy()
+    sw = np.asarray(sw0, dtype=float).copy()
+    z = np.asarray(z0, dtype=float).copy()
+    _, sl, sg = _split_full(sw, z, p)
+    remaining = float(dt)
+    dt_sub = min(dt_sub0 if dt_sub0 is not None else dt_max, remaining, dt_max)
+    last_dt = dt_sub
+    for _ in range(max_substeps):
+        if remaining <= 1.0e-12:
+            break
+        p_new, sw_new, sl_new, sg_new, z_new, conv = _implicit_compositional_full_step(
+            grid, permeability, inv_phiV, dt_sub, sw, z, p,
+            wells, well_bhp, well_params, params, injects_gas,
+            well_qg_fixed=well_qg_fixed, max_iter=max_iter, tol=tol,
+        )
+        if conv:
+            p, sw, z = p_new, sw_new, z_new
+            sl, sg = sl_new, sg_new
+            remaining -= dt_sub
+            last_dt = dt_sub
+            dt_sub = min(dt_growth * dt_sub, dt_max, remaining)
+        else:
+            dt_sub *= 0.5
+            if dt_sub < dt_min:
+                break
+    return p, sw, sl, sg, z, remaining <= 1.0e-12, last_dt
 
 
 def _implicit_compositional_pressure_kinetic_step(
@@ -2219,7 +2464,6 @@ def _implicit_compositional_pressure_kinetic_step(
     accum = 1.0 / (dt * inv_phiV)
     phiV = 1.0 / inv_phiV  # pore volume per cell: scales k_diss (a rate per PV) to m3/s
     I = diags(accum)
-    A_grav = _gravity_divergence_matrix(grid, permeability)
     cells, wi, bhp_w, is_inj = _peaceman_well_data(
         grid, permeability, wells, well_bhp, well_params, injects_gas,
     )
@@ -2279,7 +2523,7 @@ def _implicit_compositional_pressure_kinetic_step(
         D_inj_ = inj_diag(lam_t_)
         r_rate_ = float(D_inj_ @ (bhp_inj_ - p_) - qg_target * Bg) if rate_controlled else 0.0
         A_ = _mobility_divergence_matrix(grid, permeability, p_)
-        A_g_ = A_ - params.rho_g * A_grav
+        A_g_ = _phase_divergence_matrix(grid, permeability, p_, params.rho_g)
         flux_dissolved_ = A_ @ (Rs_act_ * lam_o_)
         r_sw_ = accum * (sw_ - sw0) - (qw_ - A_ @ lam_w_)
         r_C_ = accum * (C_ - C0) - (qg_ + Rs_act_ * qo_ - (inv_Bg * A_g_ @ lam_g_ + flux_dissolved_))
@@ -2296,7 +2540,7 @@ def _implicit_compositional_pressure_kinetic_step(
         D, qw, qo, qg = well_diag_rates(p, lam_w, lam_o, lam_g, bhp_inj)
         D_inj = inj_diag(lam_t)
         A = _mobility_divergence_matrix(grid, permeability, p)
-        A_g = A - params.rho_g * A_grav
+        A_g = _phase_divergence_matrix(grid, permeability, p, params.rho_g)
         r = residual(p, sw, C, Cd, bhp_inj)
         # numerical derivatives wrt sw / C / Cd (through the kinetic split + relperm)
         _, so_s, sg_s, No_s, Rs_s, lw_s, lo_s, lg_s = state(p, sw + h, C, Cd)
@@ -2425,7 +2669,7 @@ def _split_kinetic(
 
 def _implicit_kinetic_step(
     A,
-    A_grav,
+    A_g,
     inv_phiV: NDArray[np.float64],
     dt: float,
     sw0: NDArray[np.float64],
@@ -2445,12 +2689,12 @@ def _implicit_kinetic_step(
     ``Cd`` (dissolved CO2) relaxes to the equilibrium ``Rs*No`` at rate
     ``k_diss``; the free gas is the excess. With ``k_diss -> inf`` this reduces
     to the equilibrium phase split of :func:`_implicit_compositional_step`.
+    ``A_g`` is the gas operator from :func:`_phase_divergence_matrix`.
     """
     from scipy.sparse import diags
 
     Bg = float(params.bg)
     inv_Bg = 1.0 / max(Bg, 1.0e-12)
-    A_g = A - params.rho_g * A_grav
     k_diss = float(params.k_diss)
     n = int(sw0.size)
     sw = np.asarray(sw0, dtype=float).copy()
@@ -2676,7 +2920,7 @@ def _tpfa_matrix_vec(grid, permeability, mobility):
     return coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()
 
 
-def _upwind_tpfa_matrix_vec(grid, permeability, mobility, pressure):
+def _upwind_tpfa_matrix_vec(grid, permeability, mobility, pressure, z_head=None):
     """Upwind TPFA Laplacian: ``L @ p == div(-k mobility^up grad p)``.
 
     The flux-p-derivative of the residual's upwind divergence ``A @ m`` (see
@@ -2684,14 +2928,15 @@ def _upwind_tpfa_matrix_vec(grid, permeability, mobility, pressure):
     face mobility, not the arithmetic-mean face mobility used by
     :func:`_tpfa_matrix_vec`. The two agree only for a uniform mobility field, so
     the fully-implicit Jacobian's flux-p block was wrong where the phase mobilities
-    jump (the injector's gas front), which stalled the Newton.
+    jump (the injector's gas front), which stalled the Newton. ``z_head`` selects
+    the upwind side on the phase potential (as in :func:`_phase_divergence_matrix`).
     """
     from scipy.sparse import coo_matrix
 
     n = grid.n_cells
     k3 = np.asarray(permeability, dtype=float).reshape((grid.nz, grid.ny, grid.nx))
     lam3 = np.asarray(mobility, dtype=float).reshape((grid.nz, grid.ny, grid.nx))
-    _, up_x, _, up_y, _, up_z = _face_geometry(grid, pressure)
+    _, up_x, _, up_y, _, up_z = _face_geometry(grid, pressure, z_head)
     dx, dy, dz = grid.dx, grid.dy, grid.dz
     (c1x, c2x), (c1y, c2y), (c1z, c2z) = _face_cell_pairs(grid.nx, grid.ny, grid.nz)
     rows: list = []
@@ -2723,6 +2968,8 @@ def _upwind_tpfa_matrix_vec(grid, permeability, mobility, pressure):
         area = dx[None, None, :] * dy[None, :, None]
         dist = 0.5 * (dz[:-1] + dz[1:])
         add(c1z, c2z, kh * lamf * area / dist[:, None, None])
+    if not rows:  # single cell: no interior faces
+        return coo_matrix((n, n)).tocsr()
     rows = np.concatenate(rows)
     cols = np.concatenate(cols)
     vals = np.concatenate(vals)
@@ -2919,6 +3166,8 @@ def _split_compositional_two(
     z: NDArray[np.float64],
     p: NDArray[np.float64],
     params: FluidParams,
+    *,
+    with_density: bool = False,
 ) -> tuple[NDArray[np.float64], ...]:
     """Two-component (CO2 + oil) compositional phase split via the PR EOS flash.
 
@@ -2933,7 +3182,8 @@ def _split_compositional_two(
     Returns ``(sw, sl, sg, V, x_co2, y_co2, N, C, O, v_l, v_g)`` where ``sl`` is
     the *liquid* (oil + dissolved CO2) saturation, ``C`` the CO2 surface volume,
     ``O`` the oil surface volume, and ``v_l``/``v_g`` the EOS reservoir molar
-    volumes (m3/mol) used by the component fluxes.
+    volumes (m3/mol) used by the component fluxes. ``with_density`` appends the
+    EOS phase mass densities ``(rho_l, rho_g)`` (kg/m3) for the gravity head.
     """
     from ..core.pr_eos import flash_direct_volumes, _V_CO2_STD, _MW_OIL_DEAD, _RHO_OIL_STD
 
@@ -2941,42 +3191,18 @@ def _split_compositional_two(
     z_p = np.clip(np.asarray(z, dtype=float), 0.0, 1.0)
     p_a = np.asarray(p, dtype=float)
     v_oil_std = _MW_OIL_DEAD / 1000.0 / _RHO_OIL_STD  # m3/mol *surface* oil (for O only)
-    V, x_co2, y_co2, v_l, v_g = flash_direct_volumes(p_a, z_p)
+    flash = flash_direct_volumes(p_a, z_p, with_density=with_density)
+    V, x_co2, y_co2, v_l, v_g = flash[:5]
     denom = V * v_g + (1.0 - V) * v_l
     N = (1.0 - sw_p) / np.maximum(denom, 1.0e-30)
     sg = V * N * v_g
     sl = (1.0 - V) * N * v_l
     C = z_p * N * _V_CO2_STD  # CO2 surface volume
     O = (1.0 - z_p) * N * v_oil_std  # oil surface volume (surface molar volume)
-    return sw_p, sl, sg, V, x_co2, y_co2, N, C, O, v_l, v_g
+    return (sw_p, sl, sg, V, x_co2, y_co2, N, C, O, v_l, v_g) + tuple(flash[5:])
 
 
-def _component_mobilities(
-    V: NDArray[np.float64],
-    x_co2: NDArray[np.float64],
-    y_co2: NDArray[np.float64],
-    lam_l: NDArray[np.float64],
-    lam_g: NDArray[np.float64],
-    params: FluidParams,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Component (surface-volume) mobilities ``(m_CO2, m_oil)``.
-
-    ``m_CO2 = y_CO2/Bg*λg + x_CO2*(V_CO2_STD/V_oil)*λl`` is the CO2 surface flux
-    mobility (gas carries ``y_CO2`` of the gas, liquid carries ``x_CO2`` of the
-    liquid, converted to surface CO2 volume); ``m_oil`` the oil surface flux
-    mobility. ``V_CO2_STD/V_oil = 223``.
-    """
-    from ..core.pr_eos import _V_CO2_STD, _MW_OIL_DEAD, _RHO_OIL_STD
-
-    v_l = _MW_OIL_DEAD / 1000.0 / _RHO_OIL_STD  # liquid (oil) molar volume
-    r_co2 = _V_CO2_STD / v_l  # CO2 surface / oil surface ratio (≈223)
-    inv_Bg = 1.0 / max(float(params.bg), 1.0e-12)
-    m_co2 = y_co2 * inv_Bg * lam_g + x_co2 * r_co2 * lam_l
-    m_oil = (1.0 - y_co2) * inv_Bg * lam_g / r_co2 + (1.0 - x_co2) * lam_l
-    return m_co2, m_oil
-
-
-def _forward_compositional_saturations(
+def _forward_compositional_full_saturations(
     grid: CartesianGrid,
     pressure: NDArray[np.float64],
     permeability: NDArray[np.float64],
@@ -2995,21 +3221,13 @@ def _forward_compositional_saturations(
     well_bhp: NDArray[np.float64] | None = None,
     well_params: WellModelParams | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Solution-gas (CO2-in-oil) saturation transport (GEM-like component model).
+    """14-component molar compositional forward (full PR flash).
 
-    Tracks the water saturation ``sw`` and the conserved surface-volume CO2
-    component ``C = sg/Bg + Rs*so``; the oil/gas phase split is recomputed at
-    every substep from the equilibrium dissolved fraction. The CO2 component flux
-    is the free-gas Darcy flux plus the dissolved CO2 carried by the oil phase,
-    so injected CO2 largely dissolves and moves with the oil. Fully implicit
-    (backward Euler + Newton) with adaptive sub-stepping.
-
-    When ``well_bhp``/``well_params`` are given, the flow pressure is *solved*
-    with the Peaceman well model (BHP-driven wells) and the well rates are derived
-    from that pressure, so a compressible gas injector gets the correct drawdown
-    and injection peak (and the plume can exsolve). Otherwise the given (kriged)
-    ``pressure`` field and the fixed well rates are used.
+    Tracks ``(p, sw, z)`` with ``z`` the 14-component overall mole fraction.
+    Returns ``(sw, so, sg)`` where ``so`` is the liquid saturation.
     """
+    from ..core.pr_eos import _Z_OIL_DEAD
+
     p_in = np.asarray(pressure, dtype=float)
     if p_in.ndim == 1:
         p_in = p_in[None, :]
@@ -3024,140 +3242,48 @@ def _forward_compositional_saturations(
     if qw.ndim == 1:
         qw, qo, qg = qw[None, :], qo[None, :], qg[None, :]
     qw, qo, qg = _balance_well_rates(qw, qo, qg)
-    # BHP-driven mode: solve pressure with the Peaceman well model. The BHP is
-    # the well control (injector 19.325 / producers 19.0 MPa); the well rates are
-    # derived from the solved pressure, not the fixed series rates.
-    bhp_mode = well_bhp is not None and well_params is not None
-    if bhp_mode:
-        bhp = np.asarray(well_bhp, dtype=float)
-        if bhp.ndim == 1:
-            bhp = bhp[None, :]
-        # Gas injector mask: a *per-well* boolean (a well injects gas if any of its
-        # time steps has a positive gas rate). The well type is fixed, so this is
-        # computed once over the whole series, not per time step.
-        injects_gas = (qg > 0.0).any(axis=0)
+    if well_bhp is None or well_params is None:
+        raise ValueError(
+            "compositional forward model requires well_bhp + well_params"
+        )
+    bhp = np.asarray(well_bhp, dtype=float)
+    if bhp.ndim == 1:
+        bhp = bhp[None, :]
+    injects_gas = (qg > 0.0).any(axis=0)
     times_a = np.asarray(times, dtype=float)
     inv_phiV = 1.0 / (phi_a * vol)
     sw = np.asarray(sw0, dtype=float).copy()
-    sg0_a = np.asarray(sg0, dtype=float)
-    # Initial surface-volume CO2 component: assume the initial oil is CO2-free,
-    # so only the free gas (sg0/Bg) contributes. The injected CO2 then dissolves
-    # as it moves.
-    C = sg0_a.copy() / float(params.bg)
-    kinetic = float(params.k_diss) > 0.0
-    Cd = np.zeros(n_c)  # dissolved CO2 (kinetic state); 0 initially (oil CO2-free)
-    # Flow pressure: in BHP mode this is the *solved* Peaceman pressure (carried
-    # across time steps); the kriged field is only the initial guess.
-    p = np.asarray(p_in[0], dtype=float).copy()
+    z = np.broadcast_to(_Z_OIL_DEAD, (n_c, _Z_OIL_DEAD.size)).copy()
     sw_hist = np.zeros((n_t, n_c))
     so_hist = np.zeros((n_t, n_c))
     sg_hist = np.zeros((n_t, n_c))
+    p = np.asarray(p_in[0], dtype=float).copy()
+    dt_sub0: float | None = None
     for t in range(n_t):
-        Bg = float(params.bg)
-        # Start-of-step phase split (for the t-value records), then advance C.
-        Rs_t = _eq_solution_gas_ratio(p if bhp_mode else p_in[t], params)
-        if kinetic:
-            _sw_r, so_r, sg_r, _No, _ = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
-        else:
-            _sw_r, so_r, sg_r = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
+        _, sl_r, sg_r = _split_full(sw, z, p)
         sw_hist[t] = sw.copy()
-        so_hist[t] = so_r.copy()
+        so_hist[t] = sl_r.copy()
         sg_hist[t] = sg_r.copy()
         if t >= n_t - 1:
             continue
-        if bhp_mode:
-            # Fully-implicit coupled pressure + saturation + wells solved together,
-            # so the mobility feedback (free gas accumulates → λ_total drops →
-            # injection rate drops) closes inside one Newton instead of the Picard
-            # loop below. The kinetic model (k_diss > 0) solves (p, sw, C, Cd) so
-            # injected CO2 stays free gas at the injector and dissolves along the
-            # path; the equilibrium model solves (p, sw, C).
-            lam_w, lam_o, lam_g = phase_mobilities(sw, so_r, sg_r, params)
-            p = solve_pressure_peaceman(
-                grid, k, lam_w + lam_o + lam_g, wells, bhp[t], well_params,
-            )
-            # Rate-controlled injector (GEM ``OPERATE MAX BHF``): a fixed *surface*
-            # gas rate distributed over the injector's completions, instead of the
-            # BHP-driven Peaceman rate. Producers stay BHP-driven (MIN BHP 19 MPa).
-            qg_fixed = np.zeros(n_c)
-            for i in np.flatnonzero(injects_gas):
-                cells_i = wells.cells[i]
-                if cells_i.size > 0:
-                    qg_fixed[cells_i] += qg[t, i] / cells_i.size
-            remaining = float(times_a[t + 1] - times_a[t])
-            dt = min(remaining, _MAX_DT)
-            while remaining > 1.0e-12 and dt > 1.0e-3:
-                if kinetic:
-                    p, sw, so, sg, C, Cd, conv = _implicit_compositional_pressure_kinetic_step(
-                        grid, k, inv_phiV, dt, sw, C, Cd, p, wells, bhp[t], well_params,
-                        params, injects_gas, well_qg_fixed=qg_fixed,
-                    )
-                else:
-                    p, sw, so, sg, C, conv = _implicit_compositional_pressure_step(
-                        grid, k, inv_phiV, dt, sw, C, p, wells, bhp[t], well_params,
-                        params, injects_gas, well_qg_fixed=qg_fixed,
-                    )
-                if conv:
-                    remaining -= dt
-                    dt = min(remaining, _MAX_DT, max(dt * 1.5, 1.0))
-                else:
-                    dt *= 0.5
-            if remaining > 1.0e-12:
-                # Newton stalled even at the minimum substep: accept the partial
-                # advance and surface it (the unsolved tail's injection is lost).
-                import warnings
+        qg_fixed = np.zeros(n_c)
+        for i in np.flatnonzero(injects_gas):
+            cells_i = wells.cells[i]
+            if cells_i.size > 0:
+                qg_fixed[cells_i] += qg[t, i] / cells_i.size
+        dt = float(times_a[t + 1] - times_a[t])
+        p, sw, sl, sg, z, conv, last_dt = _implicit_compositional_full_adaptive(
+            grid, k, inv_phiV, dt, sw, z, p, wells, bhp[t], well_params, params, injects_gas,
+            well_qg_fixed=qg_fixed, dt_sub0=dt_sub0, dt_max=_MAX_DT, dt_min=1.0,
+        )
+        dt_sub0 = last_dt
+        if not conv:
+            import warnings
 
-                warnings.warn(
-                    f"compositional forward step t={t} left {remaining:.3g} s unsolved "
-                    f"(Newton did not converge at dt<=1e-3)",
-                    RuntimeWarning,
-                )
-            continue
-        sw_t, C_t, Cd_t = sw.copy(), C.copy(), Cd.copy()
-        C_prev = None
-        # Picard (fixed-point) loop (the non-BHP path): couple the Peaceman pressure
-        # solve and the saturation transport. (The BHP path now always `continue`s
-        # through the fully-implicit coupled step above, so this loop is non-BHP only.)
-        for _picard in range(_MAX_PICARD):
-            sw, C, Cd = sw_t.copy(), C_t.copy(), Cd_t.copy()
-            # Phase split from the current CO2 component + solubility.
-            if kinetic:
-                sw, so, sg, _No, Rs_act = _split_kinetic(sw, C, Cd, Rs_t, Bg, params.bo_slope)
-            else:
-                sw, so, sg = _split_compositional(sw, C, Rs_t, Bg, params.bo_slope)
-                Rs_act = np.clip(np.where(so > 1.0e-12, (C - sg / Bg) / np.maximum(so, 1.0e-12), 0.0), 0.0, Rs_t)
-            qw_t = well_cell_rates(grid, wells, qw[t])
-            qo_t = well_cell_rates(grid, wells, qo[t])
-            qg_t = well_cell_rates(grid, wells, qg[t])
-            p = p_in[t]
-            # qg_t is already surface-volume (GEM *BHF is a surface rate), so the
-            # surface-volume CO2 component source is qg_t + Rs*qo (NOT qg_t/Bg).
-            q_c = qg_t + Rs_act * qo_t
-            remaining = float(times_a[t + 1] - times_a[t])
-            A = _mobility_divergence_matrix(grid, k, p)
-            A_grav = _gravity_divergence_matrix(grid, k)
-            dt = min(remaining, _MAX_DT)
-            while remaining > 1.0e-12 and dt > 1.0e-3:
-                if kinetic:
-                    sw_new, so_new, sg_new, C_new, Cd_new, conv = _implicit_kinetic_step(
-                        A, A_grav, inv_phiV, dt, sw, C, Cd, qw_t, qg_t, qo_t, Rs_t, params
-                    )
-                else:
-                    sw_new, so_new, sg_new, C_new, conv = _implicit_compositional_step(
-                        A, A_grav, inv_phiV, dt, sw, C, qw_t, q_c, Rs_t, params
-                    )
-                    Cd_new = Cd
-                if conv:
-                    sw, so, sg, C, Cd = sw_new, so_new, sg_new, C_new, Cd_new
-                    remaining -= dt
-                    dt = min(remaining, _MAX_DT, max(dt * 1.5, 1.0))
-                else:
-                    dt *= 0.5
-            # Fixed-point convergence: the advanced C stopped changing (so the
-            # mobility/pressure/injection-rate loop has closed).
-            if C_prev is not None and float(np.linalg.norm(C - C_prev)) < 1.0e-5 * max(1.0, float(np.linalg.norm(C))):
-                break
-            C_prev = C.copy()
+            warnings.warn(
+                f"compositional forward step t={t} did not converge",
+                RuntimeWarning,
+            )
     return sw_hist, so_hist, sg_hist
 
 
@@ -3206,7 +3332,7 @@ def _forward_compositional_two_saturations(
     qw, qo, qg = _balance_well_rates(qw, qo, qg)
     if well_bhp is None or well_params is None:
         raise ValueError(
-            "compositional_two forward model requires well_bhp + well_params "
+            "compositional forward model requires well_bhp + well_params "
             "(the two-component step solves pressure fully implicitly)"
         )
     bhp = np.asarray(well_bhp, dtype=float)
@@ -3248,7 +3374,7 @@ def _forward_compositional_two_saturations(
             import warnings
 
             warnings.warn(
-                f"compositional_two forward step t={t} did not converge",
+                f"compositional forward step t={t} did not converge",
                 RuntimeWarning,
             )
     return sw_hist, so_hist, sg_hist

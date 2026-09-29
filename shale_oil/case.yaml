@@ -25,7 +25,7 @@ inversion:
   k_homogeneous: true
 
 forward:
-  model: fcm
+  model: compositional
 
 black_oil:
   mu_w_pa_s: 5.0e-4
