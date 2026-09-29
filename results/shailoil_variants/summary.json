@@ -1,0 +1,864 @@
+{
+  "runs": [
+    {
+      "variant": "base",
+      "wall_s": 3370.5,
+      "returncode": 0,
+      "diag": {
+        "n_steps": "3345",
+        "n_newton": "3882",
+        "n_cuts": "5",
+        "n_solver_fail": "0",
+        "mb_error_pct": "3.0453E-02",
+        "cpu_s": "3300.25",
+        "elapsed_s": "3362.813",
+        "normal_stop": true,
+        "init_warnings": 0,
+        "init_errors": 0,
+        "n_warning_lines": 0,
+        "n_repeat_nonconv": 2,
+        "well_msgs": [
+          "**WMLPOC: Set new operating constraint of type BHP for well 1 ('INJ') .",
+          "**WMLPOC: Switch operating constraint of well 1 ('INJ') to type BHF and advance to next time step.",
+          "**WMMAIN: Repeat (1) for this time step due to constraint violation.",
+          "**WMMRCH: Switch well 1 ('INJ') to BHP constraint for changes entered under OPERATE, ALTER or TARGET",
+          "**WMOCNI: Maximum BHF constraint violated for well 1 ('INJ') Max:  .007200,Actual:  .007820  m3/day",
+          "**WMOCNI: Maximum BHF constraint violated for well 1 ('INJ') Max:  .007200,Actual:  .007956  m3/day",
+          "**WMOCNI: Maximum BHP constraint violated for well 1 ('INJ') Max:  20000.0,Actual:  20047.2 kPa"
+        ],
+        "last_report_day": 1800.0
+      },
+      "d30": {
+        "day": 30.0,
+        "sg_mean": 0.14009857177734375,
+        "sg_mean_pv": 0.14009256660938263,
+        "n_free_gas": 511,
+        "zco2_mean": 0.998144805431366,
+        "n_zco2_gt": 3375
+      },
+      "last": {
+        "day": 1800.0,
+        "sg_mean": 0.0,
+        "sg_mean_pv": 0.0,
+        "n_free_gas": 0,
+        "zco2_mean": 1.0,
+        "n_zco2_gt": 3375
+      },
+      "sg_history": [
+        [
+          0.6985,
+          3013
+        ],
+        [
+          0.4901,
+          1853
+        ],
+        [
+          0.2923,
+          1083
+        ],
+        [
+          0.1401,
+          511
+        ],
+        [
+          0.0458,
+          165
+        ],
+        [
+          0.0165,
+          59
+        ],
+        [
+          0.0048,
+          17
+        ],
+        [
+          0.0009,
+          3
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ]
+      ],
+      "zco2_history": [
+        [
+          0.8757,
+          3111
+        ],
+        [
+          0.9874,
+          3371
+        ],
+        [
+          0.9949,
+          3375
+        ],
+        [
+          0.9981,
+          3375
+        ],
+        [
+          0.9995,
+          3375
+        ],
+        [
+          0.9998,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ]
+      ],
+      "n_grid_snapshots": 69,
+      "sizes_mb": {
+        "run.json": 0.0,
+        "run.log": 0.5,
+        "shailoil_base.dat": 0.0,
+        "shailoil_base.geo": 2.6,
+        "shailoil_base.out": 12.7,
+        "shailoil_base.sr3": 50.6
+      }
+    },
+    {
+      "variant": "het_k",
+      "wall_s": 3480.4,
+      "returncode": 0,
+      "diag": {
+        "n_steps": "3364",
+        "n_newton": "4012",
+        "n_cuts": "12",
+        "n_solver_fail": "0",
+        "mb_error_pct": "1.7550E-02",
+        "cpu_s": "3414",
+        "elapsed_s": "3479",
+        "normal_stop": true,
+        "init_warnings": 0,
+        "init_errors": 0,
+        "n_warning_lines": 0,
+        "n_repeat_nonconv": 6,
+        "well_msgs": [
+          "**WMLPOC: Switch operating constraint of well 1 ('INJ') to type BHF and advance to next time step.",
+          "**WMMRCH: Switch well 1 ('INJ') to BHP constraint for changes entered under OPERATE, ALTER or TARGET",
+          "**WMOCNI: Maximum BHF constraint violated for well 1 ('INJ') Max:  .007200,Actual:  .007200  m3/day"
+        ],
+        "last_report_day": 1800.0
+      },
+      "d30": {
+        "day": 30.0,
+        "sg_mean": 0.09011039137840271,
+        "sg_mean_pv": 0.08694517612457275,
+        "n_free_gas": 334,
+        "zco2_mean": 0.9984651803970337,
+        "n_zco2_gt": 3375
+      },
+      "last": {
+        "day": 1800.0,
+        "sg_mean": 0.0,
+        "sg_mean_pv": 0.0,
+        "n_free_gas": 0,
+        "zco2_mean": 1.0,
+        "n_zco2_gt": 3375
+      },
+      "sg_history": [
+        [
+          0.7219,
+          3075
+        ],
+        [
+          0.5018,
+          1885
+        ],
+        [
+          0.2538,
+          943
+        ],
+        [
+          0.0901,
+          334
+        ],
+        [
+          0.0301,
+          110
+        ],
+        [
+          0.0158,
+          57
+        ],
+        [
+          0.0072,
+          26
+        ],
+        [
+          0.0014,
+          5
+        ],
+        [
+          0.0003,
+          1
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ]
+      ],
+      "zco2_history": [
+        [
+          0.8929,
+          3186
+        ],
+        [
+          0.9858,
+          3365
+        ],
+        [
+          0.9949,
+          3374
+        ],
+        [
+          0.9985,
+          3375
+        ],
+        [
+          0.9996,
+          3375
+        ],
+        [
+          0.9998,
+          3375
+        ],
+        [
+          0.9999,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ]
+      ],
+      "n_grid_snapshots": 69,
+      "sizes_mb": {
+        "run.json": 0.0,
+        "run.log": 0.5,
+        "shailoil_het_k.dat": 0.1,
+        "shailoil_het_k.geo": 2.7,
+        "shailoil_het_k.out": 25.0,
+        "shailoil_het_k.sr3": 56.1
+      }
+    },
+    {
+      "variant": "layered_k",
+      "wall_s": 3530.4,
+      "returncode": 0,
+      "diag": {
+        "n_steps": "3358",
+        "n_newton": "4079",
+        "n_cuts": "4",
+        "n_solver_fail": "0",
+        "mb_error_pct": "2.6494E-02",
+        "cpu_s": "3457.4375",
+        "elapsed_s": "3520.591",
+        "normal_stop": true,
+        "init_warnings": 0,
+        "init_errors": 0,
+        "n_warning_lines": 0,
+        "n_repeat_nonconv": 1,
+        "well_msgs": [
+          "**WMLPOC: Switch operating constraint of well 1 ('INJ') to type BHF and advance to next time step.",
+          "**WMMRCH: Switch well 1 ('INJ') to BHP constraint for changes entered under OPERATE, ALTER or TARGET",
+          "**WMOCNI: Maximum BHF constraint violated for well 1 ('INJ') Max:  .007200,Actual:  .007633  m3/day"
+        ],
+        "last_report_day": 1800.0
+      },
+      "d30": {
+        "day": 30.0,
+        "sg_mean": 0.3744197189807892,
+        "sg_mean_pv": 0.3744032680988312,
+        "n_free_gas": 1389,
+        "zco2_mean": 0.9922628998756409,
+        "n_zco2_gt": 3371
+      },
+      "last": {
+        "day": 1800.0,
+        "sg_mean": 0.0008245872450061142,
+        "sg_mean_pv": 0.0008246703073382378,
+        "n_free_gas": 3,
+        "zco2_mean": 0.9999900460243225,
+        "n_zco2_gt": 3375
+      },
+      "sg_history": [
+        [
+          0.514,
+          2476
+        ],
+        [
+          0.5772,
+          2336
+        ],
+        [
+          0.4995,
+          1904
+        ],
+        [
+          0.3744,
+          1389
+        ],
+        [
+          0.2335,
+          857
+        ],
+        [
+          0.1506,
+          550
+        ],
+        [
+          0.0652,
+          235
+        ],
+        [
+          0.0092,
+          33
+        ],
+        [
+          0.0028,
+          10
+        ],
+        [
+          0.0014,
+          5
+        ],
+        [
+          0.0008,
+          3
+        ]
+      ],
+      "zco2_history": [
+        [
+          0.6875,
+          2409
+        ],
+        [
+          0.9564,
+          3339
+        ],
+        [
+          0.9838,
+          3367
+        ],
+        [
+          0.9923,
+          3371
+        ],
+        [
+          0.9961,
+          3373
+        ],
+        [
+          0.9978,
+          3374
+        ],
+        [
+          0.9993,
+          3375
+        ],
+        [
+          0.9999,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ]
+      ],
+      "n_grid_snapshots": 69,
+      "sizes_mb": {
+        "run.json": 0.0,
+        "run.log": 0.5,
+        "shailoil_layered_k.dat": 0.0,
+        "shailoil_layered_k.geo": 2.7,
+        "shailoil_layered_k.out": 15.1,
+        "shailoil_layered_k.sr3": 54.0
+      }
+    },
+    {
+      "variant": "rate_x3",
+      "wall_s": 3200.4,
+      "returncode": 0,
+      "diag": {
+        "n_steps": "3348",
+        "n_newton": "3858",
+        "n_cuts": "2",
+        "n_solver_fail": "0",
+        "mb_error_pct": "1.0229E-01",
+        "cpu_s": "3133.734375",
+        "elapsed_s": "3193.129",
+        "normal_stop": true,
+        "init_warnings": 0,
+        "init_errors": 0,
+        "n_warning_lines": 0,
+        "n_repeat_nonconv": 0,
+        "well_msgs": [
+          "**WMMRCH: Switch well 1 ('INJ') to BHP constraint for changes entered under OPERATE, ALTER or TARGET"
+        ],
+        "last_report_day": 1800.0
+      },
+      "d30": {
+        "day": 30.0,
+        "sg_mean": 0.01515952404588461,
+        "sg_mean_pv": 0.015157686546444893,
+        "n_free_gas": 54,
+        "zco2_mean": 0.9998661875724792,
+        "n_zco2_gt": 3375
+      },
+      "last": {
+        "day": 1800.0,
+        "sg_mean": 0.0,
+        "sg_mean_pv": 0.0,
+        "n_free_gas": 0,
+        "zco2_mean": 1.0,
+        "n_zco2_gt": 3375
+      },
+      "sg_history": [
+        [
+          0.6534,
+          2588
+        ],
+        [
+          0.2022,
+          744
+        ],
+        [
+          0.0646,
+          235
+        ],
+        [
+          0.0152,
+          54
+        ],
+        [
+          0.002,
+          7
+        ],
+        [
+          0.0009,
+          3
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ]
+      ],
+      "zco2_history": [
+        [
+          0.9606,
+          3345
+        ],
+        [
+          0.9969,
+          3375
+        ],
+        [
+          0.9992,
+          3375
+        ],
+        [
+          0.9999,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ]
+      ],
+      "n_grid_snapshots": 69,
+      "sizes_mb": {
+        "run.json": 0.0,
+        "run.log": 0.5,
+        "shailoil_rate_x3.dat": 0.0,
+        "shailoil_rate_x3.geo": 2.6,
+        "shailoil_rate_x3.out": 12.1,
+        "shailoil_rate_x3.sr3": 50.0
+      }
+    },
+    {
+      "variant": "rate_div3",
+      "wall_s": 3480.3,
+      "returncode": 0,
+      "diag": {
+        "n_steps": "3336",
+        "n_newton": "3919",
+        "n_cuts": "2",
+        "n_solver_fail": "0",
+        "mb_error_pct": "1.8671E-02",
+        "cpu_s": "3415.390625",
+        "elapsed_s": "3479.862",
+        "normal_stop": true,
+        "init_warnings": 0,
+        "init_errors": 0,
+        "n_warning_lines": 0,
+        "n_repeat_nonconv": 0,
+        "well_msgs": [
+          "**WMLPOC: Switch operating constraint of well 1 ('INJ') to type BHF and advance to next time step.",
+          "**WMMRCH: Switch well 1 ('INJ') to BHP constraint for changes entered under OPERATE, ALTER or TARGET",
+          "**WMOCNI: Maximum BHF constraint violated for well 1 ('INJ') Max:  .002400,Actual:  .002477  m3/day"
+        ],
+        "last_report_day": 1800.0
+      },
+      "d30": {
+        "day": 30.0,
+        "sg_mean": 0.4015533924102783,
+        "sg_mean_pv": 0.40155330300331116,
+        "n_free_gas": 1501,
+        "zco2_mean": 0.9915960431098938,
+        "n_zco2_gt": 3375
+      },
+      "last": {
+        "day": 1800.0,
+        "sg_mean": 0.0,
+        "sg_mean_pv": 0.0,
+        "n_free_gas": 0,
+        "zco2_mean": 1.0,
+        "n_zco2_gt": 3375
+      },
+      "sg_history": [
+        [
+          0.5563,
+          2771
+        ],
+        [
+          0.703,
+          2821
+        ],
+        [
+          0.5604,
+          2148
+        ],
+        [
+          0.4016,
+          1501
+        ],
+        [
+          0.2235,
+          824
+        ],
+        [
+          0.1429,
+          521
+        ],
+        [
+          0.0586,
+          213
+        ],
+        [
+          0.012,
+          43
+        ],
+        [
+          0.0017,
+          6
+        ],
+        [
+          0.0003,
+          1
+        ],
+        [
+          0.0,
+          0
+        ]
+      ],
+      "zco2_history": [
+        [
+          0.7012,
+          2498
+        ],
+        [
+          0.9466,
+          3314
+        ],
+        [
+          0.9805,
+          3368
+        ],
+        [
+          0.9916,
+          3375
+        ],
+        [
+          0.9965,
+          3375
+        ],
+        [
+          0.9981,
+          3375
+        ],
+        [
+          0.9993,
+          3375
+        ],
+        [
+          0.9999,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ]
+      ],
+      "n_grid_snapshots": 69,
+      "sizes_mb": {
+        "run.json": 0.0,
+        "run.log": 0.5,
+        "shailoil_rate_div3.dat": 0.0,
+        "shailoil_rate_div3.geo": 2.6,
+        "shailoil_rate_div3.out": 14.1,
+        "shailoil_rate_div3.sr3": 52.2
+      }
+    },
+    {
+      "variant": "inj_bottom",
+      "wall_s": 3480.3,
+      "returncode": 0,
+      "diag": {
+        "n_steps": "3350",
+        "n_newton": "4037",
+        "n_cuts": "6",
+        "n_solver_fail": "0",
+        "mb_error_pct": "5.4436E-02",
+        "cpu_s": "3414.65625",
+        "elapsed_s": "3477.99",
+        "normal_stop": true,
+        "init_warnings": 0,
+        "init_errors": 0,
+        "n_warning_lines": 0,
+        "n_repeat_nonconv": 4,
+        "well_msgs": [
+          "**WMLPOC: Switch operating constraint of well 1 ('INJ') to type BHF and advance to next time step.",
+          "**WMMRCH: Switch well 1 ('INJ') to BHP constraint for changes entered under OPERATE, ALTER or TARGET",
+          "**WMOCNI: Maximum BHF constraint violated for well 1 ('INJ') Max:  .007200,Actual:  .007365  m3/day"
+        ],
+        "last_report_day": 1800.0
+      },
+      "d30": {
+        "day": 30.0,
+        "sg_mean": 0.3032141625881195,
+        "sg_mean_pv": 0.3031773865222931,
+        "n_free_gas": 1110,
+        "zco2_mean": 0.9958387017250061,
+        "n_zco2_gt": 3375
+      },
+      "last": {
+        "day": 1800.0,
+        "sg_mean": 0.0,
+        "sg_mean_pv": 0.0,
+        "n_free_gas": 0,
+        "zco2_mean": 1.0,
+        "n_zco2_gt": 3375
+      },
+      "sg_history": [
+        [
+          0.5788,
+          2610
+        ],
+        [
+          0.5494,
+          2136
+        ],
+        [
+          0.4363,
+          1628
+        ],
+        [
+          0.3032,
+          1110
+        ],
+        [
+          0.161,
+          587
+        ],
+        [
+          0.0948,
+          344
+        ],
+        [
+          0.0407,
+          142
+        ],
+        [
+          0.0006,
+          2
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ],
+        [
+          0.0,
+          0
+        ]
+      ],
+      "zco2_history": [
+        [
+          0.7527,
+          2639
+        ],
+        [
+          0.9768,
+          3371
+        ],
+        [
+          0.9914,
+          3375
+        ],
+        [
+          0.9958,
+          3375
+        ],
+        [
+          0.998,
+          3375
+        ],
+        [
+          0.9989,
+          3375
+        ],
+        [
+          0.9998,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ],
+        [
+          1.0,
+          3375
+        ]
+      ],
+      "n_grid_snapshots": 69,
+      "sizes_mb": {
+        "run.json": 0.0,
+        "run.log": 0.5,
+        "shailoil_inj_bottom.dat": 0.0,
+        "shailoil_inj_bottom.geo": 2.7,
+        "shailoil_inj_bottom.out": 11.9,
+        "shailoil_inj_bottom.sr3": 50.7
+      }
+    }
+  ],
+  "het_k_check": {
+    "n_cells": 3375,
+    "max_rel_err_permi": 5.310636199684637e-07,
+    "max_rel_err_poros": 1.5120316310124338e-07,
+    "max_rel_err_permk_vs_0.2i": 5.362858750412869e-07
+  }
+}

@@ -1,0 +1,445 @@
+"""Generate, run and summarize GEM variants of ``examples/shailoil.dat``.
+
+Usage::
+
+    python scripts/shailoil_variants.py gen
+    python scripts/shailoil_variants.py run [--only het_k rate_x3 ...]
+    python scripts/shailoil_variants.py summarize
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+BASE_DECK = ROOT / "examples" / "shailoil.dat"
+DECK_DIR = ROOT / "examples" / "shailoil_variants"
+RUN_DIR = ROOT / "results" / "shailoil_variants"
+GEM_EXE = Path(r"D:\Tool\CMG\GEM\2024.20\Win_x64\EXE\gm202420.exe")
+
+NX = NY = NZ = 15
+DX = 0.02
+SEED = 20260929
+SG_FREE = 0.01
+SG_HISTORY_DAYS = [1, 7, 15, 30, 60, 90, 150, 300, 600, 1200, 1800]
+Z_CO2_KEY = "Z(5)"
+ZCO2_THRESH = 0.5
+
+REPORT_TIMES = [0.01, 0.1, 1, 3, 7, 15, 30, 45, 60, 75, 90] + list(range(120, 1801, 30))
+
+VARIANTS = ["base", "het_k", "layered_k", "rate_x3", "rate_div3", "inj_bottom"]
+
+COMMON_NOTES = [
+    "Common to all variants (vs examples/shailoil.dat):",
+    "  - *OUTPRN/*OUTSRF *GRID add *Z 'CO2' (global CO2 mole fraction)",
+    "  - *WSRF *GRID / *GRIDDEFORM changed from 1 (every step) to *TIME (report times only)",
+    "  - *WPRN *GRID *TIME and *WPRN *WELL *TIME stated explicitly",
+    "  - schedule: *TIME 0.01 0.1 1 3 7 15 30 45 60 75 90 120 ... (every 30 d) ... 1800, then *STOP",
+    "  - *DTMAX 0.01 up to day 15, *DTMAX 1.0 afterwards (base deck used 30.0)",
+    "  - grid, EOS, initial conditions, well locations/perfs, KDIR DOWN unchanged unless noted",
+]
+
+
+def _fmt_block(values: np.ndarray, per_line: int = 8) -> list[str]:
+    out = []
+    for s in range(0, len(values), per_line):
+        out.append("  " + " ".join(f"{v:.6e}" for v in values[s : s + per_line]))
+    return out
+
+
+def het_field() -> tuple[np.ndarray, np.ndarray]:
+    """Return (k_md, phi) in GEM *ALL order (I fastest, then J, then K=1..NZ)."""
+    kk, jj, ii = np.meshgrid(np.arange(NZ), np.arange(NY), np.arange(NX), indexing="ij")
+    x = (ii.ravel() + 0.5) * DX
+    y = (jj.ravel() + 0.5) * DX
+    z = (kk.ravel() + 0.5) * DX
+    lh, lv = 0.08, 0.04
+    h = np.sqrt(
+        ((x[:, None] - x[None, :]) / lh) ** 2
+        + ((y[:, None] - y[None, :]) / lh) ** 2
+        + ((z[:, None] - z[None, :]) / lv) ** 2
+    )
+    cov = np.exp(-h)
+    cov[np.diag_indices_from(cov)] += 1.0e-10
+    L = np.linalg.cholesky(cov)
+    g = L @ np.random.default_rng(SEED).standard_normal(x.size)
+    g = (g - g.mean()) / g.std()
+    k_md = np.exp(np.log(0.03) + 1.0 * g)
+    phi = np.clip(0.05 * (k_md / 0.03) ** 0.1, 0.02, 0.10)
+    return k_md, phi
+
+
+def _perf_block(well: str, i: int, j: int, ks: list[int]) -> list[str]:
+    lines = [
+        "**          rad  geofac  wfrac  skin",
+        "GEOMETRY  K  0.003  0.34  1.0  0.0  ",
+        f"      PERF       GEO  '{well}'",
+        "** UBA              ff          Status  Connection  ",
+    ]
+    for n, k in enumerate(ks):
+        conn = "'SURFACE'  REFLAYER" if n == 0 else str(n)
+        lines.append(f"    {i} {j} {k:<10d} 1.0  OPEN    FLOW-FROM  {conn}")
+    return lines
+
+
+def build_deck(name: str, base_lines: list[str]) -> tuple[list[str], dict]:
+    lines = list(base_lines)
+    notes: list[str] = []
+    extra: dict = {}
+
+    def replace_line(pattern: str, new: list[str]) -> None:
+        idx = [n for n, s in enumerate(lines) if re.match(pattern, s.strip())]
+        if len(idx) != 1:
+            raise RuntimeError(f"{name}: pattern {pattern!r} matched {len(idx)} lines")
+        lines[idx[0] : idx[0] + 1] = new
+
+    replace_line(r"^\*OUTPRN \*GRID \*PRES \*SO \*SG \*SW \*POROS \*PERM$", ["*OUTPRN *GRID *PRES *SO *SG *SW *POROS *PERM *Z 'CO2'"])
+    replace_line(r"^\*OUTSRF \*GRID \*PRES \*SO \*SG \*SW \*POROS \*PERM$", ["*OUTSRF *GRID *PRES *SO *SG *SW *POROS *PERM *Z 'CO2'"])
+    replace_line(r"^\*WSRF \*GRID 1$", ["*WSRF *GRID *TIME"])
+    replace_line(r"^\*WSRF \*GRIDDEFORM 1$", ["*WSRF *GRIDDEFORM *TIME", "*WPRN *GRID *TIME", "*WPRN *WELL *TIME"])
+
+    t0 = next(n for n, s in enumerate(lines) if s.strip() == "*TIME 0.01")
+    sched = []
+    for t in REPORT_TIMES:
+        sched.append(f"*TIME {t:g}")
+        if t == 15:
+            sched.append("*DTMAX 1.0")
+    lines[t0:] = sched + ["*STOP"]
+
+    if name == "base":
+        notes.append("Variant base: reference run with the common output/schedule changes only.")
+    elif name == "het_k":
+        k_md, phi = het_field()
+        replace_line(r"^\*POR \*CON 0\.05$", ["*POR *ALL", *_fmt_block(phi)])
+        replace_line(r"^\*PERMI \*CON 0\.03$", ["*PERMI *ALL", *_fmt_block(k_md)])
+        g = np.log(k_md)
+        extra["het"] = (k_md, phi)
+        notes += [
+            "Variant het_k: *PERMI *ALL lognormal random field, *POR *ALL from k.",
+            f"  ln k ~ N(ln 0.03, 1.0^2), exponential covariance, Lh=0.08 m (I,J), Lv=0.04 m (K), seed={SEED}",
+            "  realization generated by Cholesky, then rescaled so sample mean(ln k)=ln 0.03 and std(ln k)=1.0 exactly",
+            "  phi = 0.05*(k/0.03)^0.1 clipped to [0.02, 0.10]; PERMJ EQUALSI, PERMK EQUALSI*0.2 unchanged",
+            f"  k_md: geomean={np.exp(g.mean()):.4g} min={k_md.min():.4g} max={k_md.max():.4g}; "
+            f"phi: min={phi.min():.4f} max={phi.max():.4f} mean={phi.mean():.4f}",
+            "  values also in shailoil_het_k_field.csv (i,j,k,phi,k_md; GEM 1-based, K=1 is top)",
+        ]
+    elif name == "layered_k":
+        kv = [0.1] * 3 + [0.01] * 3 + [0.05] * 3 + [0.005] * 3 + [0.03] * 3
+        replace_line(r"^\*PERMI \*CON 0\.03$", ["*PERMI *KVAR", "  " + " ".join(f"{v:g}" for v in kv)])
+        notes += [
+            "Variant layered_k: *PERMI *KVAR, GEM K=1-3/4-6/7-9/10-12/13-15 = 0.1/0.01/0.05/0.005/0.03 mD",
+            "  (KDIR DOWN: K=1 is top). PERMJ EQUALSI, PERMK EQUALSI*0.2 unchanged; *POR *CON 0.05 unchanged.",
+        ]
+    elif name in ("rate_x3", "rate_div3"):
+        q = "0.0216" if name == "rate_x3" else "0.0024"
+        replace_line(r"^OPERATE\s+MAX\s+BHF\s+0\.0072\s+CONT$", [f"OPERATE  MAX  BHF  {q}  CONT"])
+        notes.append(f"Variant {name}: INJ OPERATE MAX BHF 0.0072 -> {q} (MAX BHP 20000 kPa kept).")
+    elif name == "inj_bottom":
+        s = next(n for n, t in enumerate(lines) if t.strip() == "PERF       GEO  'INJ'")
+        e = next(n for n in range(s, len(lines)) if lines[n].strip().startswith("*AIMSET"))
+        lines[s - 2 : e] = _perf_block("INJ", 8, 8, list(range(11, 16)))
+        notes.append("Variant inj_bottom: INJ perforations 8 8 K=1-11 -> 8 8 K=11-15 (REFLAYER at K=11).")
+    else:
+        raise ValueError(name)
+
+    header = ["** " + "=" * 76, f"** shailoil_{name}.dat  (generated by scripts/shailoil_variants.py from examples/shailoil.dat)"]
+    header += ["** " + s for s in notes + [""] + COMMON_NOTES]
+    header.append("** " + "=" * 76)
+    return header + lines, extra
+
+
+def cmd_gen(_args) -> int:
+    DECK_DIR.mkdir(parents=True, exist_ok=True)
+    base_lines = BASE_DECK.read_text(encoding="utf-8").splitlines()
+    for name in VARIANTS:
+        lines, extra = build_deck(name, base_lines)
+        path = DECK_DIR / f"shailoil_{name}.dat"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print("wrote", path)
+        if "het" in extra:
+            k_md, phi = extra["het"]
+            csv_path = DECK_DIR / "shailoil_het_k_field.csv"
+            with csv_path.open("w", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                w.writerow(["i", "j", "k", "phi", "k_md"])
+                n = 0
+                for k in range(1, NZ + 1):
+                    for j in range(1, NY + 1):
+                        for i in range(1, NX + 1):
+                            w.writerow([i, j, k, f"{phi[n]:.6e}", f"{k_md[n]:.6e}"])
+                            n += 1
+            print("wrote", csv_path)
+    return 0
+
+
+def cmd_run(args) -> int:
+    names = args.only or VARIANTS
+    procs = {}
+    for name in names:
+        work = RUN_DIR / name
+        work.mkdir(parents=True, exist_ok=True)
+        deck = work / f"shailoil_{name}.dat"
+        deck.write_bytes((DECK_DIR / deck.name).read_bytes())
+        for stale in work.glob(f"shailoil_{name}.*"):
+            if stale.suffix != ".dat":
+                stale.unlink()
+        log = (work / "run.log").open("w", encoding="utf-8", errors="replace")
+        p = subprocess.Popen([str(GEM_EXE), "-f", deck.name], cwd=work, stdout=log, stderr=subprocess.STDOUT)
+        procs[name] = (p, log, time.time())
+        print(f"started {name} pid={p.pid}", flush=True)
+    while procs:
+        for name in list(procs):
+            p, log, t0 = procs[name]
+            rc = p.poll()
+            if rc is None:
+                continue
+            log.close()
+            rec = {"variant": name, "returncode": rc, "elapsed_s": round(time.time() - t0, 1), "exe": str(GEM_EXE)}
+            (RUN_DIR / name / "run.json").write_text(json.dumps(rec, indent=2), encoding="utf-8")
+            print(f"finished {name} rc={rc} elapsed={rec['elapsed_s']} s", flush=True)
+            del procs[name]
+        time.sleep(10)
+    return 0
+
+
+def _sr3_fields(sr3: Path) -> list[tuple[float, np.ndarray, np.ndarray]]:
+    import h5py
+
+    out = []
+    with h5py.File(sr3, "r") as f:
+        tt = f["General/MasterTimeTable"][:]
+        tmap = {int(r["Index"]): float(r["Offset in days"]) for r in tt}
+        sp = f["SpatialProperties"]
+        for key in sp:
+            if not key.isdigit() or "SG" not in sp[key]:
+                continue
+            por = sp[key]["POROS"][:] if "POROS" in sp[key] else None
+            zco2 = sp[key][Z_CO2_KEY][:] if Z_CO2_KEY in sp[key] else None
+            out.append((tmap[int(key)], sp[key]["SG"][:], por, zco2))
+    out.sort(key=lambda r: r[0])
+    return out
+
+
+def _out_diagnostics(out_path: Path) -> dict:
+    txt = out_path.read_text(encoding="utf-8", errors="ignore")
+    d: dict = {}
+    for key, pat in [
+        ("n_steps", r"Total number of time steps:\s+(\d+)"),
+        ("n_newton", r"Total number of Newton cycles:\s+(\d+)"),
+        ("n_cuts", r"Total number of time step cuts:\s+(\d+)"),
+        ("n_solver_fail", r"Total number of solver failures:\s+(\d+)"),
+        ("mb_error_pct", r"Material Balance Error; Weighted by OrigMatInPlace\+Inj:\s+(\S+)"),
+        ("cpu_s", r"CPU second\(s\) used:\s+(\S+)"),
+        ("elapsed_s", r"Elapsed second\(s\):\s+(\S+)"),
+    ]:
+        m = re.search(pat, txt)
+        d[key] = m.group(1) if m else None
+    d["normal_stop"] = "End of simulation" in txt
+    m = re.search(r"(\d+) Warning messages\.\s+(\d+) Error messages\.", txt)
+    d["init_warnings"], d["init_errors"] = (int(m.group(1)), int(m.group(2))) if m else (None, None)
+    d["n_warning_lines"] = len(re.findall(r"(?im)^\s*\*+\s*warning", txt))
+    d["n_repeat_nonconv"] = len(re.findall(r"Repeat time step: program failed to converge", txt))
+    d["well_msgs"] = sorted(set(re.findall(r"\*\*WM\w+: [^\n]{0,90}", txt)))
+    m = re.findall(r"CPU Report:\s+([0-9.E+-]+)\s+\d{4}", txt)
+    d["last_report_day"] = float(m[-1]) if m else None
+    return d
+
+
+def cmd_summarize(_args) -> int:
+    rows = []
+    for name in VARIANTS:
+        work = RUN_DIR / name
+        out = work / f"shailoil_{name}.out"
+        sr3 = work / f"shailoil_{name}.sr3"
+        if not out.is_file():
+            continue
+        diag = _out_diagnostics(out)
+        run = json.loads((work / "run.json").read_text()) if (work / "run.json").is_file() else {}
+        fields = _sr3_fields(sr3) if sr3.is_file() else []
+
+        def stats(target: float | None):
+            if not fields:
+                return None
+            rec = fields[-1] if target is None else min(fields, key=lambda r: abs(r[0] - target))
+            t, sg, por, zco2 = rec
+            pv = por if por is not None else np.ones_like(sg)
+            s = {
+                "day": t,
+                "sg_mean": float(sg.mean()),
+                "sg_mean_pv": float((sg * pv).sum() / pv.sum()),
+                "n_free_gas": int((sg > SG_FREE).sum()),
+            }
+            if zco2 is not None:
+                s["zco2_mean"] = float(zco2.mean())
+                s["n_zco2_gt"] = int((zco2 > ZCO2_THRESH).sum())
+            return s
+
+        rows.append(
+            {
+                "variant": name,
+                "wall_s": run.get("elapsed_s"),
+                "returncode": run.get("returncode"),
+                "diag": diag,
+                "d30": stats(30.0),
+                "last": stats(None),
+                "sg_history": [
+                    (round(s["sg_mean"], 4), s["n_free_gas"]) for s in (stats(t) for t in SG_HISTORY_DAYS) if s
+                ],
+                "zco2_history": [
+                    (round(s["zco2_mean"], 4), s["n_zco2_gt"])
+                    for s in (stats(t) for t in SG_HISTORY_DAYS)
+                    if s and "zco2_mean" in s
+                ],
+                "n_grid_snapshots": len(fields),
+                "sizes_mb": {
+                    p.name: round(p.stat().st_size / 2**20, 1) for p in sorted(work.iterdir()) if p.is_file()
+                },
+            }
+        )
+    het_check = _check_het_field(RUN_DIR / "het_k" / "shailoil_het_k.sr3")
+    (RUN_DIR / "summary.json").write_text(json.dumps({"runs": rows, "het_k_check": het_check}, indent=2), encoding="utf-8")
+    (RUN_DIR / "README.md").write_text(_readme(rows, het_check), encoding="utf-8")
+    print(json.dumps({"runs": rows, "het_k_check": het_check}, indent=2))
+    return 0
+
+
+def _check_het_field(sr3: Path) -> dict | None:
+    import h5py
+
+    if not sr3.is_file():
+        return None
+    k_md, phi = het_field()
+    with h5py.File(sr3, "r") as f:
+        sp = f["SpatialProperties/000000"]
+        ki, por = sp["PERMI"][:] * 1000.0, sp["POROS"][:]
+        kk = sp["PERMK"][:] * 1000.0
+    return {
+        "n_cells": int(ki.size),
+        "max_rel_err_permi": float(np.max(np.abs(ki / k_md - 1.0))),
+        "max_rel_err_poros": float(np.max(np.abs(por / phi - 1.0))),
+        "max_rel_err_permk_vs_0.2i": float(np.max(np.abs(kk / (0.2 * k_md) - 1.0))),
+    }
+
+
+DESCR = {
+    "base": "参考算例：仅做所有变体共同的输出/时间表修改（非任务要求，供对照）",
+    "het_k": "PERMI 对数正态随机场（几何均值 0.03 mD，σ_lnk=1.0，Lh=0.08 m，Lv=0.04 m，指数协方差，seed=20260929），"
+    "POR=0.05·(k/0.03)^0.1 截断 [0.02,0.10]，*PERMI/*POR *ALL 逐格写出",
+    "layered_k": "PERMI *KVAR：K=1-3/4-6/7-9/10-12/13-15 = 0.1/0.01/0.05/0.005/0.03 mD",
+    "rate_x3": "INJ OPERATE MAX BHF 0.0072 → 0.0216",
+    "rate_div3": "INJ OPERATE MAX BHF 0.0072 → 0.0024",
+    "inj_bottom": "INJ 射孔 8,8,K=1-11 → 8,8,K=11-15（REFLAYER 在 K=11）",
+}
+
+
+def _readme(rows: list[dict], het_check: dict | None) -> str:
+    L = [
+        "# shailoil GEM 变体算例",
+        "",
+        "由 `scripts/shailoil_variants.py` 从 `examples/shailoil.dat` 生成并运行（GEM 2024.20，`gm202420.exe -f`，6 个算例并行，单线程）。",
+        "",
+        "- deck：`examples/shailoil_variants/shailoil_<变体>.dat`（改动写在文件头注释），运行目录另有一份拷贝",
+        "- het_k 的 k/phi：`examples/shailoil_variants/shailoil_het_k_field.csv`（i,j,k,phi,k_md；GEM 1 起始，K=1 为顶层，KDIR DOWN）",
+        "- 每个变体目录 `results/shailoil_variants/<变体>/`：`.dat`、`.out`、`.sr3`、`.geo`（地质力学）、`run.log`（GEM 标准输出）、`run.json`（墙钟时间/返回码）",
+        "- 汇总数据：`results/shailoil_variants/summary.json`",
+        "",
+        "## 所有变体共同的修改",
+        "",
+        *[f"- {s.strip()[2:] if s.strip().startswith('- ') else s}" for s in COMMON_NOTES[1:]],
+        "- 井输出沿用 base 的 `*OUTPRN *WELL *ALL` / `*OUTSRF *WELL *PAVG`：SR3 中每口井每步都有 BHP、"
+        "地面条件量（`OILRATSC/GASRATSC/WATRATSC`，累计 `*VOLSC`）和储层条件量（`OILRATRC/GASRATRC/WATRATRC/BHFRATRC`，累计 `*VOLRC`）；"
+        ".out 井报告同时打印 Surface 与 Reservoir 的瞬时/累计注采量",
+        "- 网格输出：`*OUTPRN/*OUTSRF *GRID *PRES *SO *SG *SW *POROS *PERM`（与 base 相同），只在报告时刻写出",
+        "- base 中的 `*OUTSRF *SPECIAL` 测点保留未动（后处理不依赖）",
+        "",
+        "## 各变体结果",
+        "",
+        "sg 均值：`mean` 为 3375 格算术平均，`PV` 为按孔隙度（体积相同）加权；自由气格数为 sg > 0.01 的网格数。",
+        "",
+        "| 变体 | 改动 | 墙钟时间 (s) | 正常结束 | 步数 | 时间步截断 | 求解器失败 | 物质平衡误差 % | 第30天 sg mean / PV | 第30天自由气格数 | 最后一步 (天) sg mean / PV | 最后一步自由气格数 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        d, a, b = r["diag"], r["d30"] or {}, r["last"] or {}
+        L.append(
+            f"| {r['variant']} | {DESCR[r['variant']]} | {r['wall_s']} | {'是' if d['normal_stop'] else '否'} | {d['n_steps']} | "
+            f"{d['n_cuts']} | {d['n_solver_fail']} | {d['mb_error_pct']} | "
+            f"{a.get('sg_mean', float('nan')):.4f} / {a.get('sg_mean_pv', float('nan')):.4f} | {a.get('n_free_gas')} | "
+            f"({b.get('day', float('nan')):g}) {b.get('sg_mean', float('nan')):.4f} / {b.get('sg_mean_pv', float('nan')):.4f} | {b.get('n_free_gas')} |"
+        )
+    L += ["", "sg 均值 / 自由气格数随时间（算术平均 / sg>0.01 格数）：", ""]
+    L.append("| 变体 | " + " | ".join(f"{t:g} d" for t in SG_HISTORY_DAYS) + " |")
+    L.append("|---|" + "---|" * len(SG_HISTORY_DAYS))
+    for r in rows:
+        L.append(f"| {r['variant']} | " + " | ".join(f"{m:.3f} / {n}" for m, n in r["sg_history"]) + " |")
+    L += [
+        "",
+        "注意：自由气在前 1-7 天迅速出现（生产井 19 MPa 低于初始 20 MPa，加上注入 CO2），随后逐步消失；"
+        "除 layered_k 外，最后一步全场 SO=1、SG=0。原因是 CO2 充满 30 cm 立方体后（.out 中 HCPVIN：rate_div3 约 3.2e5 %，base 约 9.6e5 %，rate_x3 约 2.9e6 %）"
+        "流体变为单一烃相，而 deck 使用 `*PHASEID *OIL`，单相一律标为油相。"
+        "因此后期 sg≈0 是相标识造成的，并不代表 CO2 前缘消失；后期 CO2 分布请用全局摩尔分数 z_CO2（下表）。",
+        "",
+        f"z_CO2 均值 / z_CO2>{ZCO2_THRESH} 格数随时间（初始 z_CO2=0.03；SR3 变量 `{Z_CO2_KEY}`，.out 中为 'CO2' 全局摩尔分数图）：",
+        "",
+        "| 变体 | " + " | ".join(f"{t:g} d" for t in SG_HISTORY_DAYS) + " |",
+        "|---|" + "---|" * len(SG_HISTORY_DAYS),
+        *[
+            f"| {r['variant']} | " + " | ".join(f"{m:.3f} / {n}" for m, n in r["zco2_history"]) + " |"
+            for r in rows
+            if r["zco2_history"]
+        ],
+        "",
+        "结论：CO2 前缘在 0.01–3 天内扫过整个立方体（base 在 0.1 d 时 z_CO2 均值 0.46、标准差 0.37，7 d 时已为 0.99），"
+        "rate_div3 / layered_k / inj_bottom 稍慢，也在 7–30 d 内基本扫完；压力场从约 1 d 起即为稳态（全场压力标准差不再变化）。"
+        "因此对场重构有信息量的快照主要是 0.01、0.1、1、3（至多 7、15）天，30 d 以后的 PRES/SG/z_CO2 场几乎不随时间变化。",
+        "",
+        "SR3 中 PERMI/J/K 以 darcy 存储（UnitsTable：Permeability internal=darcy, output=md），读取时乘 1000 得 mD。",
+    ]
+    L += ["", "## 收敛/警告", ""]
+    for r in rows:
+        d = r["diag"]
+        L.append(
+            f"- **{r['variant']}**：初始化 {d['init_warnings']} 警告 / {d['init_errors']} 错误；"
+            f"\"Repeat time step: program failed to converge\" {d['n_repeat_nonconv']} 次"
+            f"（汇总时间步截断 {d['n_cuts']} 次），求解器失败 {d['n_solver_fail']} 次，"
+            f"运行期 WARNING 行 {d['n_warning_lines']}；GEM CPU {d['cpu_s']} s"
+        )
+        for msg in d["well_msgs"]:
+            L.append(f"  - 井控信息：`{msg.strip()}`")
+    L += ["", "## 文件大小 (MB)", ""]
+    for r in rows:
+        L.append(f"- {r['variant']}：" + "，".join(f"`{k}` {v}" for k, v in r["sizes_mb"].items()))
+    if het_check:
+        L += [
+            "",
+            "## het_k 输入核对",
+            "",
+            f"SR3 初始时刻 PERMI / POROS / PERMK 与 CSV 对比（{het_check['n_cells']} 格）："
+            f"PERMI 最大相对误差 {het_check['max_rel_err_permi']:.2e}，POROS {het_check['max_rel_err_poros']:.2e}，"
+            f"PERMK 相对 0.2·PERMI {het_check['max_rel_err_permk_vs_0.2i']:.2e}。",
+        ]
+    return "\n".join(L) + "\n"
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("gen")
+    r = sub.add_parser("run")
+    r.add_argument("--only", nargs="*")
+    sub.add_parser("summarize")
+    args = p.parse_args(argv)
+    return {"gen": cmd_gen, "run": cmd_run, "summarize": cmd_summarize}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
