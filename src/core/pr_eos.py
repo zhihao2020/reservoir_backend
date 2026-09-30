@@ -246,34 +246,39 @@ def _load_flash_table(dead_oil: bool = False) -> tuple[np.ndarray, np.ndarray, n
 _AB_DIRECT: tuple[tuple[np.ndarray, np.ndarray], float] | None = None
 
 def _cubic_roots_vec(a0, a1, a2):
-    """Vectorized Cardano roots of ``Z³ + a2·Z² + a1·Z + a0 = 0``.
+    """Vectorized cubic roots of ``Z³ + a2·Z² + a1·Z + a0 = 0``.
 
-    ``a0``/``a1``/``a2`` are arrays of the same length ``n``; returns an
-    ``(n, 3)`` array of real roots sorted ascending, with ``NaN`` filling the
-    unused slots when a cubic has a single real root (``NaN`` sorts last).
+    Mirrors MRST's ``cubicPositive``: the depressed-cubic parameters
+    ``Q = (a²−3b)/9``, ``R = (2a³−9ab+27c)/54`` and the numerically-stable
+    single-root branch ``S = −sign(R)·(|R|+√M)^(1/3)``, ``T = Q/S`` with
+    ``T(~isfinite)=0``. The naive ``cbrt(−q/2±√disc)`` form suffers catastrophic
+    cancellation near the triple root / critical point and produced NaN roots
+    (and hence ``log(Z−B)`` NaN) at the phase boundary. Returns ``(n, 3)`` real
+    roots sorted ascending, ``NaN`` filling unused slots.
     """
     a0 = np.atleast_1d(np.asarray(a0, dtype=float))
     a1 = np.atleast_1d(np.asarray(a1, dtype=float))
     a2 = np.atleast_1d(np.asarray(a2, dtype=float))
     n = a0.size
-    p = a1 - a2 ** 2 / 3.0
-    q = 2.0 * a2 ** 3 / 27.0 - a2 * a1 / 3.0 + a0
-    disc = (q / 2.0) ** 2 + (p / 3.0) ** 3
+    Q = (a2 ** 2 - 3.0 * a1) / 9.0
+    R = (2.0 * a2 ** 3 - 9.0 * a2 * a1 + 27.0 * a0) / 54.0
+    M = R ** 2 - Q ** 3
     roots = np.full((n, 3), np.nan)
-    one = disc >= 0.0
-    three = disc < 0.0
-    if one.any():
-        s = np.sqrt(np.maximum(disc[one], 0.0))
-        u = np.cbrt(-q[one] / 2.0 + s)
-        v = np.cbrt(-q[one] / 2.0 - s)
-        roots[one, 0] = u + v - a2[one] / 3.0
-    if three.any():
-        r = 2.0 * np.sqrt(-p[three] / 3.0)
-        arg = 3.0 * q[three] / (2.0 * p[three]) * np.sqrt(-3.0 / p[three])
-        arg = np.clip(arg, -1.0, 1.0)
-        theta = np.arccos(arg) / 3.0
-        for k in range(3):
-            roots[three, k] = r * np.cos(theta + 2.0 * np.pi * k / 3.0) - a2[three] / 3.0
+    neg = M < 0.0
+    pos = ~neg
+    if neg.any():
+        Qn = np.maximum(Q[neg], 0.0)
+        theta = np.arccos(np.clip(R[neg] / np.maximum(Qn, 1.0e-300) ** 1.5, -1.0, 1.0))
+        sq = 2.0 * np.sqrt(Qn)
+        roots[neg, 0] = -sq * np.cos(theta / 3.0) - a2[neg] / 3.0
+        roots[neg, 1] = -sq * np.cos((theta + 2.0 * np.pi) / 3.0) - a2[neg] / 3.0
+        roots[neg, 2] = -sq * np.cos((theta - 2.0 * np.pi) / 3.0) - a2[neg] / 3.0
+    if pos.any():
+        Mp = np.maximum(M[pos], 0.0)
+        S = -np.sign(R[pos]) * (np.abs(R[pos]) + np.sqrt(Mp)) ** (1.0 / 3.0)
+        T = Q[pos] / S
+        T = np.where(np.isfinite(T), T, 0.0)
+        roots[pos, 0] = S + T - a2[pos] / 3.0
     roots.sort(axis=1)  # ascending, NaN last
     return roots
 

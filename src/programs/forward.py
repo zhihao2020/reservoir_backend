@@ -902,6 +902,9 @@ def _implicit_compositional_full_step(
     converged = False
     for _ in range(max_iter):
         sl, sg, V, x, y, N, lam_w, lam_l, lam_g, v_l, v_g, head = state(p, sw, z)
+        if not (np.isfinite(N).all() and np.isfinite(V).all()
+                and np.isfinite(v_l).all() and np.isfinite(v_g).all()):
+            break  # flash singular (e.g. log(Z-B) -> NaN); cut the step, don't spin
         m_Ng = lam_g / np.maximum(v_g, 1.0e-30)  # gas molar mobility (gas potential)
         m_Nl = lam_l / np.maximum(v_l, 1.0e-30)  # liquid molar mobility (p)
         lam_t = lam_w + lam_l + lam_g
@@ -1048,9 +1051,6 @@ def _implicit_compositional_full_step(
             z_new = np.clip(z_new, 0.0, 1.0)
             z_new = z_new / np.maximum(z_new.sum(axis=1, keepdims=True), 1.0e-30)
             bhp_new = bhp_inj + alpha * delta_bhp
-            if freeze_pressure and alpha == 1.0 and np.isfinite(z_new).all() and np.isfinite(sw_new).all():
-                r_new = residual(p_new, sw_new, z_new, bhp_new)
-                break
             r_new = residual(p_new, sw_new, z_new, bhp_new)
             r_new_n = newton_vector(r_new)
             if np.isfinite(r_new_n).all() and float(np.linalg.norm(r_new_n)) < (1.0 - 1.0e-4 * alpha) * r_norm:
@@ -1058,27 +1058,15 @@ def _implicit_compositional_full_step(
             alpha *= 0.5
         norm_d = float(np.linalg.norm(np.concatenate(
             [p_new - p, sw_new - sw, (z_new - z).ravel()])))
-        z_old = z
         p, sw, z, bhp_inj = p_new, sw_new, z_new, bhp_new
         r_now = float(np.linalg.norm(newton_vector(r_new))) if np.isfinite(r_new).all() else np.inf
-        co2_gain = float(np.max(z_new[:, _CO2_IDX] - z_old[:, _CO2_IDX]))
-        co2_drop = float(np.min(z_new[:, _CO2_IDX] - z_old[:, _CO2_IDX]))
-        already_rich = float(np.max(z_old[:, _CO2_IDX])) > 0.5
-        finite_state = np.isfinite(p_new).all() and np.isfinite(sw_new).all() and np.isfinite(z_new).all()
-        if freeze_pressure and finite_state and (
-            co2_gain > 1.0e-3 or (already_rich and co2_drop > -1.0e-3) or r_now < r0_norm
-        ):
-            # Keep a finite CO2 update. Extra iterates on a cell that is already
-            # full make the flash singular at fixed pressure.
-            converged = True
-            break
         norm_x = float(np.linalg.norm(np.concatenate([p, sw, z.ravel()])))
         if r_now < tol * max(r0_norm, 1.0e-12):
             converged = True
             break
         if norm_d < 1.0e-12 * max(1.0, norm_x):
             break  # stalled
-    sl, sg = state(p, sw, z)[:2]
+    _, sl, sg = _split_full(sw, z, p)  # single-phase labeled oil (matches the output convention)
     return p, sw, sl, sg, z, converged
 
 # GEM ``*PHASEID *OIL``: a single hydrocarbon phase is reported as oil.
@@ -1468,7 +1456,7 @@ def _forward_compositional_full_saturations(
             grid, k, inv_phiV, dt, sw, z, p, wells, bhp[t], well_params, params, injects_gas,
             well_qg_fixed=qg_fixed, dt_sub0=dt_sub0, dt_max=dt_cap, dt_min=1.0,
             freeze_pressure=freeze_pressure, p_end=p_end,
-            max_iter=4 if freeze_pressure else 30,
+            max_iter=10 if freeze_pressure else 30,
             max_substeps=48 if freeze_pressure else 64,
         )
         dt_sub0 = last_dt
