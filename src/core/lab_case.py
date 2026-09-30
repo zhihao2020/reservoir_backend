@@ -122,6 +122,7 @@ class LabCase:
     method: str = "kriging"
     rock_model: str = "total_mobility"
     forward_model: str = "none"
+    freeze_pressure: bool = True
     relperm: tuple[str, ...] = ()
     k_smoothness: float = 2.0
     k_homogeneous: bool = False
@@ -421,6 +422,7 @@ def lab_case_from_mapping(
         method=str(interp.get("method", "kriging")),
         rock_model=str(inv.get("model", "total_mobility")),
         forward_model=str(fwd.get("model", "none")),
+        freeze_pressure=bool(fwd.get("freeze_pressure", True)),
         relperm=_parse_relperm(inv.get("relperm")),
         k_smoothness=float(inv.get("k_smoothness", 2.0)),
         k_homogeneous=bool(inv.get("k_homogeneous", False)),
@@ -457,6 +459,7 @@ def summarize_lab_case(case: LabCase) -> dict[str, Any]:
         "method": case.method,
         "rock_model": case.rock_model,
         "forward_model": case.forward_model,
+        "freeze_pressure": case.freeze_pressure,
         "field_length_m": case.field_length_m,
         "field_width_m": case.field_width_m,
         "field_height_m": case.field_height_m,

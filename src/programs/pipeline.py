@@ -17,6 +17,7 @@ from ..core.units import MD_TO_M2
 from ..version import __version__
 from .mesh import MeshResult, build_mesh
 from .forward import forward_saturations
+from .interpolate import ordinary_kriging, residual_variogram
 from .pressure import interpolate_pressure, interpolate_pressure_wells
 from .results import summarize_results
 from .rock import invert_rock, invert_rock_three_phase, solution_gas_ratio, transient_weights, RockDiagnostics
@@ -51,8 +52,10 @@ class ProgramFields:
     phi: NDArray[np.float64]
     k: NDArray[np.float64]
     # Solution-gas (CO2-in-oil) extension. ``rs`` is the dissolved gas-oil ratio
-    # (Rs = rs_slope * p), ``co2`` the total CO2 component (sg + Rs*so). Offline
-    # outputs only; the frozen wire protocol (p/sw/so/sg/phi/k) is unchanged.
+    # (Rs = rs_slope * p). ``co2`` is the overall CO2 mole fraction when the
+    # compositional forward ran, otherwise free gas plus dissolved gas
+    # (sg + Rs*so). Offline outputs only; the frozen wire protocol
+    # (p/sw/so/sg/phi/k) is unchanged.
     rs: NDArray[np.float64] | None = None
     co2: NDArray[np.float64] | None = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
@@ -175,6 +178,8 @@ def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields
     # over-smoothed kriged field). The forward-simulated saturation replaces the
     # kriged one as the final output.
     oil = case.black_oil
+    co2_flash = None
+    saturation_holdout = None
     if case.forward_model in ("none", "off", "skip", "kriging"):
         # Skip the forward model: keep the kriged saturation (fast path).
         pass
@@ -188,46 +193,151 @@ def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields
         qo_fwd = np.vstack([case.well_qo[:1], case.well_qo])
         qg_fwd = np.vstack([case.well_qg[:1], case.well_qg])
         pw_fwd = np.vstack([case.well_pw[:1], case.well_pw])
-        sw_f, so_f, sg_f = forward_saturations(
-            case.forward_model,
-            mesh.grid,
-            p_fwd,
-            k_static,
-            phi_static,
-            oil,
-            mesh.wells,
-            qw_fwd,
-            qo_fwd,
-            qg_fwd,
-            times_fwd,
-            sw0,
-            so0,
-            sg0,
-            well_bhp=pw_fwd,
-            well_params=case.well,
-        )
+        compositional = str(case.forward_model).strip().lower() == "compositional"
+        if compositional:
+            sw_f, so_f, sg_f, z_f = forward_saturations(
+                case.forward_model,
+                mesh.grid,
+                p_fwd,
+                k_static,
+                phi_static,
+                oil,
+                mesh.wells,
+                qw_fwd,
+                qo_fwd,
+                qg_fwd,
+                times_fwd,
+                sw0,
+                so0,
+                sg0,
+                well_bhp=pw_fwd,
+                well_params=case.well,
+                freeze_pressure=case.freeze_pressure,
+                return_co2=True,
+            )
+            co2_flash = np.asarray(z_f[1:], dtype=float)
+        else:
+            sw_f, so_f, sg_f = forward_saturations(
+                case.forward_model,
+                mesh.grid,
+                p_fwd,
+                k_static,
+                phi_static,
+                oil,
+                mesh.wells,
+                qw_fwd,
+                qo_fwd,
+                qg_fwd,
+                times_fwd,
+                sw0,
+                so0,
+                sg0,
+                well_bhp=pw_fwd,
+                well_params=case.well,
+            )
         sw, so, sg = sw_f[1:], so_f[1:], sg_f[1:]
-    # Re-invert k/phi against the forward-simulated (mass-conserving) saturation,
-    # so the permeability field is consistent with the corrected plume rather than
-    # the over-smoothed kriged field. This is the fixed-point coupling between the
-    # inversion and the forward model (one extra pass).
-    phi_static, k_static, rock_diag = _invert_static(case, mesh, p, sw, so, sg)
-    phi = np.repeat(phi_static[None, :], n_t, axis=0)
-    k = np.repeat(k_static[None, :], n_t, axis=0)
-    # Solution-gas fields: dissolved gas-oil ratio (Rs) and total CO2 component
-    # (free gas + dissolved gas). Derived from the reconstructed pressure, which
-    # is the accurate part of the reconstruction.
+        prior_sw, prior_so, prior_sg = sw.copy(), so.copy(), sg.copy()
+        sw, so, sg = _condition_saturations(case, mesh, sw, so, sg)
+        saturation_holdout = _saturation_holdout(case, mesh, prior_sw, prior_so, prior_sg)
+    # Re-invert k/phi against the forward-simulated saturation when the rock is
+    # not already known to be homogeneous. Homogeneous cases keep k0/phi0; a
+    # second pass would repeat the same constant fill.
+    if not case.k_homogeneous:
+        phi_static, k_static, rock_diag = _invert_static(case, mesh, p, sw, so, sg)
+        phi = np.repeat(phi_static[None, :], n_t, axis=0)
+        k = np.repeat(k_static[None, :], n_t, axis=0)
+    # Solution-gas fields. rs stays the Henry throughput. co2 is the flashed
+    # overall CO2 mole fraction when the compositional forward produced one.
     rs = solution_gas_ratio(p, case.black_oil)
-    co2 = sg + rs * so
+    if co2_flash is not None:
+        co2 = co2_flash
+    else:
+        co2 = sg + rs * so
     diagnostics = rock_diag.as_dict()
     diagnostics["pressure_method"] = pressure_method
-    diagnostics["saturation_method"] = sat_method
+    diagnostics["saturation_method"] = "transport+probe" if co2_flash is not None else sat_method
+    diagnostics["forward_model"] = case.forward_model
+    diagnostics["freeze_pressure"] = bool(case.freeze_pressure and co2_flash is not None)
+    diagnostics["co2_from"] = "z_co2" if co2_flash is not None else "henry"
+    if saturation_holdout is not None:
+        diagnostics["sg_holdout_rmse"] = saturation_holdout["conditioned"]
+        diagnostics["sg_prior_holdout_rmse"] = saturation_holdout["prior"]
     diagnostics["holdout"] = holdout_probe_errors(
         case, mesh, p, sw, so,
         pressure_method=pressure_method,
         saturation_method=sat_method,
     )
     return ProgramFields(mesh=mesh, times=case.times, p=p, sw=sw, so=so, sg=sg, phi=phi, k=k, rs=rs, co2=co2, diagnostics=diagnostics)
+
+
+def _condition_saturations(case: LabCase, mesh: MeshResult, sw, so, sg):
+    """Pull the transport saturations toward probes that actually measured them.
+
+    The correction is simple kriging of ``observation - prior`` with a short
+    vertical range, so a bottom-only survey cannot repaint the top.
+    """
+    cells = np.asarray(mesh.probes.cell, dtype=np.int64)
+    xyz = mesh.probes.xyz
+    if cells.size == 0:
+        return sw, so, sg
+    targets = mesh.grid.cell_centers()
+    for t in range(sw.shape[0]):
+        sw_obs, so_obs, sg_obs = _saturation_slice(case, t)
+        for prior, obs in ((sw, sw_obs), (so, so_obs), (sg, sg_obs)):
+            finite = np.isfinite(obs)
+            if not np.any(finite):
+                continue
+            pts = np.asarray(xyz[finite], dtype=float)
+            # One value per occupied cell. A second probe in the same cell
+            # would make the covariance singular.
+            used: dict[int, int] = {}
+            keep = []
+            for local_i, cell in enumerate(cells[finite]):
+                c = int(cell)
+                if c in used:
+                    continue
+                used[c] = local_i
+                keep.append(local_i)
+            keep_a = np.asarray(keep, dtype=int)
+            pts = pts[keep_a]
+            cell_ids = np.asarray(list(used.keys()), dtype=int)
+            residual = obs[finite][keep_a] - prior[t, cell_ids]
+            model = residual_variogram(pts, residual)
+            correction = ordinary_kriging(
+                pts, residual, targets, model=model, known_mean=0.0,
+            )[0]
+            prior[t] = prior[t] + correction
+        sw[t], so[t], sg[t] = project_saturations3(sw[t], so[t], sg[t])
+    return sw, so, sg
+
+
+def _saturation_holdout(case: LabCase, mesh: MeshResult, prior_sw, prior_so, prior_sg):
+    """Leave-out probe sg error of the conditioned field versus the transport prior."""
+    n_probe = int(np.asarray(mesh.probes.cell).size)
+    if n_probe < 6 or not np.isfinite(case.sg[0]).any():
+        return None
+    hold = np.arange(n_probe)[-min(3, n_probe // 3) :]
+    masked = np.array(case.sg, dtype=float, copy=True)
+    masked[:, hold] = np.nan
+
+    class _Masked:
+        sw = case.sw
+        so = case.so
+        sg = masked
+
+    _csw, _cso, csg = _condition_saturations(_Masked(), mesh, prior_sw.copy(), prior_so.copy(), prior_sg.copy())
+    cells = np.asarray(mesh.probes.cell, dtype=np.int64)[hold]
+    obs = np.asarray(case.sg[0], dtype=float)[hold]
+    finite = np.isfinite(obs)
+    if not np.any(finite):
+        return None
+    cond = csg[0, cells][finite]
+    prior = prior_sg[0, cells][finite]
+    obs = obs[finite]
+    return {
+        "conditioned": float(np.sqrt(np.mean((cond - obs) ** 2))),
+        "prior": float(np.sqrt(np.mean((prior - obs) ** 2))),
+    }
 
 
 def holdout_probe_errors(

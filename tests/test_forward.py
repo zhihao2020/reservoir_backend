@@ -11,7 +11,7 @@ import pytest
 
 from src.core.lab_case import load_lab_case
 from src.programs.forward import forward_saturations
-from src.programs.pipeline import run_mesh
+from src.programs.pipeline import run_mesh, run_pipeline
 from src.programs.pressure import interpolate_pressure
 from src.programs.rock import FluidParams
 from src.programs.saturation import interpolate_saturation, project_saturations3, smooth_fields
@@ -117,3 +117,38 @@ def test_land_free_gas_trapping():
     assert np.all(np.diff(sgf) >= 0.0)  # monotonic free gas
     # C = 0 -> no trapping (sgf = sg)
     assert np.allclose(land_free_gas(sgs, np.full_like(sgs, sg_max), 0.0), sgs)
+
+
+def test_pipeline_uses_flash_co2_and_skips_second_invert(monkeypatch):
+    """Compositional output is z_CO2, and homogeneous rock is not inverted twice."""
+    from src.programs import pipeline
+
+    case = load_lab_case(SMALL)
+    case.forward_model = "compositional"
+    case.freeze_pressure = True
+    case.k_homogeneous = True
+    calls = {"invert": 0}
+    real_invert = pipeline._invert_static
+
+    def _count_invert(*args, **kwargs):
+        calls["invert"] += 1
+        return real_invert(*args, **kwargs)
+
+    def _fake_forward(_model, _grid, pressure, *_args, **kwargs):
+        assert kwargs["freeze_pressure"] is True
+        assert kwargs["return_co2"] is True
+        n_t, n_c = np.asarray(pressure).shape
+        sw = np.zeros((n_t, n_c))
+        so = np.ones((n_t, n_c))
+        sg = np.zeros((n_t, n_c))
+        z_co2 = np.full((n_t, n_c), 0.42)
+        return sw, so, sg, z_co2
+
+    monkeypatch.setattr(pipeline, "_invert_static", _count_invert)
+    monkeypatch.setattr(pipeline, "forward_saturations", _fake_forward)
+    fields = run_pipeline(case)
+    assert calls["invert"] == 1
+    assert fields.diagnostics["co2_from"] == "z_co2"
+    assert fields.diagnostics["freeze_pressure"] is True
+    assert np.allclose(fields.co2, 0.42)
+    assert float(np.max(fields.co2)) < 2.0

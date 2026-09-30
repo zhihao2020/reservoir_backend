@@ -27,7 +27,7 @@ inversion:
   k_homogeneous: true
 
 forward:
-  # none = 克里金插值。black_oil = 黑油。compositional = 14 组分摩尔前向。
+  # none = 克里金饱和度，秒级，联调默认。组分输运见 case_transport.yaml。
   model: none
 
 black_oil:

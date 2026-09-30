@@ -1,0 +1,4 @@
+# Python >= 3.11 (src.so needs CPython 3.12 x86_64 Linux)
+numpy==2.3.5
+scipy==1.16.3
+PyYAML==6.0.3

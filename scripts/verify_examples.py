@@ -33,7 +33,8 @@ CASES = [
     ("model_compare/three_phase.yaml", True),
     ("offline/case.yaml", True),
     ("online/case.yaml", False),  # 60^3 — parse only
-    ("shale_oil/case.yaml", True),  # 真实 GEM 数据，k_homogeneous + forward=none（快）
+    ("shale_oil/case.yaml", True),  # 15^3 kriging, joint-debug default
+    ("shale_oil/case_transport.yaml", False),  # compositional transport — parse only
 ]
 
 

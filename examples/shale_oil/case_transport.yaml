@@ -1,0 +1,67 @@
+# 离线研究案例，不是联调默认。15×15×15，克里金压力驱动 14 组分输运，再用测点饱和度残差修正。
+# 一个月的积分就要数分钟，而且测点看不到的羽流仍然重建不出来。联调用同目录的 case.yaml。
+geometry:
+  origin_m: [0.0, 0.0, 0.0]
+  extent_m: [0.30, 0.30, 0.30]
+  nx: 15
+  ny: 15
+  nz: 15
+
+rock:
+  phi0: 0.05
+  k0_md: 0.03
+
+probes:
+  file: probes.csv
+  observations: observations.csv
+
+wells:
+  file: wells.csv
+  series: series.csv
+
+inversion:
+  model: black_oil_3phase
+  relperm: [nw, no, ng, krw_end, kro_end, krg_end]
+  k_homogeneous: true
+
+forward:
+  model: compositional
+  freeze_pressure: true
+
+black_oil:
+  mu_w_pa_s: 5.0e-4
+  mu_o_pa_s: 2.0e-3
+  mu_g_pa_s: 2.0e-5
+  Swc: 0.0
+  Sor: 0.0
+  Sgc: 0.0
+  ct_1pa: 1.2e-9
+  rs_slope: 9.84e-6
+  bg: 0.003
+  rho_g: 759.0
+  gravity: scalar
+  relperm_table:
+    sgt:
+      - [0.00, 0.000, 1.000]
+      - [0.05, 0.000, 1.000]
+      - [0.20, 0.046, 0.618]
+      - [0.40, 0.250, 0.250]
+      - [0.55, 0.510, 0.082]
+      - [0.75, 1.000, 0.000]
+      - [1.00, 1.000, 0.000]
+    swt:
+      - [0.0, 0.0, 1.0]
+      - [1.0, 1.0, 0.0]
+
+well:
+  rw: 0.003
+  skin: 0.0
+  kv_kh: 0.2
+
+similarity:
+  field_length_m: 300.0
+  field_width_m: 300.0
+  field_height_m: 30.0
+  field_flow_path_m: 150.0
+  model_flow_path_m: 0.15
+  volume_basis: reservoir

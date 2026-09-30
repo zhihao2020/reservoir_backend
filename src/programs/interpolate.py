@@ -182,6 +182,42 @@ def default_variogram(points: NDArray[np.float64], values: NDArray[np.float64]) 
     return VariogramModel(kind="exponential", nugget=max(1.0e-8 * sill, _NUGGET_REL_FLOOR * sill), sill=sill, range_h=length, range_v=length)
 
 
+def residual_variogram(points: NDArray[np.float64], values: NDArray[np.float64]) -> VariogramModel:
+    """Anisotropic variogram for a saturation residual.
+
+    Horizontal range follows the probe spacing. Vertical range is a few probe
+    spacings, and widens to the probe span only when the probes themselves
+    occupy many depths. A bottom-only set therefore cannot paint the top.
+    """
+    pts = np.asarray(points, dtype=float)
+    vals = np.asarray(values, dtype=float).ravel()
+    n = int(pts.shape[0])
+    sill = float(np.var(vals)) if n else 1.0
+    if not np.isfinite(sill) or sill <= 0.0:
+        sill = 1.0
+    nugget = max(1.0e-8 * sill, _NUGGET_REL_FLOOR * sill)
+    if n < 2:
+        return VariogramModel(nugget=nugget, sill=sill, range_h=0.1, range_v=0.02)
+    delta = pts[:, None, :] - pts[None, :, :]
+    dh, _dv = _split_horizontal_vertical(delta)
+    dh_pos = np.array(dh, dtype=float, copy=True)
+    dh_pos[dh_pos <= 1.0e-12] = np.inf
+    nearest = np.min(dh_pos, axis=1)
+    nearest = nearest[np.isfinite(nearest)]
+    range_h = max(float(nearest.mean()) * 3.0, 1.0e-6) if nearest.size else 0.1
+    z = np.unique(np.round(pts[:, 2], decimals=8))
+    if z.size >= 2:
+        z = np.sort(z)
+        spacing = float(np.median(np.diff(z)))
+        span = float(z[-1] - z[0])
+        range_v = max(2.0 * spacing, 1.0e-6)
+        if z.size >= 4 and span > range_v:
+            range_v = span
+    else:
+        range_v = 0.02
+    return VariogramModel(nugget=nugget, sill=sill, range_h=range_h, range_v=range_v)
+
+
 def ordinary_kriging(
     points: NDArray[np.float64],
     values: NDArray[np.float64],
@@ -190,8 +226,15 @@ def ordinary_kriging(
     model: VariogramModel | None = None,
     trend: str = "constant",
     eps: float = 1.0e-18,
+    known_mean: float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Ordinary or universal kriging. Returns estimates and kriging variance."""
+    """Ordinary or universal kriging. Returns estimates and kriging variance.
+
+    ``known_mean`` switches to simple kriging. Residual corrections use mean 0
+    so unobserved cells keep the transport prior instead of the residual mean.
+    """
+    if known_mean is not None:
+        return _simple_kriging(points, values, targets, model=model, mean=float(known_mean), eps=eps)
     n = int(points.shape[0])
     m = int(targets.shape[0])
     if n == 1 or float(np.var(values)) <= 0.0:
@@ -239,6 +282,53 @@ def ordinary_kriging(
     if has_exact.any():
         first = np.argmax(exact, axis=1)
         out[has_exact] = values[first[has_exact]]
+        variance[has_exact] = 0.0
+    return np.asarray(out, dtype=float), np.asarray(variance, dtype=float)
+
+
+def _simple_kriging(
+    points: NDArray[np.float64],
+    values: NDArray[np.float64],
+    targets: NDArray[np.float64],
+    *,
+    model: VariogramModel | None,
+    mean: float,
+    eps: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Simple kriging with a known mean. Far from the data the estimate is ``mean``."""
+    from scipy.linalg import lu_factor, lu_solve
+
+    n = int(points.shape[0])
+    m = int(targets.shape[0])
+    spec = model or residual_variogram(points, values)
+    delta = np.asarray(values, dtype=float).ravel() - mean
+    delta_pp = points[:, None, :] - points[None, :, :]
+    dh_pp, dv_pp = _split_horizontal_vertical(delta_pp)
+    cov = spec.covariance(dh_pp, dv_pp)
+    try:
+        factor = lu_factor(cov)
+    except (np.linalg.LinAlgError, ValueError):
+        pred = inverse_distance(points, values, targets)
+        return pred, np.zeros(m, dtype=float)
+    delta_tp = targets[:, None, :] - points[None, :, :]
+    dh_tp, dv_tp = _split_horizontal_vertical(delta_tp)
+    rhs = spec.covariance(dh_tp, dv_tp).T
+    exact = (dh_tp**2 + dv_tp**2) <= eps
+    has_exact = exact.any(axis=1)
+    try:
+        weights = lu_solve(factor, rhs)
+    except np.linalg.LinAlgError:
+        pred = inverse_distance(points, values, targets)
+        return pred, np.zeros(m, dtype=float)
+    if not np.isfinite(weights).all():
+        pred = inverse_distance(points, values, targets)
+        return pred, np.zeros(m, dtype=float)
+    out = mean + delta @ weights
+    c0 = float(spec.sill + abs(spec.nugget))
+    variance = np.maximum(c0 - np.sum(weights * rhs, axis=0), 0.0)
+    if has_exact.any():
+        first = np.argmax(exact, axis=1)
+        out[has_exact] = np.asarray(values, dtype=float).ravel()[first[has_exact]]
         variance[has_exact] = 0.0
     return np.asarray(out, dtype=float), np.asarray(variance, dtype=float)
 

@@ -51,8 +51,14 @@ def interpolate_pressure_wells(
     pts: list[NDArray[np.float64]] = []
     vals: list[NDArray[np.float64]] = []
     if np.asarray(probe_xyz, dtype=float).size:
-        pts.append(np.asarray(probe_xyz, dtype=float))
-        vals.append(np.asarray(probe_pressure, dtype=float).ravel())
+        xyz = np.asarray(probe_xyz, dtype=float)
+        pv = np.asarray(probe_pressure, dtype=float).ravel()
+        finite = np.isfinite(pv)
+        if xyz.ndim == 2 and xyz.shape[0] == pv.size:
+            finite = finite & np.isfinite(xyz).all(axis=1)
+        if np.any(finite):
+            pts.append(xyz[finite])
+            vals.append(pv[finite])
     centers = grid.cell_centers()
     pw = np.asarray(well_pressure, dtype=float).ravel()
     for i, cells in enumerate(well_cells):

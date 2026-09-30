@@ -14,6 +14,7 @@ The slow 30-day plume test is marked ``@pytest.mark.slow``.
 from __future__ import annotations
 
 from dataclasses import replace
+import warnings
 
 import numpy as np
 import pytest
@@ -34,7 +35,10 @@ from src.programs.forward import (
     _mobility_divergence_matrix,
     _peaceman_well_data,
     _phase_divergence_matrix,
+    _split_full,
     _split_full_N,
+    forward_saturations,
+    reservoir_co2_to_surface,
     solve_pressure_peaceman,
 )
 from src.programs.rock import phase_mobilities
@@ -330,6 +334,185 @@ def test_producer_gas_moles_use_eos_molar_volume():
     dN = float((((N1 - N0) + rock * N1) * pv).sum())
     assert dN == pytest.approx(q_mol_eos * dt, rel=1.0e-2)
     assert abs(q_mol_bg - q_mol_eos) > 0.1 * abs(q_mol_eos)  # the scalar Bg would be off
+
+
+def test_reservoir_co2_rate_converts_to_surface():
+    """The lab case stores reservoir m3/s; the injector constraint wants surface m3/s."""
+    q_res = 8.333e-8  # 0.0072 m3/day, GEM BHF at reservoir conditions
+    q_surf = float(np.asarray(reservoir_co2_to_surface(q_res, 19.0e6)).ravel()[0])
+    assert 150.0 < q_surf / q_res < 400.0
+
+
+def test_corrected_injection_enters_at_the_top():
+    """Reservoir-rate CO2, converted to surface, accumulates in the top completions.
+
+    A single producer cell cannot sink the full well rate, so pressure climbs and
+    free gas does not appear on this column. The check is only where the CO2 goes.
+    """
+    case = load_lab_case(CASE)
+    grid = CartesianGrid(nx=1, ny=1, nz=15, dx=0.02, dy=0.02, dz=0.02)
+    n = grid.n_cells
+    perm = np.full(n, case.k0)
+    phi = np.full(n, case.phi0)
+    inv_phiV = 1.0 / (phi * grid.cell_volumes())
+    params = case.black_oil
+    sw = np.full(n, params.swc)
+    z = np.broadcast_to(_Z_OIL_DEAD, (n, _Z_OIL_DEAD.size)).copy()
+    inj_cells = np.arange(4, 15)
+    wells = WellMap(
+        ids=("INJ", "PROD"),
+        xyz=grid.cell_centers()[[14, 0]],
+        cells=(inj_cells, np.array([0])),
+    )
+    bhp = np.array([19.3e6, 19.0e6])
+    q_surf = float(np.asarray(reservoir_co2_to_surface(8.333e-8, 19.3e6)).ravel()[0])
+    qg_fixed = np.zeros(n)
+    qg_fixed[inj_cells] = q_surf / inj_cells.size
+    p = np.full(n, 19.1e6)
+    for _ in range(5):
+        p, sw, _, _, z, conv = _implicit_compositional_full_step(
+            grid, perm, inv_phiV, 1.0, sw, z, p, wells, bhp, case.well, params,
+            np.array([True, False]), well_qg_fixed=qg_fixed, max_iter=40,
+        )
+        assert np.isfinite(z).all()
+    assert conv
+    zc = z[:, _CO2_IDX]
+    assert zc[12:15].mean() > 0.05
+    assert zc[:3].mean() < 0.01
+
+
+def test_flash_sg_tracks_co2_then_labels_single_phase_oil():
+    """Reported sg follows the GEM front, then drops at single-phase CO2.
+
+    Empirical base-variant curve at ~19 MPa (before day 1): z<0.2 has sg=0,
+    sg rises through the two-phase window, and z>0.99 is mostly sg=0 because
+    GEM ``*PHASEID *OIL`` names a single hydrocarbon phase as oil.
+    """
+    zs = np.array([0.10, 0.40, 0.50, 0.90, 0.999])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    sw = np.zeros(zs.size)
+    _, _, sg = _split_full(sw, z, np.full(zs.size, 19.08e6))
+    assert sg[0] == 0.0
+    assert sg[1] > 0.0
+    assert sg[2] > sg[1]
+    assert sg[3] > sg[2]
+    assert 0.7 < sg[3] < 1.0
+    assert sg[4] == 0.0
+
+
+def test_transport_case_anchors_compositional_pressure():
+    """The offline transport case freezes kriged pressure. Joint-debug stays on kriging."""
+    case = load_lab_case("examples/shale_oil/case_transport.yaml")
+    assert case.forward_model == "compositional"
+    assert case.freeze_pressure is True
+    assert case.k_homogeneous is True
+    joint = load_lab_case(CASE)
+    assert joint.forward_model == "none"
+
+
+def test_frozen_pressure_tracks_the_anchor():
+    """Pressure is the prescribed end state, not a Newton unknown."""
+    (case, grid, k, _phi, _vol, inv_phiV, params,
+     sw, z, p, wells, bhp, injects_gas, _qg) = _small_setup(nx=1, inject_qg=0.0, producer=False)
+    p_end = p + 2.0e5
+    p2, _sw2, _sl, _sg, _z2, conv, _dt = _implicit_compositional_full_adaptive(
+        grid, k, inv_phiV, 30.0, sw, z, p, wells, bhp, case.well, params, injects_gas,
+        well_qg_fixed=None, freeze_pressure=True, p_end=p_end, dt_max=30.0, dt_min=1.0,
+    )
+    assert conv
+    assert np.allclose(p2, p_end)
+
+
+def test_frozen_column_co2_enters_at_the_top():
+    """0.01 day of rate-controlled CO2 on a frozen pressure enters at the top.
+
+    Completions are the upper cells. 0.03 mD cannot carry that slug to the
+    bottom perforations in 864 s, so the overall CO2 mole fraction stays a
+    front: high in the top completions, still the dead-oil value at the bottom.
+    Reported sg follows the GEM two-phase window and the single-phase oil label.
+    """
+    case = load_lab_case(CASE)
+    grid = CartesianGrid(nx=1, ny=1, nz=15, dx=0.02, dy=0.02, dz=0.02)
+    n = grid.n_cells
+    perm = np.full(n, case.k0)
+    phi = np.full(n, case.phi0)
+    params = case.black_oil
+    inj_cells = np.arange(4, 15)
+    wells = WellMap(
+        ids=("INJ", "PROD"),
+        xyz=grid.cell_centers()[[14, 0]],
+        cells=(inj_cells, np.array([0])),
+    )
+    p_value = 19.1e6
+    p = np.full((2, n), p_value)
+    # Injector BHP starts equal to the anchored pressure, so the target rate
+    # is met only by solving the injector constraint, not by a pressure update.
+    bhp = np.array([[p_value, 19.0e6], [p_value, 19.0e6]])
+    q_res = 8.333e-8
+    qg = np.array([[q_res, 0.0], [q_res, 0.0]])
+    zeros = np.zeros_like(qg)
+    s0 = np.zeros(n)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        sw, so, sg, zco2 = forward_saturations(
+            "compositional", grid, p, perm, phi, params, wells,
+            zeros, zeros, qg, np.array([0.0, 864.0]),
+            s0, np.ones(n), s0,
+            well_bhp=bhp, well_params=case.well,
+            freeze_pressure=True, return_co2=True,
+        )
+    assert np.allclose(sw + so + sg, 1.0, atol=1.0e-6)
+    assert np.all((zco2 >= -1.0e-8) & (zco2 <= 1.0 + 1.0e-8))
+    assert float(zco2.max()) < 2.0  # mole fraction, not a Henry throughput
+    top = zco2[1, 12:15]
+    bottom = zco2[1, :3]
+    assert float(top.mean()) > 0.2
+    assert float(top.mean()) > 5.0 * float(bottom.mean() + 1.0e-6)
+    two_phase = (zco2[1] > 0.30) & (zco2[1] < 0.90)
+    if np.any(two_phase):
+        assert float(sg[1, two_phase].min()) > 0.02
+    pure = zco2[1] > 0.99
+    if np.any(pure):
+        assert np.allclose(sg[1, pure], 0.0)
+
+
+def test_frozen_month_step_converges():
+    """A 30-day frozen-pressure step stays on the anchor and keeps z in [0, 1]."""
+    from src.core.pr_eos import _Z_OIL_DEAD
+
+    case = load_lab_case(CASE)
+    grid = CartesianGrid(nx=1, ny=1, nz=15, dx=0.02, dy=0.02, dz=0.02)
+    n = grid.n_cells
+    perm = np.full(n, case.k0)
+    phi = np.full(n, case.phi0)
+    params = case.black_oil
+    inj_cells = np.arange(4, 15)
+    wells = WellMap(
+        ids=("INJ", "PROD"),
+        xyz=grid.cell_centers()[[14, 0]],
+        cells=(inj_cells, np.array([0])),
+    )
+    p_value = 19.1e6
+    month = 30.0 * 86400.0
+    p0 = np.full(n, p_value)
+    bhp = np.array([p_value, 19.0e6])
+    sw = np.zeros(n)
+    z = np.broadcast_to(_Z_OIL_DEAD, (n, _Z_OIL_DEAD.size)).copy()
+    q_surf = float(np.asarray(reservoir_co2_to_surface(8.333e-8, p_value)).ravel()[0])
+    qg_fixed = np.zeros(n)
+    qg_fixed[inj_cells] = q_surf / inj_cells.size
+    inv_phiV = 1.0 / (phi * grid.cell_volumes())
+    p2, _sw2, _sl, _sg, z2, conv, _dt = _implicit_compositional_full_adaptive(
+        grid, perm, inv_phiV, month, sw, z, p0, wells, bhp, case.well, params,
+        np.array([True, False]), well_qg_fixed=qg_fixed, freeze_pressure=True,
+        p_end=p0, dt_max=5.0 * 86400.0, dt_min=1.0,
+    )
+    zco2 = z2[:, _CO2_IDX]
+    assert conv
+    assert np.allclose(p2, p_value)
+    assert np.all((zco2 >= -1.0e-8) & (zco2 <= 1.0 + 1.0e-8))
+    assert float(zco2.max()) > float(zco2[:3].mean())
 
 
 @pytest.mark.slow

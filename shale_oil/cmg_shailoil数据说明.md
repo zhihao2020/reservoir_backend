@@ -1,13 +1,10 @@
 # GEM shailoil 导出 CSV 说明
 
-本文件描述 `results/shailoil_10y/csv/` 里从 CMG GEM 页岩油模型抽出的数据。
-源 deck 是 [`examples/shailoil.dat`](../examples/shailoil.dat)，输出 `.out` 在 `results/shailoil_10y/shailoil.out`。
+本文件描述从 CMG GEM 页岩油模型抽出的逐月 CSV。本地副本在本目录（`shale_oil/cmg_*.csv`），不是 `results/shailoil_10y/`（该目录不在这台机器上）。源 deck 是 [`examples/shailoil.dat`](../examples/shailoil.dat)。
 
-重新导出：
+`scripts/cmg_shailoil_compare.py` 没有 `--cmg-csv` 参数；它对比的是 `results/shailoil_cmg/` 下的 npz（该目录目前也没有）。早期时刻（0.01–15 天）和 CO₂ 摩尔分数 `Z(5)` 在 `results/shailoil_variants/<变体>/*.sr3`，不在下面这些 CSV 里。CSV 从第 30 天才开始。
 
-```bash
-python scripts/cmg_shailoil_compare.py --cmg-csv --case results/shailoil_10y/case --out results/shailoil_10y/csv
-```
+下面各表的列定义与本目录文件一致。
 
 ## 模型
 
