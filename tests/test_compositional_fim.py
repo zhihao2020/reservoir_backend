@@ -23,7 +23,8 @@ from src.core.cartesian import CartesianGrid
 from src.core.lab_case import load_lab_case
 from src.core.pr_eos import (
     _CO2_IDX, _V_CO2_STD, _Z_OIL_DEAD, co2_molar_volume, flash_direct_full,
-    flash_direct_volumes, phase_molar_volumes,
+    flash_direct_volumes, fugacity_mole_deriv, natural_variables_residual,
+    phase_molar_volumes,
 )
 from src.programs.mesh import WellMap
 from src.programs.pipeline import run_mesh
@@ -399,6 +400,38 @@ def test_flash_sg_tracks_co2_then_labels_single_phase_oil():
     assert sg[3] > sg[2]
     assert 0.7 < sg[3] < 1.0
     assert sg[4] == 0.0
+
+
+def test_natural_variables_residual_vanishes_at_flash():
+    """The natural-variables equilibrium residual is ~0 at the flash solution.
+
+    The two-phase flash satisfies mass balance, fugacity equality and closure,
+    so the residual that the natural-variables Newton will drive to zero is
+    already (nearly) zero at the SSI flash result — the starting point for the
+    fugacity-driven phase split that stays smooth through the bubble point.
+    """
+    zs = np.array([0.4, 0.6, 0.9])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(zs.size, 19.0e6)
+    V, x, y = flash_direct_full(z, p)
+    L = 1.0 - V
+    res = natural_variables_residual(L, x, y, z, p)
+    # mass balance (ncomp) + fugacity equality (ncomp) + closure (1), all ~0
+    assert np.allclose(res, 0.0, atol=1.0e-4)
+
+
+def test_fugacity_mole_deriv_satisfies_euler():
+    """d lnφ_i/d ln n_j must sum to zero over j (degree-0 homogeneity)."""
+    zs = np.array([0.6])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(1, 19.0e6)
+    _, x, y = flash_direct_full(z, p)
+    dL = fugacity_mole_deriv(x, p, phase="liq")
+    dV = fugacity_mole_deriv(y, p, phase="vap")
+    assert np.allclose(dL[0].sum(axis=1), 0.0, atol=1.0e-5)
+    assert np.allclose(dV[0].sum(axis=1), 0.0, atol=1.0e-5)
 
 
 def test_transport_case_anchors_compositional_pressure():

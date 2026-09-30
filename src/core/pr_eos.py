@@ -612,3 +612,79 @@ def flash_direct_full(
         V[two_phase], x[two_phase], y[two_phase] = _flash_vec(
             z[two_phase], pp[two_phase], T, aij, b, tol=tol)
     return V, x, y
+
+
+def fugacity_mole_deriv(
+    x: np.ndarray,
+    P: float | np.ndarray,
+    T: float = 393.0,
+    phase: str = "liq",
+    h: float = 1.0e-6,
+) -> np.ndarray:
+    """``d(ln φ_i)/d(ln n_j)`` — mole-number derivative of the log-fugacity coefficient.
+
+    Perturbs the mole number ``n_j`` by a relative factor ``(1+h)``, renormalizes
+    to mole fractions, and divides by ``ln(1+h)``. This satisfies the Euler
+    relation ``Σ_j d lnφ_i/d ln n_j = 0`` (the fugacity coefficient is degree-0
+    homogeneous in the mole numbers), which the raw mole-fraction perturbation
+    does not. It is the smooth, Gibbs-Duhem-consistent building block the natural
+    variables Jacobian needs (MRST computes the same derivative via automatic
+    differentiation). ``x`` is an ``(n, ncomp)`` mole-fraction matrix; returns an
+    ``(n, ncomp, ncomp)`` array ``out[:, i, j] = d lnφ_i / d ln n_j``.
+    """
+    global _AB_DIRECT
+    if _AB_DIRECT is None or _AB_DIRECT[1] != T:
+        _AB_DIRECT = (_ab(T), T)
+    aij, b = _AB_DIRECT[0]
+    x = np.atleast_2d(np.asarray(x, dtype=float))
+    P = np.atleast_1d(np.asarray(P, dtype=float)).astype(float)
+    n_cells, ncomp = x.shape
+    base = _fugacity_vec(x, aij, b, P, T, phase)
+    out = np.zeros((n_cells, ncomp, ncomp))
+    ln_h = np.log(1.0 + h)
+    for j in range(ncomp):
+        n_pert = x.copy()
+        n_pert[:, j] *= (1.0 + h)
+        x_pert = n_pert / n_pert.sum(axis=1, keepdims=True)
+        fp = _fugacity_vec(x_pert, aij, b, P, T, phase)
+        out[:, :, j] = (fp - base) / ln_h
+    return out
+
+
+def natural_variables_residual(
+    L: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    P: float | np.ndarray,
+    T: float = 393.0,
+) -> np.ndarray:
+    """Equilibrium residual of the natural-variables two-phase split.
+
+    Returns the ``2·ncomp + 1`` residuals that vanish at the ``(L, x, y)``
+    equilibrium for overall composition ``z`` at pressure ``P`` (the natural
+    variables formulation of MRST's ``equationsEquilibrium``):
+
+    - mass balance ``z_i − L·x_i − (1−L)·y_i`` (ncomp),
+    - fugacity equality ``ln(y_i·φ_i^V) − ln(x_i·φ_i^L)`` (ncomp),
+    - closure ``Σx − Σy`` (1).
+
+    :func:`flash_direct_full` satisfies this to its convergence tolerance, so the
+    residual is a ready-to-use Newton residual for a fugacity-driven phase split
+    (which stays smooth through the bubble point, unlike the ``V(z)`` flash kink).
+    """
+    global _AB_DIRECT
+    if _AB_DIRECT is None or _AB_DIRECT[1] != T:
+        _AB_DIRECT = (_ab(T), T)
+    aij, b = _AB_DIRECT[0]
+    x = np.atleast_2d(np.asarray(x, dtype=float))
+    y = np.atleast_2d(np.asarray(y, dtype=float))
+    z = np.atleast_2d(np.asarray(z, dtype=float))
+    P = np.atleast_1d(np.asarray(P, dtype=float)).astype(float)
+    L = np.asarray(L, dtype=float)
+    fL = _fugacity_vec(x, aij, b, P, T, "liq")
+    fV = _fugacity_vec(y, aij, b, P, T, "vap")
+    mass = L[:, None] * x + (1.0 - L)[:, None] * y - z
+    fug = (np.log(np.maximum(y, 1.0e-300)) + fV) - (np.log(np.maximum(x, 1.0e-300)) + fL)
+    close = (x - y).sum(axis=1)
+    return np.concatenate([mass, fug, close[:, None]], axis=1)
