@@ -534,6 +534,33 @@ def _corey_mobilities_derivs(
     _, _, lg_p = phase_mobilities(sw, so, sg + h, params)
     return lam_w, lam_o, lam_g, (lw_p - lam_w) / h, (lo_p - lam_o) / h, (lg_p - lam_g) / h
 
+
+def _mobility_derivs_full(
+    sw: NDArray[np.float64],
+    so: NDArray[np.float64],
+    sg: NDArray[np.float64],
+    params: FluidParams,
+) -> tuple[NDArray[np.float64], ...]:
+    """Mobilities ``(λw, λo, λg)`` and their full 3×3 saturation Jacobian.
+
+    The tabular Stone-I rel-perm (``kro = krog(sg)·krow(sw)``) couples the oil
+    mobility to *both* ``sw`` and ``sg``, so the own-saturation shortcut
+    (:func:`_corey_mobilities_derivs`) is insufficient; a 3-point FD over
+    ``(sw, so, sg)`` captures the full coupling for both Corey and tabular models.
+    Returns ``(λw, λo, λg, d)`` with ``d[:, i, k] = ∂λ_i/∂s_k`` (s order sw/so/sg).
+    """
+    h = 1.0e-6
+    sw = np.asarray(sw, dtype=float)
+    so = np.asarray(so, dtype=float)
+    sg = np.asarray(sg, dtype=float)
+    lam = phase_mobilities(sw, so, sg, params)
+    d = np.zeros((sw.size, 3, 3))
+    for k, (swn, son, sgn) in enumerate(((sw + h, so, sg), (sw, so + h, sg), (sw, so, sg + h))):
+        lp = phase_mobilities(swn, son, sgn, params)
+        for i in range(3):
+            d[:, i, k] = (lp[i] - lam[i]) / h
+    return lam[0], lam[1], lam[2], d
+
 def _phase_divergence_matrix(grid, permeability, pressure, rho_g):
     """Sparse ``A_g`` such that ``A_g @ lam == div(-k lam^up grad(p + rho_g z))``.
 
@@ -547,10 +574,6 @@ def _phase_divergence_matrix(grid, permeability, pressure, rho_g):
     return _mobility_divergence_matrix(grid, permeability, pressure, rho_g)
 
 _GRAVITY = 9.80665  # m/s2
-# Pressure finite-difference step (Pa) for the EOS Jacobians: the 1e-6 step used
-# for saturations / mole fractions is below double-precision round-off relative to
-# ~2e7 Pa, so dN/dp would be noise.
-_FD_STEP_P = 1.0
 # Default Newton convergence of the EOS steps: residual norm < _EOS_NEWTON_RTOL·|r0|.
 # Tighter values (e.g. 1e-3) conserve CO2 to ~0.3% per step but do not converge
 # when a single 864 s step crosses the bubble point.
@@ -749,10 +772,11 @@ def _implicit_compositional_full_step(
     from scipy.sparse import bmat as _bmat
     from scipy.sparse import diags
     from scipy.sparse.linalg import gmres as _gmres
-    from scipy.sparse.linalg import splu as _splu
 
     from ..core.pr_eos import (_Z_OIL, _CO2_IDX, _V_CO2_STD,
-                               flash_direct_full, phase_mass_densities, phase_molar_volumes)
+                               flash_direct_full, flash_derivatives_ptz,
+                               phase_mass_densities, phase_molar_volume_deriv,
+                               phase_molar_volumes)
 
     ncomp = _Z_OIL.size  # 14
     # Only scales the rate-constraint row (reservoir-volume units).
@@ -764,8 +788,6 @@ def _implicit_compositional_full_step(
         p = np.asarray(p0 if p_fixed is None else p_fixed, dtype=float).copy()
     else:
         p = np.asarray(p0, dtype=float).copy()
-    h = 1.0e-6
-    hp = _FD_STEP_P
     accum = 1.0 / (dt * inv_phiV)
     I = diags(accum)
     cells, wi, bhp_w, is_inj = _peaceman_well_data(
@@ -920,23 +942,47 @@ def _implicit_compositional_full_step(
             A = _mobility_divergence_matrix(grid, permeability, p)
             A_g = _phase_divergence_matrix(grid, permeability, p, head)
         r_full = residual(p, sw, z, bhp_inj)
-        # numerical derivatives of the split (N, x, y, λ) wrt sw/z, and wrt p
-        # only when pressure is an unknown.
-        _, _, _, _, _, N_s, lw_s, ll_s, lg_s, _, _, _ = state(p, sw + h, z)
-        dN_dsw = (N_s - N) / h
-        dlw_dsw = (lw_s - lam_w) / h
-        dz = {}
-        for c in range(ncomp - 1):
-            zc = z.copy(); zc[:, c] += h; zc[:, -1] -= h
-            zc = zc / zc.sum(axis=1, keepdims=True)
-            _, _, _, x_c, y_c, N_c, lw_c, ll_c, lg_c, _, _, _ = state(p, sw, zc)
-            dz[c] = (x_c, y_c, N_c, lw_c, ll_c, lg_c)
-        J_ww = I + A @ diags(dlw_dsw)
+        # analytic split derivatives (MRST getPhaseFractionDerivativesPTZ): one
+        # equilibrium-Jacobian solve replaces the ncomp extra flash evaluations.
+        dV_dp, dV_dz, dx_dp, dx_dz, dy_dp, dy_dz = flash_derivatives_ptz(z, p)
+        # fold the implied last component (z_last = 1 - Σ z_ind)
+        dV_dz = dV_dz[:, : ncomp - 1] - dV_dz[:, ncomp - 1: ncomp]
+        dx_dz = dx_dz[:, :, : ncomp - 1] - dx_dz[:, :, ncomp - 1: ncomp]
+        dy_dz = dy_dz[:, :, : ncomp - 1] - dy_dz[:, :, ncomp - 1: ncomp]
+        _, dvdx_l, dvdp_l = phase_molar_volume_deriv(x, p, phase="liq")
+        _, dvdx_g, dvdp_g = phase_molar_volume_deriv(y, p, phase="vap")
+        _, _, _, dlam = _mobility_derivs_full(sw, sl, sg, params)
+        denom = V * v_g + (1.0 - V) * v_l
+        # z (composition) derivatives
+        dvdx_l_z = np.einsum("nk,nkj->nj", dvdx_l, dx_dz)
+        dvdx_g_z = np.einsum("nk,nkj->nj", dvdx_g, dy_dz)
+        ddenom_dz = dV_dz * (v_g - v_l)[:, None] + V[:, None] * dvdx_g_z + (1.0 - V)[:, None] * dvdx_l_z
+        dN_dz = -N[:, None] / denom[:, None] * ddenom_dz
+        dsl_dz = -dV_dz * (N * v_l)[:, None] + (1.0 - V)[:, None] * (dN_dz * v_l[:, None] + N[:, None] * dvdx_l_z)
+        dsg_dz = dV_dz * (N * v_g)[:, None] + V[:, None] * (dN_dz * v_g[:, None] + N[:, None] * dvdx_g_z)
+        dlaml_dz = dlam[:, 1, 1][:, None] * dsl_dz + dlam[:, 1, 2][:, None] * dsg_dz
+        dlamg_dz = dlam[:, 2, 1][:, None] * dsl_dz + dlam[:, 2, 2][:, None] * dsg_dz
+        # sw derivatives
+        dN_dsw = -1.0 / denom
+        dsl_dsw = (1.0 - V) * dN_dsw * v_l
+        dsg_dsw = V * dN_dsw * v_g
+        dlamw_dsw = dlam[:, 0, 0] + dlam[:, 0, 1] * dsl_dsw + dlam[:, 0, 2] * dsg_dsw
+        dlaml_dsw = dlam[:, 1, 0] + dlam[:, 1, 1] * dsl_dsw + dlam[:, 1, 2] * dsg_dsw
+        dlamg_dsw = dlam[:, 2, 0] + dlam[:, 2, 1] * dsl_dsw + dlam[:, 2, 2] * dsg_dsw
+        J_ww = I + A @ diags(dlamw_dsw)
         if not freeze_pressure:
-            _, _, _, _, _, N_p, lw_p, ll_p, lg_p, _, _, _ = state(p + hp, sw, z)
-            dN_dp = (N_p - N) / hp
+            # p derivatives
+            dvdx_l_p = (dvdx_l * dx_dp).sum(axis=1) + dvdp_l
+            dvdx_g_p = (dvdx_g * dy_dp).sum(axis=1) + dvdp_g
+            ddenom_dp = dV_dp * (v_g - v_l) + V * dvdx_g_p + (1.0 - V) * dvdx_l_p
+            dN_dp = -N / denom * ddenom_dp
+            dsl_dp = -dV_dp * (N * v_l) + (1.0 - V) * (dN_dp * v_l + N * dvdx_l_p)
+            dsg_dp = dV_dp * (N * v_g) + V * (dN_dp * v_g + N * dvdx_g_p)
+            dlamw_dp = dlam[:, 0, 1] * dsl_dp + dlam[:, 0, 2] * dsg_dp
+            dlaml_dp = dlam[:, 1, 1] * dsl_dp + dlam[:, 1, 2] * dsg_dp
+            dlamg_dp = dlam[:, 2, 1] * dsl_dp + dlam[:, 2, 2] * dsg_dp
+            dlam_t_dp = dlamw_dp + dlaml_dp + dlamg_dp
             frac_t = D / np.maximum(lam_t, 1.0e-12)
-            dlam_t_dp = (lw_p + ll_p + lg_p - lam_t) / hp  # approx for the flux p-derivative (secondary)
             D_molar = np.where(inj_cell, g_inj_p, frac_t * (m_Nl + m_Ng))
             rock_ct = accum * params.ct * (N + (p - p0) * dN_dp)
             J_pp = (diags(dN_dp * accum + rock_ct) + A @ diags(dlam_t_dp)
@@ -949,20 +995,19 @@ def _implicit_compositional_full_step(
         # component blocks (molar formulation)
         row_blocks = []
         for c in range(ncomp - 1):
-            dFg_dsw = y[:, c] * (lg_s - lam_g) / h / v_g
-            dFl_dsw = x[:, c] * (ll_s - lam_l) / h / v_l
+            dFg_dsw = y[:, c] * dlamg_dsw / v_g
+            dFl_dsw = x[:, c] * dlaml_dsw / v_l
             dq_c_dsw = np.where(inj_cell, 0.0,
                                 y[:, c] * (qg * 0.0) + x[:, c] * 0.0)  # lag well sw-deriv
             J_cw = (diags((dN_dsw * z[:, c]) * accum) + A_g @ diags(dFg_dsw)
                     + A @ diags(dFl_dsw) - diags(dq_c_dsw))
             col_blocks = []
             for j in range(ncomp - 1):
-                x_j, y_j, N_j, lw_j, ll_j, lg_j = dz[j]
-                dN_dzj = (N_j - N) / h
-                dy_dzj = (y_j[:, c] - y[:, c]) / h
-                dx_dzj = (x_j[:, c] - x[:, c]) / h
-                dlamg_dzj = (lg_j - lam_g) / h
-                dlaml_dzj = (ll_j - lam_l) / h
+                dx_dzj = dx_dz[:, c, j]
+                dy_dzj = dy_dz[:, c, j]
+                dN_dzj = dN_dz[:, j]
+                dlamg_dzj = dlamg_dz[:, j]
+                dlaml_dzj = dlaml_dz[:, j]
                 J_cc = (diags((dN_dzj * z[:, c] + (1.0 if j == c else 0.0) * N) * accum)
                         + A_g @ diags(dy_dzj * lam_g / v_g + y[:, c] * dlamg_dzj / v_g)
                         + A @ diags(dx_dzj * lam_l / v_l + x[:, c] * dlaml_dzj / v_l))
@@ -988,6 +1033,17 @@ def _implicit_compositional_full_step(
             rhs = r[:(ncomp + 1) * n].copy()
         J_blk = _bmat(blocks, format="csr")
         delta_bhp = 0.0
+
+        def _ilu_precond(J):
+            """Incomplete-LU preconditioner (memory-bounded, non-symmetric); None if it fails."""
+            try:
+                from scipy.sparse.linalg import LinearOperator, spilu
+
+                lu = spilu(J.tocsc(), drop_tol=1.0e-4, fill_factor=10)
+                return LinearOperator(J.shape, matvec=lu.solve)
+            except Exception:
+                return None
+
         if rate_controlled and not freeze_pressure:
             # The injector is pure CO2 (_CO2_IDX) at WI·λt·(bhp−p)/v_CO2 mol/s.
             # ∂/∂bhp_inj = −D_inj/v_CO2 on the molar-balance r_p row (coupled mode)
@@ -1000,31 +1056,31 @@ def _implicit_compositional_full_step(
             C_b = np.concatenate([-Bg * _V_CO2_STD * np.where(inj_cell, g_inj_p, 0.0), np.zeros(n)]
                                  + [np.zeros(n)] * (ncomp - 1))
             d_rr = float(Bg * _V_CO2_STD * g_inj.sum())
-            # Factor J_blk once and reuse it for both the B_c and rhs solves
-            # (the two direct solves previously factored the same matrix twice).
-            try:
-                lu = _splu(J_blk.tocsc())
-            except RuntimeError:
-                break  # singular at a phase boundary; caller cuts the step
-            u = lu.solve(B_c)
-            delta_x0 = lu.solve(rhs)
+            # Iterative (GMRES + AMG) solve: the SuperLU fill-in on the 15-block
+            # Jacobian exhausts memory on the full mesh, so build one preconditioner
+            # and reuse it for both the B_c and rhs solves (MRST's iterative route).
+            M = _ilu_precond(J_blk)
+            u, info_u = _gmres(J_blk, B_c, M=M, rtol=1.0e-5, restart=30, maxiter=80)
+            delta_x0, info_x = _gmres(J_blk, rhs, M=M, rtol=1.0e-5, restart=30, maxiter=80)
+            if (info_u != 0 or info_x != 0
+                    or not (np.isfinite(u).all() and np.isfinite(delta_x0).all())):
+                break
             denom = d_rr - float(C_b @ u)
             # r_rate is the last entry: the residual also carries the 14th (implied)
             # component block, so it sits at (ncomp + 2) * n, not (ncomp + 1) * n.
             delta_bhp = ((r[-1] - float(C_b @ delta_x0)) / denom
                          if abs(denom) > 1.0e-30 else 0.0)
             delta = delta_x0 - delta_bhp * u
+        elif freeze_pressure:
+            # SuperLU fill-in on the 15^3 transport Jacobian exhausts memory.
+            # An iterative solve stays within RAM and is only used here.
+            delta, info = _gmres(J_blk, rhs, rtol=1.0e-5, restart=30, maxiter=60)
+            if info != 0 or not np.isfinite(delta).all():
+                break
         else:
-            try:
-                if freeze_pressure:
-                    # SuperLU fill-in on the 15^3 transport Jacobian exhausts memory.
-                    # An iterative solve stays within RAM and is only used here.
-                    delta, info = _gmres(J_blk, rhs, rtol=1.0e-5, restart=30, maxiter=60)
-                    if info != 0 or not np.isfinite(delta).all():
-                        break
-                else:
-                    delta = _splu(J_blk.tocsc()).solve(rhs)
-            except (RuntimeError, MemoryError):
+            M = _ilu_precond(J_blk)
+            delta, info = _gmres(J_blk, rhs, M=M, rtol=1.0e-5, restart=30, maxiter=80)
+            if info != 0 or not np.isfinite(delta).all():
                 break
         if freeze_pressure:
             delta_p = np.zeros(n)

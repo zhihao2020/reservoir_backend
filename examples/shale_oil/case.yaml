@@ -43,14 +43,14 @@ black_oil:
   # CO2 气体体积系数 Bg = 储层气体积 / 地面气体积。20 MPa 超临界 CO2 约 0.003。
   # 相劈分要求 1/Bg > Rs_max（≈140），即 Bg < 0.0071，否则自由气被剪成 0。
   bg: 0.003
-  # 自由气重力头 rho_g = (rho_CO2 - rho_oil)*g，Pa/m；>0 表示 CO2 富相比油重、下沉到底层。
-  # 更正(2026-09-28)：20 MPa、120℃ 超临界 CO2 实际密度 ~590 kg/m3(NIST，Z≈0.45)，
-  # 比油 512.6 kg/m3 重 → rho_g 应为正(+759)。此前 -1421 用的 CO2 密度 369.8 是
-  # PR EOS 未加 Peneloux 体积平移的低估值(本代码 PR EOS 给 Z=0.69→390 kg/m3)。
-  # 底部羽流是 CO2 重→下沉 + 井压差共同驱动，重力项应是主驱动之一。
+  # 自由气重力头：>0 表示气相（CO2 富汽）比液相（溶 CO2 油）重、下沉。
+  # 更正(2026-09-30)：固定 rho_g 用「纯 CO2(590) vs 死油(512.6)」判号是错的——组分模型里
+  # 重力作用在【两相汽/液】之间：PR EOS 下 CO2 富汽(468–553 kg/m3)比溶 CO2 液相(532–681)
+  # 更轻，即气相上浮、不沉。MRST 始终用 EOS 相密度（equationsNaturalVariables 的 rhoOf/rhoGf），
+  # 故 gravity 用 eos（逐面 g*(ρ_g−ρ_l)），rho_g 仅作无气面的回退。
   rho_g: 759.0
-  # 组分摩尔步气头：scalar = 上面的固定 rho_g；eos = 逐面 g*(ρ_g−ρ_l)（EOS 相密度）。
-  gravity: scalar
+  # 组分摩尔步气头：eos = 逐面 g*(ρ_g−ρ_l)（EOS 相密度，MRST 一致）；scalar = 上面的固定 rho_g。
+  gravity: eos
   # 表格相渗（GEM deck *SGT / *SWT），替代 Corey 幂律 relperm。
   relperm_table:
     sgt:   # [Sg, Krg, Krog]

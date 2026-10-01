@@ -39,7 +39,7 @@ black_oil:
   rs_slope: 9.84e-6
   bg: 0.003
   rho_g: 759.0
-  gravity: scalar
+  gravity: eos
   relperm_table:
     sgt:
       - [0.00, 0.000, 1.000]

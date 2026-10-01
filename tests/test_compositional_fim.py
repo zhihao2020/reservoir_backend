@@ -23,8 +23,9 @@ from src.core.cartesian import CartesianGrid
 from src.core.lab_case import load_lab_case
 from src.core.pr_eos import (
     _CO2_IDX, _V_CO2_STD, _Z_OIL_DEAD, co2_molar_volume, flash_direct_full,
-    flash_direct_volumes, fugacity_mole_deriv, natural_variables_residual,
-    phase_molar_volumes,
+    flash_direct_volumes, fugacity_mole_deriv, natural_variables_jacobian,
+    natural_variables_residual, natural_variables_state, phase_flags,
+    phase_molar_volume_deriv, phase_molar_volumes,
 )
 from src.programs.mesh import WellMap
 from src.programs.pipeline import run_mesh
@@ -42,6 +43,7 @@ from src.programs.forward import (
     reservoir_co2_to_surface,
     solve_pressure_peaceman,
 )
+from src.programs.natural_variables import natural_variables_step
 from src.programs.rock import phase_mobilities
 
 CASE = "examples/shale_oil/case.yaml"
@@ -65,7 +67,11 @@ def _setup():
     inj_idx = int(np.flatnonzero(injects_gas)[0])
     inj_cells = mesh.wells.cells[inj_idx]
     qg_fixed = np.zeros(n_c)
-    qg_fixed[inj_cells] += case.well_qg[0, inj_idx] / inj_cells.size
+    # The series ``qg`` is a *reservoir* m3/s rate (GEM BHF); the injector constraint
+    # compares a *surface* rate, so convert (same as _forward_compositional_full_saturations).
+    p_inj = float(np.mean(case.well_pw[0][injects_gas]))
+    q_surf = float(np.asarray(reservoir_co2_to_surface(case.well_qg[0, inj_idx], p_inj)).ravel()[0])
+    qg_fixed[inj_cells] += q_surf / inj_cells.size
     return case, mesh, grid, k, phi, vol, inv_phiV, params, sw, z, p, injects_gas, qg_fixed
 
 
@@ -337,6 +343,106 @@ def test_producer_gas_moles_use_eos_molar_volume():
     assert abs(q_mol_bg - q_mol_eos) > 0.1 * abs(q_mol_eos)  # the scalar Bg would be off
 
 
+def test_natural_variables_step_matches_reference():
+    """The natural-variables FIM step reproduces the overall-composition step.
+
+    On a single two-phase producer cell the two formulations solve the same
+    molar physics, so ``(p, sg, z_CO2)`` must agree. This is the Step 5 smoke test:
+    the fugacity equations replace the flash but drive the state to the same
+    equilibrium.
+    """
+    case, grid, k, phi, inv_phiV, wells = _single_cell()
+    params = replace(case.black_oil, bg=0.003)
+    sw = np.full(1, params.swc)
+    p = np.full(1, 16.0e6)
+    z = (1.0 - 0.8) * _Z_OIL_DEAD
+    z[_CO2_IDX] += 0.8
+    z = z[None, :].copy()
+    bhp = np.array([15.5e6])
+    inj = np.array([False])
+    dt = 60.0
+    kw = dict(tol=1.0e-3)
+    p_ref, sw_ref, sl_ref, sg_ref, z_ref, c_ref = _implicit_compositional_full_step(
+        grid, k, inv_phiV, dt, sw, z, p, wells, bhp, case.well, params, inj, **kw)
+    p_nv, sw_nv, sl_nv, sg_nv, z_nv, c_nv = natural_variables_step(
+        grid, k, inv_phiV, dt, sw, z, p, wells, bhp, case.well, params, inj, **kw)
+    assert c_ref and c_nv
+    assert p_nv[0] == pytest.approx(p_ref[0], rel=1.0e-4)
+    assert sg_nv[0] == pytest.approx(sg_ref[0], abs=5.0e-3)
+    assert z_nv[0, _CO2_IDX] == pytest.approx(z_ref[0, _CO2_IDX], abs=2.0e-3)
+    # the natural-variables state must be self-consistent: sw + sO + sG = 1
+    assert float(sw_nv[0] + sl_nv[0] + sg_nv[0]) == pytest.approx(1.0, abs=1.0e-8)
+
+
+def test_natural_variables_multi_cell_matches_reference():
+    """The natural-variables FIM matches the overall-composition step on a column.
+
+    A pure-liquid cell (dead oil — exercises the single-phase variable fold
+    ``y=x, sO=1−sw``) next to a two-phase producer cell (exercises the inter-cell
+    flux saturation/composition derivatives) reaches the two corners the single-cell
+    smoke test cannot: the folded columns and the ``A·diags`` flux blocks.
+    """
+    case = load_lab_case(CASE)
+    grid = CartesianGrid(nx=2, ny=1, nz=1, dx=0.05, dy=0.05, dz=0.05)
+    n = grid.n_cells
+    k = np.full(n, case.k0)
+    phi = np.full(n, case.phi0)
+    inv_phiV = 1.0 / (phi * grid.cell_volumes())
+    params = case.black_oil
+    sw = np.full(n, params.swc)
+    zc = np.array([0.0, 0.7])  # cell 0 pure liquid, cell 1 two-phase
+    z = np.outer(1.0 - zc, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zc
+    wells = WellMap(ids=("PROD",), xyz=grid.cell_centers()[[n - 1]], cells=(np.array([n - 1]),))
+    bhp = np.array([18.5e6])
+    inj = np.array([False])
+    p = np.full(n, 19.0e6)
+    kw = dict(tol=0.1)
+    p_ref, sw_ref, sl_ref, sg_ref, z_ref, c_ref = _implicit_compositional_full_step(
+        grid, k, inv_phiV, 864.0, sw, z, p, wells, bhp, case.well, params, inj, **kw)
+    p_nv, sw_nv, sl_nv, sg_nv, z_nv, c_nv = natural_variables_step(
+        grid, k, inv_phiV, 864.0, sw, z, p, wells, bhp, case.well, params, inj, **kw)
+    assert c_ref and c_nv
+    assert np.allclose(z_nv[:, _CO2_IDX], z_ref[:, _CO2_IDX], atol=5.0e-3)
+    assert np.allclose(sg_nv, sg_ref, atol=2.0e-2)
+    # the pure-liquid cell stays single-phase (its gas saturation was folded to 0)
+    assert sg_nv[0] == pytest.approx(0.0, abs=1.0e-6)
+
+
+def test_natural_variables_phase_transition():
+    """Single-phase (dead oil) cells switch to two-phase as CO2 crosses the bubble point.
+
+    The natural-variables model stays single-phase while CO2 dissolves (sg=0), then the
+    Michelsen stability test in ``flashPhases`` inserts the incipient vapor once the
+    overall composition crosses the bubble point — the single→two-phase switch that the
+    overall-composition model's flash-based Newton stalls on.
+    """
+    case = load_lab_case(CASE)
+    grid = CartesianGrid(nx=3, ny=1, nz=1, dx=0.05, dy=0.05, dz=0.05)
+    n = grid.n_cells
+    k = np.full(n, case.k0)
+    phi = np.full(n, case.phi0)
+    inv_phiV = 1.0 / (phi * grid.cell_volumes())
+    params = case.black_oil
+    sw = np.full(n, params.swc)
+    z = np.broadcast_to(_Z_OIL_DEAD, (n, _Z_OIL_DEAD.size)).copy()  # dead oil: pure liquid
+    wells = WellMap(ids=("INJ", "PROD"), xyz=grid.cell_centers()[[0, n - 1]],
+                    cells=(np.array([0]), np.array([n - 1])))
+    bhp = np.array([19.5e6, 19.0e6])
+    inj = np.array([True, False])
+    qg_fixed = np.zeros(n)
+    qg_fixed[0] += 1.0e-7
+    p = np.full(n, 19.0e6)
+    sg_max = 0.0
+    for _ in range(8):
+        p, sw, sl, sg, z, conv = natural_variables_step(
+            grid, k, inv_phiV, 864.0, sw, z, p, wells, bhp, case.well, params, inj,
+            well_qg_fixed=qg_fixed, tol=0.1)
+        assert conv
+        sg_max = max(sg_max, float(sg.max()))
+    assert sg_max > 1.0e-3  # free gas formed once z crossed the bubble point
+
+
 def test_reservoir_co2_rate_converts_to_surface():
     """The lab case stores reservoir m3/s; the injector constraint wants surface m3/s."""
     q_res = 8.333e-8  # 0.0072 m3/day, GEM BHF at reservoir conditions
@@ -432,6 +538,207 @@ def test_fugacity_mole_deriv_satisfies_euler():
     dV = fugacity_mole_deriv(y, p, phase="vap")
     assert np.allclose(dL[0].sum(axis=1), 0.0, atol=1.0e-5)
     assert np.allclose(dV[0].sum(axis=1), 0.0, atol=1.0e-5)
+
+
+def test_natural_variables_jacobian_matches_finite_difference():
+    """The analytic Jacobian equals the finite-difference of the residual.
+
+    This pins the mole-number → mole-fraction chain rule (``∂lnφ_i/∂x_j =
+    D[i, j]/x_j``) and every sign/block placement, so a wrong factor (x_j), a
+    flipped fugacity sign, or a mis-placed block fails loudly rather than degrading
+    Newton to a slow fixed point.
+    """
+    zs = np.array([0.4, 0.6, 0.8])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(zs.size, 19.0e6)
+    V, x, y = flash_direct_full(z, p)
+    L = 1.0 - V
+    J = natural_variables_jacobian(L, x, y, p)
+    n = z.shape[1]
+    m = 2 * n + 1
+    base = natural_variables_residual(L, x, y, z, p)
+    Jfd = np.zeros_like(J)
+    h = 1.0e-6
+    for c in range(zs.size):
+        Lp = L.copy(); Lp[c] += h
+        Jfd[c, :, 0] = (natural_variables_residual(Lp, x, y, z, p)[c] - base[c]) / h
+        for j in range(n):
+            xp = x.copy(); xp[c, j] += h
+            Jfd[c, :, 1 + j] = (natural_variables_residual(L, xp, y, z, p)[c] - base[c]) / h
+            yp = y.copy(); yp[c, j] += h
+            Jfd[c, :, 1 + n + j] = (natural_variables_residual(L, x, yp, z, p)[c] - base[c]) / h
+    # mass-balance / closure blocks are exactly linear; the fugacity block has
+    # finite-difference noise from the internal 1e-6 mole-derivative, so a loose
+    # relative tolerance still catches sign / chain-rule errors (O(1) / O(x_j)).
+    assert np.allclose(J, Jfd, rtol=1.0e-2, atol=1.0e-4)
+
+
+def test_natural_variables_flash_matches_ssi():
+    """The Newton flash converges to the same (V, x, y) as successive substitution."""
+    from src.core.pr_eos import _flash_vec, _flash_natural_variables, _ab
+    zs = np.array([0.4, 0.55, 0.7, 0.85])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(zs.size, 19.0e6)
+    T = 393.0
+    aij, b = _ab(T)
+    Vn, xn, yn = _flash_natural_variables(z, p, T, aij, b, tol=1.0e-9)
+    Vs, xs, ys = _flash_vec(z, p, T, aij, b, tol=1.0e-5)
+    assert np.allclose(Vn, Vs, atol=1.0e-4)
+    assert np.allclose(xn, xs, atol=1.0e-4)
+    assert np.allclose(yn, ys, atol=1.0e-4)
+    # Newton drives the equilibrium residual to machine precision (SSI stops at ~1e-4).
+    assert np.allclose(natural_variables_residual(1.0 - Vn, xn, yn, z, p), 0.0, atol=1.0e-7)
+
+
+def test_natural_variables_newton_quadratic():
+    """Newton on (L, x, y) converges quadratically from the SSI solution."""
+    from src.core.pr_eos import _flash_vec, _ab
+    zs = np.array([0.6])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(1, 19.0e6)
+    T = 393.0
+    aij, b = _ab(T)
+    V, x, y = _flash_vec(z, p, T, aij, b, tol=1.0e-5)  # SSI init (residual ~1e-4)
+    L = 1.0 - V
+    n = z.shape[1]
+    norms = []
+    for _ in range(6):
+        res = natural_variables_residual(L, x, y, z, p)
+        norms.append(float(np.max(np.abs(res))))
+        J = natural_variables_jacobian(L, x, y, p, aij=aij, b=b)
+        du = np.linalg.solve(J, -res[:, :, None])[:, :, 0]
+        L = L + du[:, 0]
+        x = x + du[:, 1:1 + n]
+        y = y + du[:, 1 + n:]
+    assert norms[-1] < 1.0e-10
+    # Quadratic (not linear): one Newton step from the SSI residual (~2e-5) lands
+    # at ~5e-10 ≈ C·(2e-5)², i.e. below any linear scaling by a fixed factor.
+    assert norms[1] < norms[0] ** 1.6
+
+
+def test_natural_variables_state_consistent_with_flash():
+    """The saturation-based molar accumulation reduces to ``z·N`` at equilibrium.
+
+    This is the bridge from the natural variables to the molar FIM accumulation
+    (Step 5): ``m_c = sO·x_c/v_l + sG·y_c/v_g`` must equal ``z_c·N`` exactly when
+    ``(L, x, y)`` are the flash solution, and ``sw + sO + sG = 1`` must hold.
+    """
+    zs = np.array([0.4, 0.6, 0.8])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(zs.size, 19.0e6)
+    sw = np.array([0.2, 0.2, 0.2])
+    V, x, y = flash_direct_full(z, p)
+    L = 1.0 - V
+    sO, sG, rho_l, rho_g = natural_variables_state(sw, L, x, y, p)
+    assert np.allclose(sw + sO + sG, 1.0, atol=1.0e-10)
+    m = sO[:, None] * x * rho_l[:, None] + sG[:, None] * y * rho_g[:, None]
+    N = m.sum(axis=1)
+    assert np.allclose(m, z * N[:, None], atol=1.0e-8)
+    # phase flags: interior z all two-phase; boundary L hits the pure ends
+    pl, pv, tp = phase_flags(L)
+    assert np.all(tp)
+    pl_b, pv_b, tp_b = phase_flags(np.array([1.0, 0.0, 0.5]))
+    assert pl_b[0] and pv_b[1] and tp_b[2] and not tp_b[0] and not tp_b[1]
+
+
+def test_analytic_fugacity_derivatives_match_finite_difference():
+    """The analytic PR fugacity derivative matches central finite differences.
+
+    Pins the hand-derived ``∂lnφ_i/∂x_j`` against central differences, so the
+    closed-form derivative — which removes the O(ncomp) fugacity-evaluations-per-
+    step cost of a finite-difference Jacobian — is trusted.
+    """
+    from src.core.pr_eos import _ab, _fugacity_frac_deriv_analytic, _fugacity_vec, fugacity_mole_deriv
+    zs = np.array([0.6])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(1, 19.0e6)
+    T = 393.0
+    aij, b = _ab(T)
+    _, x, y = flash_direct_full(z, p)
+    h = 1.0e-6
+    for phase in ("liq", "vap"):
+        xx = x if phase == "liq" else y
+        ana = _fugacity_frac_deriv_analytic(xx, aij, b, p, T, phase)
+        c = np.zeros_like(ana)
+        for j in range(xx.shape[1]):
+            xp = xx.copy(); xp[:, j] += h
+            xm = xx.copy(); xm[:, j] -= h
+            c[:, :, j] = (_fugacity_vec(xp, aij, b, p, T, phase)
+                          - _fugacity_vec(xm, aij, b, p, T, phase)) / (2.0 * h)
+        assert np.allclose(ana, c, atol=1.0e-6)
+        mole = fugacity_mole_deriv(xx, p, T, phase)
+        assert np.allclose(mole[0].sum(axis=1), 0.0, atol=1.0e-12)
+
+
+def test_phase_molar_volume_deriv_matches_finite_difference():
+    """The analytic molar-volume derivative ``(∂v/∂x, ∂v/∂p)`` matches FD.
+
+    This is the accumulation-Jacobian building block (``∂ρ/∂x = −ρ²·∂v/∂x``), so it
+    must be pinned before it replaces the FD in the natural-variables FIM.
+    """
+    from src.core.pr_eos import _ab
+    zs = np.array([0.6])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(1, 19.0e6)
+    T = 393.0
+    aij, b = _ab(T)
+    _, x, y = flash_direct_full(z, p)
+    h = 1.0e-6
+    hp = 1.0
+    for phase in ("liq", "vap"):
+        xx = x if phase == "liq" else y
+        v, dvdx, dvdp = phase_molar_volume_deriv(xx, p, T, phase)
+        vbase = phase_molar_volumes(xx, xx, p, T)[0 if phase == "liq" else 1]
+        dvdx_fd = np.zeros_like(dvdx)
+        for j in range(xx.shape[1]):
+            xp = xx.copy(); xp[:, j] += h
+            vp = phase_molar_volumes(xp, xp, p, T)[0 if phase == "liq" else 1]
+            dvdx_fd[:, j] = (vp - vbase) / h
+        vp = phase_molar_volumes(xx, xx, p + hp, T)[0 if phase == "liq" else 1]
+        dvdp_fd = (vp - vbase) / hp
+        assert np.allclose(dvdx, dvdx_fd, atol=1.0e-6)
+        assert np.allclose(dvdp, dvdp_fd, atol=1.0e-13)
+
+
+
+
+
+
+
+def test_flash_derivatives_ptz_matches_finite_difference():
+    """The analytic flash derivatives (MRST ``getPhaseFractionDerivativesPTZ``) match FD.
+
+    One equilibrium-Jacobian solve gives ``∂(V,x,y)/∂(p,z)``; this pins it against
+    finite differences so the analytic Jacobian (which replaces the ``ncomp`` flash
+    evaluations of the FD forward Jacobian) is trusted.
+    """
+    from src.core.pr_eos import flash_derivatives_ptz
+    zs = np.array([0.4, 0.6, 0.8])
+    z = np.outer(1.0 - zs, _Z_OIL_DEAD)
+    z[:, _CO2_IDX] += zs
+    p = np.full(zs.size, 19.0e6)
+    ncomp = z.shape[1]
+    dV_dp, dV_dz, dx_dp, dx_dz, dy_dp, dy_dz = flash_derivatives_ptz(z, p)
+    V, x, y = flash_direct_full(z, p)
+    hp = 1.0
+    Vp, xp, yp = flash_direct_full(z, p + hp)
+    assert np.allclose((Vp - V) / hp, dV_dp, atol=1.0e-6)
+    assert np.allclose((xp - x) / hp, dx_dp, atol=1.0e-7)
+    assert np.allclose((yp - y) / hp, dy_dp, atol=1.0e-7)
+    h = 1.0e-6
+    for j in range(ncomp - 1):
+        zp = z.copy(); zp[:, j] += h; zp[:, -1] -= h
+        Vj, xj, yj = flash_direct_full(zp, p)
+        # the FD perturbs the implied-last fold (z_j + h, z_last − h)
+        assert np.allclose((Vj - V) / h, dV_dz[:, j] - dV_dz[:, -1], atol=1.0e-2)
+        assert np.allclose((xj - x) / h, dx_dz[:, :, j] - dx_dz[:, :, -1], atol=1.0e-2)
+        assert np.allclose((yj - y) / h, dy_dz[:, :, j] - dy_dz[:, :, -1], atol=1.0e-2)
 
 
 def test_transport_case_anchors_compositional_pressure():
@@ -566,7 +873,8 @@ def test_bottom_plume_sinks():
         dt = min(86400.0, target - t)
         p, sw, sl, sg, z, conv, last_dt = _implicit_compositional_full_adaptive(
             grid, k, inv_phiV, dt, sw, z, p, mesh.wells, case.well_pw[0], case.well,
-            params, injects_gas, well_qg_fixed=qg_fixed, dt_sub0=dt_sub0, dt_max=864.0, dt_min=1.0)
+            params, injects_gas, well_qg_fixed=qg_fixed, dt_sub0=dt_sub0, dt_max=864.0, dt_min=1.0,
+            max_substeps=200)
         dt_sub0 = last_dt
         assert conv, f"full 30-day plume did not converge at t={t / 86400.0:.1f} d"
         t += dt
