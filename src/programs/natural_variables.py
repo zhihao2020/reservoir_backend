@@ -610,19 +610,22 @@ def natural_variables_step(
         ve = np.flatnonzero(~keep_var[vm_aug])  # eliminated variables
         if ke.size == 0:  # no two-phase cells: nothing to eliminate
             return _splu(J_active.tocsc()).solve(-r_active_)
-        B = J_active[kk][:, vk].toarray()
-        C = J_active[kk][:, ve].toarray()
-        D = J_active[ke][:, vk].toarray()
+        B = J_active[kk][:, vk].tocsc()
+        C = J_active[kk][:, ve].tocsc()
+        D = J_active[ke][:, vk].tocsc()
         E = J_active[ke][:, ve].tocsc()
         f = r_active_[kk]
         h = r_active_[ke]
-        Elu = _splu(E)
-        E_inv_D = Elu.solve(D)          # E^-1 D  (n_elim × n_keep)
-        E_inv_h = Elu.solve(h)
-        A_red = B - C @ E_inv_D         # Schur complement (dense, small-grid)
-        # [[B, C], [D, E]] @ [du_k; du_e] = [-f; -h]  ->  du_k = A_red^-1 (-f + C E^-1 h)
-        du_keep = np.linalg.solve(A_red, -f + C @ E_inv_h)
-        du_elim = Elu.solve(-h - D @ du_keep)
+        # Sparse Schur (MRST ``ReducedLinearizedSystem``): ``spsolve`` preserves the
+        # block-diagonal sparsity of ``E⁻¹·D`` (E is cell-local), so ``A_red`` stays
+        # flux-sparse instead of the dense 15n×15n complement that exhausts memory on
+        # the full mesh.
+        from scipy.sparse.linalg import spsolve as _spsolve
+        T = _spsolve(E, D)                       # E⁻¹·D (sparse, block-diagonal)
+        A_red = (B - C @ T).tocsc()              # Schur complement (sparse)
+        # [[B, C], [D, E]] @ [du_k; du_e] = [-f; -h]  ->  du_k = A_red⁻¹ (−f + C E⁻¹ h)
+        du_keep = _spsolve(A_red, -f + C @ _spsolve(E, h))
+        du_elim = _spsolve(E, -h - D @ du_keep)
         du = np.zeros(n_aug)
         du[vk] = du_keep
         du[ve] = du_elim

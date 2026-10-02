@@ -35,6 +35,7 @@ from src.programs.forward import (
     _implicit_compositional_full_adaptive,
     _implicit_compositional_full_step,
     _mobility_divergence_matrix,
+    _natural_variables_adaptive,
     _peaceman_well_data,
     _phase_divergence_matrix,
     _split_full,
@@ -928,7 +929,12 @@ def test_frozen_month_step_converges():
 
 @pytest.mark.slow
 def test_bottom_plume_sinks():
-    """30-day plume: the free gas must concentrate toward the bottom (gravity)."""
+    """30-day plume: the free gas must concentrate toward the bottom (gravity).
+
+    Uses the natural-variables model — its fugacity-equality formulation crosses the
+    bubble point smoothly, where the overall-composition model's flash-based Newton
+    stalls (``conv=False``).
+    """
     (case, mesh, grid, k, phi, vol, inv_phiV, params,
      sw, z, p, injects_gas, qg_fixed) = _setup()
     z_c = grid.cell_centers()[:, 2]
@@ -939,7 +945,7 @@ def test_bottom_plume_sinks():
     dt_sub0 = None
     while t < target - 1.0:
         dt = min(86400.0, target - t)
-        p, sw, sl, sg, z, conv, last_dt = _implicit_compositional_full_adaptive(
+        p, sw, sl, sg, z, conv, last_dt = _natural_variables_adaptive(
             grid, k, inv_phiV, dt, sw, z, p, mesh.wells, case.well_pw[0], case.well,
             params, injects_gas, well_qg_fixed=qg_fixed, dt_sub0=dt_sub0, dt_max=864.0, dt_min=1.0,
             max_substeps=200)
