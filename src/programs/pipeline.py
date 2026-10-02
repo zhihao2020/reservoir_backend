@@ -193,7 +193,8 @@ def run_pipeline(case: LabCase, mesh: MeshResult | None = None) -> ProgramFields
         qo_fwd = np.vstack([case.well_qo[:1], case.well_qo])
         qg_fwd = np.vstack([case.well_qg[:1], case.well_qg])
         pw_fwd = np.vstack([case.well_pw[:1], case.well_pw])
-        compositional = str(case.forward_model).strip().lower() == "compositional"
+        # compositional + natural_variables both track the overall CO2 mole fraction
+        compositional = str(case.forward_model).strip().lower() in ("compositional", "natural_variables")
         if compositional:
             sw_f, so_f, sg_f, z_f = forward_saturations(
                 case.forward_model,
