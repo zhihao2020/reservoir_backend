@@ -473,6 +473,44 @@ def test_natural_variables_forward_integration():
     assert float(sg[1].max()) >= 0.0  # free gas formed (or at least no crash)
 
 
+def test_natural_variables_plume():
+    """The natural-variables model crosses the bubble point on a plume column.
+
+    Dead oil (pure liquid) + top CO2 injection + bottom producer: the
+    overall-composition model stalls here (its flash-based Newton diverges past the
+    bubble point), while the fugacity-equality natural-variables form crosses it
+    smoothly and advects the CO2 (and the free gas it exsolves) down to the bottom
+    completion — the variable-switching fix for the plume's convergence failure.
+    """
+    case = load_lab_case(CASE)
+    grid = CartesianGrid(nx=1, ny=1, nz=10, dx=0.02, dy=0.02, dz=0.02)
+    n = grid.n_cells
+    k = np.full(n, case.k0)
+    phi = np.full(n, case.phi0)
+    inv_phiV = 1.0 / (phi * grid.cell_volumes())
+    params = case.black_oil
+    sw = np.full(n, params.swc)
+    z = np.broadcast_to(_Z_OIL_DEAD, (n, _Z_OIL_DEAD.size)).copy()  # dead oil: pure liquid
+    inj_cells = np.arange(8, 10)
+    wells = WellMap(ids=("INJ", "PROD"), xyz=grid.cell_centers()[[9, 0]],
+                    cells=(inj_cells, np.array([0])))
+    bhp = np.array([19.3e6, 19.0e6])
+    inj = np.array([True, False])
+    qg_fixed = np.zeros(n)
+    qg_fixed[inj_cells] += 1.0e-6 / inj_cells.size
+    p = np.full(n, 19.1e6)
+    zc = grid.cell_centers()[:, 2]
+    bottom = zc < 2.0 * float(grid.dz[0])
+    for _ in range(8):
+        p, sw, sl, sg, z, conv = natural_variables_step(
+            grid, k, inv_phiV, 864.0, sw, z, p, wells, bhp, case.well, params, inj,
+            well_qg_fixed=qg_fixed, tol=0.1)
+        assert conv  # no bubble-point stall (the overall-composition model stalls here)
+    # CO2 advected down to the bottom completion, exsolving free gas along the way
+    assert float(z[bottom, _CO2_IDX].mean()) > 0.5
+    assert float(sg.max()) > 0.0
+
+
 def test_reservoir_co2_rate_converts_to_surface():
     """The lab case stores reservoir m3/s; the injector constraint wants surface m3/s."""
     q_res = 8.333e-8  # 0.0072 m3/day, GEM BHF at reservoir conditions
