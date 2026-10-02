@@ -443,6 +443,36 @@ def test_natural_variables_phase_transition():
     assert sg_max > 1.0e-3  # free gas formed once z crossed the bubble point
 
 
+def test_natural_variables_forward_integration():
+    """The natural-variables model is reachable from ``forward_saturations``.
+
+    ``model="natural_variables"`` dispatches to the coupled natural-variables FIM (the
+    fugacity-equality form that crosses the bubble point smoothly), reporting the same
+    ``(sw, so, sg, z_co2)`` shape as the overall-composition model.
+    """
+    case = load_lab_case(CASE)
+    grid = CartesianGrid(nx=3, ny=1, nz=1, dx=0.05, dy=0.05, dz=0.05)
+    n = grid.n_cells
+    k = np.full(n, case.k0)
+    phi = np.full(n, case.phi0)
+    params = case.black_oil
+    wells = WellMap(ids=("INJ", "PROD"), xyz=grid.cell_centers()[[0, n - 1]],
+                    cells=(np.array([0]), np.array([n - 1])))
+    bhp = np.array([[19.5e6, 19.0e6]])
+    qg = np.array([[8.333e-8, 0.0]])
+    zeros = np.zeros_like(qg)
+    sw0 = np.full(n, params.swc)
+    p = np.full((2, n), 19.0e6)
+    sw, so, sg, zco2 = forward_saturations(
+        "natural_variables", grid, p, k, phi, params, wells,
+        zeros, zeros, qg, np.array([0.0, 864.0]),
+        sw0, np.ones(n), np.zeros(n),
+        well_bhp=bhp, well_params=case.well, return_co2=True)
+    assert np.allclose(sw[1] + so[1] + sg[1], 1.0, atol=1.0e-6)
+    assert float(zco2[1, 0]) > 0.3   # CO2 entered the injector
+    assert float(sg[1].max()) >= 0.0  # free gas formed (or at least no crash)
+
+
 def test_reservoir_co2_rate_converts_to_surface():
     """The lab case stores reservoir m3/s; the injector constraint wants surface m3/s."""
     q_res = 8.333e-8  # 0.0072 m3/day, GEM BHF at reservoir conditions

@@ -121,6 +121,13 @@
 `du_k = A_red⁻¹(−f + C·E⁻¹h)`，再恢复 `du_e = E⁻¹(−h − D·du_k)`；E 块格内局部（两相格 15×15
 块对角），LU 便宜。单相格无逸度/闭合可消，`ke.size==0` 时退回全解。8 个自然变量测试全过。
 
+## 接入生产前向
+
+`forward_saturations` 新增 `model="natural_variables"` 分发：`_forward_natural_variables_saturations`
+（照 `_forward_compositional_full_saturations`，仅耦合、无冻压力）+ `_natural_variables_adaptive`
+（照 `_implicit_compositional_full_adaptive` 的子步循环，lazy import `natural_variables_step` 避免循环依赖）。
+输出同 `(sw, so, sg, z_co2)`。冻压力输运仍走 overall-composition（自然变量是耦合模型，无冻压力模式）。
+
 ## 参考（照抄，不要自造）
 
 - `reference_projects/MRST-main/autodiff/compositional/models/natvars/equationsNaturalVariables.m` — 残差组装。

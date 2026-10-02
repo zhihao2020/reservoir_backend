@@ -422,6 +422,15 @@ def forward_saturations(
         if return_co2:
             return sw, so, sg, z_co2
         return sw, so, sg
+    if name == "natural_variables":
+        sw, so, sg, z_co2 = _forward_natural_variables_saturations(
+            grid, pressure, permeability, phi, params, wells,
+            well_qw, well_qo, well_qg, times, sw0, so0, sg0, max_ds=max_ds,
+            well_bhp=well_bhp, well_params=well_params,
+        )
+        if return_co2:
+            return sw, so, sg, z_co2
+        return sw, so, sg
     raise ValueError(f"unknown forward model {model!r}")
 
 def _mobility_divergence_matrix(
@@ -1521,6 +1530,157 @@ def _forward_compositional_full_saturations(
 
             warnings.warn(
                 f"compositional forward step t={t} did not converge",
+                RuntimeWarning,
+            )
+    return sw_hist, so_hist, sg_hist, z_hist
+
+
+def _natural_variables_adaptive(
+    grid: CartesianGrid,
+    permeability: NDArray[np.float64],
+    inv_phiV: NDArray[np.float64],
+    dt: float,
+    sw0: NDArray[np.float64],
+    z0: NDArray[np.float64],
+    p0: NDArray[np.float64],
+    wells: WellMap,
+    well_bhp: NDArray[np.float64],
+    well_params: WellModelParams,
+    params: FluidParams,
+    injects_gas: NDArray[np.bool_],
+    *,
+    well_qg_fixed: NDArray[np.float64] | None = None,
+    max_iter: int = 30,
+    dt_sub0: float | None = None,
+    dt_min: float | None = None,
+    dt_max: float | None = None,
+    dt_growth: float = 2.0,
+    max_substeps: int = 64,
+) -> tuple[NDArray[np.float64], ...]:
+    """Adaptive sub-stepping around :func:`natural_variables_step` (coupled, no freeze)."""
+    from .natural_variables import natural_variables_step
+
+    dt_min = (dt / 64.0) if dt_min is None else dt_min
+    dt_max = dt if dt_max is None else dt_max
+    p = np.asarray(p0, dtype=float).copy()
+    sw = np.asarray(sw0, dtype=float).copy()
+    z = np.asarray(z0, dtype=float).copy()
+    _, sl, sg = _split_full(sw, z, p)
+    remaining = float(dt)
+    dt_sub = min(dt_sub0 if dt_sub0 is not None else dt_max, remaining, dt_max)
+    last_dt = dt_sub
+    failed_above = None
+    for _ in range(max_substeps):
+        if remaining <= 1.0e-12:
+            break
+        p_new, sw_new, sl_new, sg_new, z_new, conv = natural_variables_step(
+            grid, permeability, inv_phiV, dt_sub, sw, z, p, wells, well_bhp, well_params,
+            params, injects_gas, well_qg_fixed=well_qg_fixed, max_iter=max_iter,
+        )
+        if conv:
+            p, sw, z = p_new, sw_new, z_new
+            sl, sg = sl_new, sg_new
+            remaining -= dt_sub
+            last_dt = dt_sub
+            grown = min(dt_growth * dt_sub, dt_max, remaining)
+            if failed_above is not None and grown >= failed_above * (1.0 - 1.0e-12):
+                grown = min(dt_sub, remaining)
+            dt_sub = grown
+        else:
+            failed_above = dt_sub
+            dt_sub *= 0.5
+            if dt_sub < dt_min:
+                break
+    return p, sw, sl, sg, z, remaining <= 1.0e-12, last_dt
+
+
+def _forward_natural_variables_saturations(
+    grid: CartesianGrid,
+    pressure: NDArray[np.float64],
+    permeability: NDArray[np.float64],
+    phi: NDArray[np.float64],
+    params: FluidParams,
+    wells: WellMap,
+    well_qw: NDArray[np.float64],
+    well_qo: NDArray[np.float64],
+    well_qg: NDArray[np.float64],
+    times: NDArray[np.float64],
+    sw0: NDArray[np.float64],
+    so0: NDArray[np.float64],
+    sg0: NDArray[np.float64],
+    *,
+    max_ds: float = 0.05,
+    well_bhp: NDArray[np.float64] | None = None,
+    well_params: WellModelParams | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Natural-variables compositional forward (coupled; MRST ``NaturalVariablesCompositionalModel``).
+
+    Tracks ``(p, sw, sO, sG, x, y)`` with the fugacity-equality equations replacing the
+    flash, so the bubble point is crossed smoothly (no ``V(z)`` kink). Coupled only — the
+    frozen-pressure transport path stays on :func:`_forward_compositional_full_saturations`.
+    Returns ``(sw, so, sg, z_co2)``.
+    """
+    from ..core.pr_eos import _CO2_IDX, _Z_OIL_DEAD
+
+    p_in = np.asarray(pressure, dtype=float)
+    if p_in.ndim == 1:
+        p_in = p_in[None, :]
+    n_t = int(p_in.shape[0])
+    n_c = grid.n_cells
+    k = np.asarray(permeability, dtype=float)
+    phi_a = np.asarray(phi, dtype=float)
+    vol = grid.cell_volumes()
+    qw = np.asarray(well_qw, dtype=float)
+    qo = np.asarray(well_qo, dtype=float)
+    qg = np.asarray(well_qg, dtype=float)
+    if qw.ndim == 1:
+        qw, qo, qg = qw[None, :], qo[None, :], qg[None, :]
+    qw, qo, qg = _balance_well_rates(qw, qo, qg)
+    if well_bhp is None or well_params is None:
+        raise ValueError(
+            "natural-variables forward model requires well_bhp + well_params"
+        )
+    bhp = np.asarray(well_bhp, dtype=float)
+    if bhp.ndim == 1:
+        bhp = bhp[None, :]
+    injects_gas = (qg > 0.0).any(axis=0)
+    times_a = np.asarray(times, dtype=float)
+    inv_phiV = 1.0 / (phi_a * vol)
+    sw = np.asarray(sw0, dtype=float).copy()
+    z = np.broadcast_to(_Z_OIL_DEAD, (n_c, _Z_OIL_DEAD.size)).copy()
+    sw_hist = np.zeros((n_t, n_c))
+    so_hist = np.zeros((n_t, n_c))
+    sg_hist = np.zeros((n_t, n_c))
+    z_hist = np.zeros((n_t, n_c))
+    p = np.asarray(p_in[0], dtype=float).copy()
+    dt_sub0: float | None = None
+    for t in range(n_t):
+        _, sl_r, sg_r = _split_full(sw, z, p)
+        sw_hist[t] = sw.copy()
+        so_hist[t] = sl_r.copy()
+        sg_hist[t] = sg_r.copy()
+        z_hist[t] = z[:, _CO2_IDX]
+        if t >= n_t - 1:
+            continue
+        qg_fixed = np.zeros(n_c)
+        p_inj = float(np.mean(bhp[t, injects_gas])) if np.any(injects_gas) else float(np.mean(p))
+        for i in np.flatnonzero(injects_gas):
+            cells_i = wells.cells[i]
+            if cells_i.size > 0:
+                q_surf = float(np.asarray(reservoir_co2_to_surface(qg[t, i], p_inj)).ravel()[0])
+                qg_fixed[cells_i] += q_surf / cells_i.size
+        dt = float(times_a[t + 1] - times_a[t])
+        p, sw, sl, sg, z, conv, last_dt = _natural_variables_adaptive(
+            grid, k, inv_phiV, dt, sw, z, p, wells, bhp[t], well_params, params, injects_gas,
+            well_qg_fixed=qg_fixed, dt_sub0=dt_sub0, dt_max=_MAX_DT, dt_min=1.0,
+            max_iter=30, max_substeps=64,
+        )
+        dt_sub0 = last_dt
+        if not conv:
+            import warnings
+
+            warnings.warn(
+                f"natural-variables forward step t={t} did not converge",
                 RuntimeWarning,
             )
     return sw_hist, so_hist, sg_hist, z_hist
