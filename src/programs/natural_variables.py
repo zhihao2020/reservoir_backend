@@ -55,6 +55,20 @@ def _eos_ab():
     return _AB_CACHE
 
 
+def _col_scale(A, d):
+    """Column-scale a CSR in place-free form: ``A.multiply(d[None, :])`` bit-identical.
+
+    ``scipy.sparse``'s ``multiply`` with a dense row vector spends most of its time in
+    dispatch/format round-trips, not the O(nnz) scaling itself. For a canonical CSR the
+    result is exactly ``data *= d[indices]`` (``indices`` are the column indices), which
+    avoids that overhead while producing the *same* values, so the Newton iterates are
+    bit-for-bit unchanged.
+    """
+    B = A.copy()
+    B.data *= np.asarray(d, dtype=float)[B.indices]
+    return B
+
+
 def natural_variables_step(
     grid,
     permeability: NDArray[np.float64],
@@ -398,8 +412,8 @@ def natural_variables_step(
             add_sparse(r0, 0,
                        _upwind_tpfa_matrix_vec(grid, permeability, y_[:, c] * lam_g_ * rho_g_, p_, head_)
                        + _upwind_tpfa_matrix_vec(grid, permeability, x_[:, c] * lam_l_ * rho_l_, p_)
-                       + A_g_.multiply((y_[:, c] * lam_g_ * drhog_dp)[None, :])
-                       + A_.multiply((x_[:, c] * lam_l_ * drhol_dp)[None, :]))
+                       + _col_scale(A_g_, y_[:, c] * lam_g_ * drhog_dp)
+                       + _col_scale(A_, x_[:, c] * lam_l_ * drhol_dp))
             # accumulation-p / sO / sG (diag)
             dmc_dp = sO_ * x_[:, c] * drhol_dp + sG_ * y_[:, c] * drhog_dp
             add_diag(r0, 0, accum * (rock1_ * dmc_dp + params.ct * mc_[:, c]))
@@ -408,19 +422,19 @@ def natural_variables_step(
             # flux-s (mobility saturation derivatives): A_g·diag(y_c ρg ∂λg/∂s_k) + A·diag(x_c ρl ∂λl/∂s_k)
             for k, ck in ((0, n), (1, 2 * n), (2, 3 * n)):
                 add_sparse(r0, ck,
-                           A_g_.multiply((y_[:, c] * rho_g_ * dlam[:, 2, k])[None, :])
-                           + A_.multiply((x_[:, c] * rho_l_ * dlam[:, 1, k])[None, :]))
+                           _col_scale(A_g_, y_[:, c] * rho_g_ * dlam[:, 2, k])
+                           + _col_scale(A_, x_[:, c] * rho_l_ * dlam[:, 1, k]))
             # accumulation-x/y + flux-x/y (composition columns, cell-major)
             for j in range(ncomp - 1):
                 dj = (1.0 if c == j else 0.0) - (1.0 if c == ncomp - 1 else 0.0)
                 acc_x = accum * rock1_ * sO_ * (dj * rho_l_ + x_[:, c] * drhol_ind[:, j])
                 dmob_x = dj * lam_l_ * rho_l_ + x_[:, c] * lam_l_ * drhol_ind[:, j]
                 rows.append(r0 + np.arange(n)); cols.append(cx + j); vals.append(acc_x)
-                add_scatter(r0, cx + j, A_.multiply(dmob_x[None, :]))
+                add_scatter(r0, cx + j, _col_scale(A_, dmob_x))
                 acc_y = accum * rock1_ * sG_ * (dj * rho_g_ + y_[:, c] * drhog_ind[:, j])
                 dmob_y = dj * lam_g_ * rho_g_ + y_[:, c] * lam_g_ * drhog_ind[:, j]
                 rows.append(r0 + np.arange(n)); cols.append(cy + j); vals.append(acc_y)
-                add_scatter(r0, cy + j, A_g_.multiply(dmob_y[None, :]))
+                add_scatter(r0, cy + j, _col_scale(A_g_, dmob_y))
 
         # --- well sources and their derivatives (Peaceman product rule) ---
         qo_ = np.zeros(n)
@@ -493,7 +507,7 @@ def natural_variables_step(
         add_sparse(r0, 0, _upwind_tpfa_matrix_vec(grid, permeability, lam_w_, p_))
         add_diag(r0, 0, accum * params.ct * sw_)
         add_diag(r0, n, accum * rock1_)
-        add_sparse(r0, n, A_.multiply(dlam[:, 0, 0][None, :]))
+        add_sparse(r0, n, _col_scale(A_, dlam[:, 0, 0]))
         add_diag(r0, 0, -dqw_dp)
         add_diag(r0, n, -dqw_dsw)
 
