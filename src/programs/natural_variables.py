@@ -213,9 +213,11 @@ def natural_variables_step(
         Single-phase cells run the Michelsen stability test: an unstable pure-liquid
         cell gains an ``saturationEpsilon`` of the incipient vapor, an unstable
         pure-vapor cell an ``saturationEpsilon`` of the incipient liquid. Two-phase
-        cells where a phase vanished (``sO<=0``/``sG<=0``) collapse to single-phase.
-        ``x_``/``y_`` are full ``(n, ncomp)`` compositions; returns updated
-        ``(sO, sG, x, y)``.
+        cells where a phase vanished (``sO<=0``/``sG<=0``) collapse to single-phase,
+        but only after ``checkStableTransition`` (MRST) verifies the single-phase state
+        is actually stable — otherwise they keep an incipient bubble so the phase flag
+        stops flapping. ``x_``/``y_`` are full ``(n, ncomp)`` compositions; returns
+        updated ``(sO, sG, x, y)``.
         """
         pl, pv, two = flags_from_state(sO_, sG_)
         sO_n = sO_.copy()
@@ -242,17 +244,47 @@ def natural_variables_step(
                 sO_n[c] = eps * smax[c]
                 sG_n[c] = smax[c] - sO_n[c]
                 x_n[c] = x_inc[~stable]
-        # two-phase -> single-phase (a phase vanished)
+        # two-phase -> single-phase (a phase vanished). MRST ``checkStableTransition``:
+        # collapse only if the resulting single-phase state is actually stable; an
+        # unstable "single phase" is reversed to two-phase (insert the incipient phase)
+        # so cells stop flapping between one and two phases.
         to_liq = two & (sG_n <= 0.0)
         to_vap = two & (sO_n <= 0.0)
-        if to_liq.any():
-            sO_n[to_liq] = smax[to_liq]
-            sG_n[to_liq] = 0.0
-            y_n[to_liq] = x_n[to_liq]
-        if to_vap.any():
-            sG_n[to_vap] = smax[to_vap]
-            sO_n[to_vap] = 0.0
-            x_n[to_vap] = y_n[to_vap]
+        to_pure = to_liq | to_vap
+        collapse_liq = np.zeros(n, dtype=bool)
+        collapse_vap = np.zeros(n, dtype=bool)
+        if to_pure.any():
+            v_l, v_g = phase_molar_volumes(x_n, y_n, p_, _T)
+            rho_l = np.nan_to_num(1.0 / np.maximum(v_l, 1.0e-30), nan=0.0, posinf=0.0, neginf=0.0)
+            rho_g = np.nan_to_num(1.0 / np.maximum(v_g, 1.0e-30), nan=0.0, posinf=0.0, neginf=0.0)
+            m_c = sO_n[:, None] * x_n * rho_l[:, None] + sG_n[:, None] * y_n * rho_g[:, None]
+            z = m_c / np.maximum(m_c.sum(axis=1, keepdims=True), 1.0e-30)
+            pure_idx = np.flatnonzero(to_pure)
+            stable_next, x_inc, y_inc = phase_stability_test(z[pure_idx], p_[pure_idx], aij=aij, b=b)
+            for k, cell in enumerate(pure_idx):
+                if stable_next[k]:
+                    if to_liq[cell]:
+                        collapse_liq[cell] = True
+                    else:
+                        collapse_vap[cell] = True
+                elif to_liq[cell]:
+                    # would-be liquid is unstable -> keep an incipient vapor bubble
+                    sG_n[cell] = eps * smax[cell]
+                    sO_n[cell] = smax[cell] - sG_n[cell]
+                    y_n[cell] = y_inc[k]
+                else:
+                    # would-be vapor is unstable -> keep an incipient liquid bubble
+                    sO_n[cell] = eps * smax[cell]
+                    sG_n[cell] = smax[cell] - sO_n[cell]
+                    x_n[cell] = x_inc[k]
+        if collapse_liq.any():
+            sO_n[collapse_liq] = smax[collapse_liq]
+            sG_n[collapse_liq] = 0.0
+            y_n[collapse_liq] = x_n[collapse_liq]
+        if collapse_vap.any():
+            sG_n[collapse_vap] = smax[collapse_vap]
+            sO_n[collapse_vap] = 0.0
+            x_n[collapse_vap] = y_n[collapse_vap]
         return sO_n, sG_n, x_n, y_n
 
     def state_qty(u_full_, bhp_inj_):
